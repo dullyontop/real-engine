@@ -1,0 +1,73 @@
+visit #21 screen (root) at (0.0, 0.0) size (1280.0, 720.0) rotation 0.0
+visit #0 backdrop at (0.0, 0.0) size (1280.0, 720.0) rotation 0.0
+visit #20 panel at (410.0, 140.0) size (460.0, 440.0) rotation 0.0 content (424.0, 408.0)
+visit #1 title at (428.0, 156.0) size (424.0, 40.0) rotation 0.0 text (119.64001, 37.0) fits
+visit #2 body at (428.0, 206.0) size (424.0, 48.0) rotation 0.0 text (382.4, 48.0) fits
+visit #5 icon row at (428.0, 264.0) size (424.0, 48.0) rotation 0.0 content (424.0, 48.0)
+visit #3 icon at (428.0, 264.0) size (48.0, 48.0) rotation 0.0
+visit #4 caption at (488.0, 264.0) size (364.0, 48.0) rotation 0.0 text (183.62988, 24.0) fits
+visit #7 bar at (428.0, 322.0) size (424.0, 12.0) rotation 0.0
+visit #6 bar fill at (428.0, 322.0) size (245.92, 12.0) rotation 0.0
+visit #8 resume at (428.0, 344.0) size (424.0, 40.0) rotation 0.0 text (76.358, 22.0) fits
+visit #9 settings at (428.0, 394.0) size (424.0, 40.0) rotation 0.0 text (77.558, 22.0) fits
+visit #10 quit at (428.0, 444.0) size (424.0, 40.0) rotation 0.0 text (40.829998, 22.0) fits
+visit #19 stops at (428.0, 494.0) size (424.0, 70.0) rotation 0.0 canvas (424.0, 176.0) window (424.0, 70.0) content (412.0, 176.0)
+visit #11 stop 1 at (428.0, 472.0) size (412.0, 22.0) rotation 0.0 text (142.82324, 18.0) fits
+visit #12 stop 2 at (428.0, 494.0) size (412.0, 22.0) rotation 0.0 text (142.82324, 18.0) fits
+visit #13 stop 3 at (428.0, 516.0) size (412.0, 22.0) rotation 0.0 text (142.82324, 18.0) fits
+visit #14 stop 4 at (428.0, 538.0) size (412.0, 22.0) rotation 0.0 text (142.82324, 18.0) fits
+visit #15 stop 5 at (428.0, 560.0) size (412.0, 22.0) rotation 0.0 text (142.82324, 18.0) fits
+visit #16 stop 6 at (428.0, 582.0) size (412.0, 22.0) rotation 0.0 text (142.82324, 18.0) fits
+visit #17 stop 7 at (428.0, 604.0) size (412.0, 22.0) rotation 0.0 text (142.82324, 18.0) fits
+visit #18 stop 8 at (428.0, 626.0) size (412.0, 22.0) rotation 0.0 text (142.82324, 18.0) fits
+root 0: 21 drawn
+item #0 backdrop at (0.0, 0.0) size (1280.0, 720.0) scale 1.0 order (0, 1) input
+item #20 panel at (410.0, 140.0) size (460.0, 440.0) scale 1.0 order (0, 2) input padding [18.0, 16.0, 18.0, 16.0]
+item #1 title at (428.0, 156.0) size (424.0, 40.0) scale 1.0 order (0, 3) input
+  text fits size 30.0 in (424.0, 40.0) bounds (0.0, 0.0, 119.64001, 37.0)
+  row at (0.0, 0.0) size (119.64001, 37.0) "Paused"
+item #2 body at (428.0, 206.0) size (424.0, 48.0) scale 1.0 order (0, 4) input
+  text fits size 17.0 in (424.0, 48.0) bounds (0.0, 0.0, 382.4, 48.0)
+  row at (0.0, 0.0) size (382.4, 24.0) "Drawn by the shared UI core, with no compat instance "
+  row at (0.0, 24.0) size (67.233, 24.0) "behind it."
+item #5 icon row at (428.0, 264.0) size (424.0, 48.0) scale 1.0 order (0, 5) input
+item #3 icon at (428.0, 264.0) size (48.0, 48.0) scale 1.0 order (0, 6) input
+item #4 caption at (488.0, 264.0) size (364.0, 48.0) scale 1.0 order (0, 7) input
+  text fits size 18.0 in (364.0, 48.0) bounds (0.0, 0.0, 183.62988, 24.0)
+  row at (0.0, 0.0) size (183.62988, 24.0) "Deliveries 7 / 12"
+item #7 bar at (428.0, 322.0) size (424.0, 12.0) scale 1.0 order (0, 8) input
+item #6 bar fill at (428.0, 322.0) size (245.92, 12.0) scale 1.0 order (0, 9) input
+item #8 resume at (428.0, 344.0) size (424.0, 40.0) scale 1.0 order (0, 10) input
+  text fits size 18.0 in (424.0, 40.0) bounds (-38.0, 0.0, 38.358, 22.0)
+  row at (-38.0, 0.0) size (76.358, 22.0) "Resume"
+item #9 settings at (428.0, 394.0) size (424.0, 40.0) scale 1.0 order (0, 11) input
+  text fits size 18.0 in (424.0, 40.0) bounds (-39.0, 0.0, 38.558, 22.0)
+  row at (-39.0, 0.0) size (77.558, 22.0) "Settings"
+item #10 quit at (428.0, 444.0) size (424.0, 40.0) scale 1.0 order (0, 12) input
+  text fits size 18.0 in (424.0, 40.0) bounds (-20.0, 0.0, 20.829998, 22.0)
+  row at (-20.0, 0.0) size (40.829998, 22.0) "Quit"
+item #19 stops at (428.0, 494.0) size (424.0, 70.0) scale 1.0 order (0, 13) input canvas (424.0, 176.0)
+item #11 stop 1 at (428.0, 472.0) size (412.0, 22.0) scale 1.0 order (0, 14) input clip (428.0, 494.0, 852.0, 564.0)
+  text fits size 14.0 in (412.0, 22.0) bounds (0.0, 0.0, 142.82324, 18.0)
+  row at (0.0, 0.0) size (142.82324, 18.0) "Stop  1  ·  120 m"
+item #12 stop 2 at (428.0, 494.0) size (412.0, 22.0) scale 1.0 order (0, 15) input clip (428.0, 494.0, 852.0, 564.0)
+  text fits size 14.0 in (412.0, 22.0) bounds (0.0, 0.0, 142.82324, 18.0)
+  row at (0.0, 0.0) size (142.82324, 18.0) "Stop  2  ·  240 m"
+item #13 stop 3 at (428.0, 516.0) size (412.0, 22.0) scale 1.0 order (0, 16) input clip (428.0, 494.0, 852.0, 564.0)
+  text fits size 14.0 in (412.0, 22.0) bounds (0.0, 0.0, 142.82324, 18.0)
+  row at (0.0, 0.0) size (142.82324, 18.0) "Stop  3  ·  360 m"
+item #14 stop 4 at (428.0, 538.0) size (412.0, 22.0) scale 1.0 order (0, 17) input clip (428.0, 494.0, 852.0, 564.0)
+  text fits size 14.0 in (412.0, 22.0) bounds (0.0, 0.0, 142.82324, 18.0)
+  row at (0.0, 0.0) size (142.82324, 18.0) "Stop  4  ·  480 m"
+item #15 stop 5 at (428.0, 560.0) size (412.0, 22.0) scale 1.0 order (0, 18) input clip (428.0, 494.0, 852.0, 564.0)
+  text fits size 14.0 in (412.0, 22.0) bounds (0.0, 0.0, 142.82324, 18.0)
+  row at (0.0, 0.0) size (142.82324, 18.0) "Stop  5  ·  600 m"
+item #16 stop 6 at (428.0, 582.0) size (412.0, 22.0) scale 1.0 order (0, 19) input clip (428.0, 494.0, 852.0, 564.0)
+  text fits size 14.0 in (412.0, 22.0) bounds (0.0, 0.0, 142.82324, 18.0)
+  row at (0.0, 0.0) size (142.82324, 18.0) "Stop  6  ·  720 m"
+item #17 stop 7 at (428.0, 604.0) size (412.0, 22.0) scale 1.0 order (0, 20) input clip (428.0, 494.0, 852.0, 564.0)
+  text fits size 14.0 in (412.0, 22.0) bounds (0.0, 0.0, 142.82324, 18.0)
+  row at (0.0, 0.0) size (142.82324, 18.0) "Stop  7  ·  840 m"
+item #18 stop 8 at (428.0, 626.0) size (412.0, 22.0) scale 1.0 order (0, 21) input clip (428.0, 494.0, 852.0, 564.0)
+  text fits size 14.0 in (412.0, 22.0) bounds (0.0, 0.0, 142.82324, 18.0)
+  row at (0.0, 0.0) size (142.82324, 18.0) "Stop  8  ·  960 m"

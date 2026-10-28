@@ -232,6 +232,12 @@ impl Host {
         let app = &mut self.app;
         let mut output = gfx.egui_ctx.run_ui(input, |ui| editor.ui(ui, app, policy));
         let platform = std::mem::take(&mut output.platform_output);
+        // A menu's Paste: egui cannot read the system clipboard.
+        if self.editor.wants_clipboard() {
+            let text = gfx.egui_state.clipboard_text();
+            self.editor
+                .paste_clipboard(&mut self.app, policy, text.as_deref());
+        }
         let ui = UiFrame::from_output(
             &gfx.egui_ctx,
             &mut output,

@@ -8,7 +8,8 @@
 //! * [`history`]: [`Transaction`] (atomic), [`History`] (undo, redo, dry runs)
 //!   and the append-only log of [`LogEntry`] lines with their [`Origin`];
 //! * [`registry`]: [`CommandRegistry`], named commands with JSON Schema
-//!   inputs, a [`Tier`], dry runs and the [`PolicyCheck`] hook;
+//!   inputs, a [`Tier`], the files they name ([`PathArg`]), dry runs and the
+//!   [`PolicyCheck`] hook;
 //! * [`builtins`]: the built-in commands (`describe`, `query`, `entity.get`,
 //!   `command.describe`, `project.status`, `entity.spawn`, `entity.set`,
 //!   `entity.reparent`, `entity.delete`, `component.add`, `component.remove`,
@@ -35,7 +36,8 @@ pub use history::{History, LogEntry, LogKind, Origin, Transaction};
 pub use op::{Op, apply};
 pub use registry::{
     AllowAll, Call, CommandAnnotations, CommandOutcome, CommandRegistry, CommandSpec, EditState,
-    EditTarget, Handler, NoArgs, PolicyCheck, Tier, input_schema,
+    EditTarget, Handler, NoArgs, PathAccess, PathArg, PolicyCheck, Tier, declared_paths,
+    input_schema,
 };
 pub use remote::{EngineHandle, EngineReceiver, EngineRequest, channel};
 

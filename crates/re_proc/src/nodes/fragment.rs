@@ -1,11 +1,12 @@
 //! `fragment.merge`, and how meshes become entities.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use glam::Vec3;
 use re_reflect::Value;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::{Domain, NodeCtx, NodeDef, NodeRegistry, NodeSpec, Params, natural_cmp};
 use crate::value::{DerivedAsset, FragItem, Fragment, MeshValue, Output, PortType, derived_name};
@@ -95,7 +96,7 @@ pub fn sink_fragment_in(
 }
 
 /// Parameters of `fragment.merge`.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct FragmentMergeParams {
     /// When set, a group entity `<node>/group` with this name is created and
@@ -109,6 +110,8 @@ fn merge(ctx: &NodeCtx, p: &FragmentMergeParams) -> Result<Output, String> {
     let mut inputs: Vec<&(String, Output)> = ctx.inputs.iter().collect();
     inputs.sort_by(|a, b| natural_cmp(&a.0, &b.0));
     let mut out = Fragment::default();
+    // The derived assets taken so far, by name: each is listed once.
+    let mut assets: HashSet<String> = HashSet::new();
     let group = (!p.group.is_empty()).then(|| format!("{}/group", ctx.node_id));
     if let Some(key) = &group {
         out.items.push(FragItem {
@@ -144,7 +147,7 @@ fn merge(ctx: &NodeCtx, p: &FragmentMergeParams) -> Result<Output, String> {
             out.items.push(item);
         }
         for asset in &part.assets {
-            if !out.assets.iter().any(|(name, _)| name == &asset.0) {
+            if assets.insert(asset.0.clone()) {
                 out.assets.push(asset.clone());
             }
         }

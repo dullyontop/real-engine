@@ -1,5 +1,6 @@
-//! The inspector: the selected entity's components and their fields, with
-//! controls to add and remove components.
+//! The inspector: the active entity's components and their fields, with
+//! controls to add and remove components. With several entities selected it
+//! says how many above the active one, which is the one it edits.
 
 use std::collections::BTreeSet;
 
@@ -7,7 +8,7 @@ use egui::RichText;
 use re_scene::{Generated, World};
 use serde_json::json;
 
-use crate::editor::{Action, Editor, command};
+use crate::editor::{Action, Editor, Pending, command, note_key};
 use crate::widgets::{FieldTarget, field_widget};
 
 pub(super) fn inspector(
@@ -17,10 +18,15 @@ pub(super) fn inspector(
     actions: &mut Vec<Action>,
 ) {
     ui.heading("Inspector");
-    let Some(id) = ed.selected.clone() else {
+    let Some(id) = ed.selection.active().map(str::to_string) else {
         ui.label(RichText::new("Select an entity in the hierarchy.").weak());
         return;
     };
+    let count = ed.selection.len();
+    if count > 1 {
+        ui.label(RichText::new(format!("{count} selected; showing the active one")).weak())
+            .on_hover_text("The last one selected. Editing several at once is not supported yet.");
+    }
     let Ok(e) = world.entity(&id) else {
         ui.label(RichText::new(format!("{id} no longer exists.")).weak());
         return;
@@ -37,6 +43,14 @@ pub(super) fn inspector(
             ))
             .weak(),
         );
+    } else if let Some(note) = note_field(ui, &mut ed.pending, &id, world.note_of(e)) {
+        actions.push(command(
+            "scene.apply",
+            json!({
+                "label": format!("note on {id}"),
+                "ops": [{ "op": "set_note", "id": id, "note": note }],
+            }),
+        ));
     }
     let registry = &world.registry;
     let present = registry.components_of(&world.ecs, e);
@@ -97,4 +111,36 @@ pub(super) fn inspector(
                 }
             }
         });
+}
+
+/// The note kept with an authored entity in the scene file: a text field
+/// that returns its text when it loses focus changed (Escape drops the
+/// edit). A generated entity keeps no note, so it has no field.
+fn note_field(ui: &mut egui::Ui, pending: &mut Pending, id: &str, current: &str) -> Option<String> {
+    let key = note_key(id);
+    let mut text = pending
+        .texts
+        .get(&key)
+        .cloned()
+        .unwrap_or_else(|| current.to_string());
+    let r = ui
+        .add(
+            egui::TextEdit::multiline(&mut text)
+                .hint_text("Note")
+                .desired_rows(1)
+                .desired_width(f32::INFINITY),
+        )
+        .on_hover_text("Kept with the entity in the scene file; saved when the field loses focus");
+    pending.widgets(&key, std::slice::from_ref(&r));
+    if r.lost_focus() {
+        pending.texts.remove(&key);
+        let cancelled = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        return (!cancelled && text != current).then_some(text);
+    }
+    if r.has_focus() {
+        pending.texts.insert(key, text);
+    } else {
+        pending.texts.remove(&key);
+    }
+    None
 }

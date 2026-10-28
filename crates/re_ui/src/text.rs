@@ -1,5 +1,5 @@
-//! Text of `TextLabel`, `TextButton` and `TextBox`: rich-text runs, sizing
-//! (`TextScaled`), wrapping and truncation, laid out with egui's fonts.
+//! Text: rich-text runs, sizing to fit, wrapping and truncation, laid out
+//! with egui's fonts and the bundled families ([`crate::fonts`]).
 
 use std::sync::Arc;
 
@@ -7,29 +7,59 @@ use egui::epaint::text::{ByteIndex, LayoutJob, LayoutSection, TextFormat, TextWr
 use egui::{Align, FontId, Galley};
 use glam::Vec2;
 
-use super::fonts;
-use super::props::Rgba;
+use crate::fonts::{self, Face};
+use crate::tree::Rgba;
 
-/// What a text element asks for.
-#[derive(Clone, Debug)]
-pub(crate) struct TextStyle {
+/// A node's text and how it is set.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextStyle {
     pub text: String,
-    pub family: String,
-    pub weight: String,
-    pub italic: bool,
+    pub face: Face,
+    /// The size in pixels before the node's scale.
     pub size: f32,
     pub color: Rgba,
+    /// The largest whole size up to 100 that fits the box, instead of
+    /// `size`.
     pub scaled: bool,
+    /// Wraps at the box's width.
     pub wrapped: bool,
+    /// Ends text that does not fit with an ellipsis.
     pub truncate: bool,
+    /// `<b>`, `<font color="...">` and the five XML escapes.
     pub rich: bool,
+    /// Line spacing, 1 for the font's own.
     pub line_height: f32,
-    pub x_align: f32,
+    /// Where the text sits in the box: 0 left or top, 0.5 in the middle, 1
+    /// right or bottom.
+    pub align: Vec2,
+    /// The text is a text field's placeholder: a caret goes before it.
+    pub placeholder: bool,
+    /// A one-pixel outline (scaled with the node), drawn under the text.
+    pub stroke: Option<Rgba>,
+}
+
+impl Default for TextStyle {
+    fn default() -> Self {
+        TextStyle {
+            text: String::new(),
+            face: Face::default(),
+            size: 14.0,
+            color: Rgba::WHITE,
+            scaled: false,
+            wrapped: false,
+            truncate: false,
+            rich: false,
+            line_height: 1.0,
+            align: Vec2::splat(0.5),
+            placeholder: false,
+            stroke: None,
+        }
+    }
 }
 
 /// One run of text with its own weight and colour.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Run {
+pub struct Run {
     pub text: String,
     pub bold: bool,
     pub color: Option<[f32; 3]>,
@@ -84,7 +114,7 @@ fn unescape(s: &str) -> String {
 
 /// Splits rich text into runs: `<b>`, `<font color=...>` and the escapes
 /// `&lt; &gt; &quot; &apos; &amp;`. Other tags stay as text.
-pub(crate) fn runs(text: &str, rich: bool) -> Vec<Run> {
+pub fn runs(text: &str, rich: bool) -> Vec<Run> {
     if !rich {
         return vec![Run {
             text: text.to_string(),
@@ -158,11 +188,6 @@ pub(crate) fn runs(text: &str, rich: bool) -> Vec<Run> {
 fn job(style: &TextStyle, size: f32, wrap_width: Option<f32>, max_rows: usize) -> LayoutJob {
     let mut job = LayoutJob::default();
     for run in runs(&style.text, style.rich) {
-        let weight = if run.bold {
-            "Bold"
-        } else {
-            style.weight.as_str()
-        };
         let color = match run.color {
             Some(c) => Rgba([c[0], c[1], c[2], style.color.0[3]]),
             None => style.color,
@@ -173,9 +198,9 @@ fn job(style: &TextStyle, size: f32, wrap_width: Option<f32>, max_rows: usize) -
             leading_space: 0.0,
             byte_range: ByteIndex(start)..ByteIndex(job.text.len()),
             format: TextFormat {
-                font_id: FontId::new(size.max(1.0), fonts::egui_family(&style.family, weight)),
+                font_id: FontId::new(size.max(1.0), fonts::egui_family(style.face, run.bold)),
                 color: color.egui(),
-                italics: style.italic,
+                italics: style.face.italic,
                 line_height: (style.line_height != 1.0)
                     .then(|| size * 1.2 * style.line_height.max(0.0)),
                 ..Default::default()
@@ -188,9 +213,9 @@ fn job(style: &TextStyle, size: f32, wrap_width: Option<f32>, max_rows: usize) -
         break_anywhere: max_rows == 1,
         overflow_character: Some('…'),
     };
-    job.halign = if style.x_align < 0.25 {
+    job.halign = if style.align.x < 0.25 {
         Align::LEFT
-    } else if style.x_align > 0.75 {
+    } else if style.align.x > 0.75 {
         Align::RIGHT
     } else {
         Align::Center
@@ -200,15 +225,41 @@ fn job(style: &TextStyle, size: f32, wrap_width: Option<f32>, max_rows: usize) -
 }
 
 /// Laid-out text.
-pub(crate) struct Laid {
+#[derive(Clone, Debug)]
+pub struct Laid {
     pub galley: Arc<Galley>,
     /// False when the text did not fit the box.
     pub fits: bool,
 }
 
+/// How [`lay_out`] sizes text.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Sizing {
+    /// The size in pixels, the node's scale applied.
+    pub size: f32,
+    pub scaled: bool,
+    pub truncate: bool,
+}
+
+impl Sizing {
+    /// As `style` asks, at `scale` times its size.
+    pub fn of(style: &TextStyle, scale: f32) -> Sizing {
+        Sizing {
+            size: style.size * scale,
+            scaled: style.scaled,
+            truncate: style.truncate,
+        }
+    }
+}
+
 /// Lays out `style` for a box of `bounds` pixels (`None` on an axis that
-/// grows with the text, for `AutomaticSize`).
-pub(crate) fn lay_out(ctx: &egui::Context, style: &TextStyle, bounds: [Option<f32>; 2]) -> Laid {
+/// grows with the text, for automatic sizes).
+pub(crate) fn lay_out(
+    ctx: &egui::Context,
+    style: &TextStyle,
+    sizing: Sizing,
+    bounds: [Option<f32>; 2],
+) -> Laid {
     let layout = |size: f32, wrap: Option<f32>, rows: usize| {
         ctx.fonts_mut(|f| f.layout_job(job(style, size, wrap, rows)))
     };
@@ -216,7 +267,7 @@ pub(crate) fn lay_out(ctx: &egui::Context, style: &TextStyle, bounds: [Option<f3
         let s = g.rect.size();
         bounds[0].is_none_or(|w| s.x <= w + 0.5) && bounds[1].is_none_or(|h| s.y <= h + 0.5)
     };
-    if style.scaled {
+    if sizing.scaled {
         // The largest whole size up to 100 that fits, wrapping at the width.
         let (mut lo, mut hi) = (1u32, 100u32);
         let mut best = layout(1.0, bounds[0], usize::MAX);
@@ -235,14 +286,18 @@ pub(crate) fn lay_out(ctx: &egui::Context, style: &TextStyle, bounds: [Option<f3
             galley: best,
         };
     }
-    let size = style.size;
-    let wrap = if style.wrapped { bounds[0] } else { None };
+    let size = sizing.size;
+    let wrap = if style.wrapped || style.scaled {
+        bounds[0]
+    } else {
+        None
+    };
     let mut g = layout(size, wrap, usize::MAX);
     let mut ok = fits(&g);
-    if !ok && style.truncate {
+    if !ok && sizing.truncate {
         let row = g.rows.first().map_or(size, |r| r.height()).max(1.0);
         let rows = match bounds[1] {
-            Some(h) if style.wrapped => ((h / row).floor() as usize).max(1),
+            Some(h) if style.wrapped || style.scaled => ((h / row).floor() as usize).max(1),
             _ => 1,
         };
         g = layout(size, bounds[0].or(wrap), rows);
@@ -255,7 +310,7 @@ pub(crate) fn lay_out(ctx: &egui::Context, style: &TextStyle, bounds: [Option<f3
 }
 
 /// The size of laid-out text in pixels.
-pub(crate) fn bounds(l: &Laid) -> Vec2 {
+pub fn bounds(l: &Laid) -> Vec2 {
     let s = l.galley.rect.size();
     Vec2::new(s.x, s.y)
 }

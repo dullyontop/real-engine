@@ -1,0 +1,9 @@
+{
+  "format": "real-engine/scene",
+  "version": 1,
+  "entities": [
+    { "id": "banner", "name": "Banner", "components": {
+        "HudText": { "text": "", "size": 28.0 },
+        "ScriptRef": { "path": "scripts/banner.luau" } } }
+  ]
+}

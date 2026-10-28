@@ -37,7 +37,7 @@ use re_scene::{Entity, World};
 
 use crate::anim::cframe_value;
 use crate::anim::pose::{self, cframe_prop};
-use crate::class::{ClassMarker, ClassRegistry};
+use crate::class::ClassRegistry;
 use crate::datatypes::CFrame;
 use crate::enums::EnumItem;
 use crate::input::{get_own, set_own};
@@ -653,13 +653,7 @@ fn humanoids(lua: &Lua) -> Result<Vec<Entity>> {
     let st = state(lua)?;
     let (classes, game) = (st.setup.classes.clone(), st.game);
     with_world(lua, |w| {
-        let mut out: Vec<Entity> = w
-            .ecs
-            .query::<(Entity, &ClassMarker)>()
-            .iter(&w.ecs)
-            .filter(|(_, m)| classes.is_a(&m.class, HUM))
-            .map(|(e, _)| e)
-            .collect();
+        let mut out = classes.instances(w, HUM);
         // Only the Humanoids in the Workspace are simulated (one in
         // `StarterPlayer.StarterCharacter` or `ReplicatedStorage` is a
         // template).
@@ -669,7 +663,6 @@ fn humanoids(lua: &Lua) -> Result<Vec<Entity>> {
                 && workspace
                     .is_some_and(|ws| re_scene::hierarchy::is_self_or_ancestor(&w.ecs, ws, *e))
         });
-        out.sort();
         out
     })
 }

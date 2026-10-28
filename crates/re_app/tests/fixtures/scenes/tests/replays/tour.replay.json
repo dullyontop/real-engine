@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "seed": 1,
+  "frames": 300,
+  "input": [
+    { "frame": 10, "action": "move", "axis": [0.5, 0.5] },
+    { "frame": 30, "action": "next", "down": true },
+    { "frame": 31, "action": "next", "down": false },
+    { "frame": 60, "action": "move", "axis": [-0.5, 0.0] },
+    { "frame": 90, "action": "next", "down": true },
+    { "frame": 91, "action": "next", "down": false },
+    { "frame": 150, "action": "next", "down": true },
+    { "frame": 151, "action": "next", "down": false },
+    { "frame": 180, "action": "move", "axis": [0.0, -0.7] },
+    { "frame": 210, "action": "next", "down": true },
+    { "frame": 211, "action": "next", "down": false },
+    { "frame": 240, "action": "move", "axis": [0.0, 0.0] }
+  ],
+  "scenes": [
+    { "frame": 30, "switch": "town" },
+    { "frame": 90, "load": "hud" },
+    { "frame": 150, "unload": "hud" },
+    { "frame": 210, "switch": "title" }
+  ]
+}

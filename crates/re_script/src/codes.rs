@@ -53,5 +53,14 @@ pub const SERVICE_UNAVAILABLE: Code = Code::new("RE3015");
 /// [`SERVICE_UNAVAILABLE`] as the `&'static str` a `HostError` carries.
 pub const SERVICE_UNAVAILABLE_STR: &str = "RE3015";
 
+/// `scene.switch`, `scene.load` or `scene.unload` named a scene the game does
+/// not have (ADR-0059 §3).
+pub const SCENE_UNKNOWN: Code = Code::new("RE3100");
+
+/// A scene request does not fit the scenes loaded: a load of a scene already
+/// loaded, an unload of the main scene or of a scene not loaded, or a kept
+/// entity that is not a root (ADR-0059 §3).
+pub const SCENE_REFUSED: Code = Code::new("RE3101");
+
 /// A script read a member the engine API does not have.
 pub const UNSUPPORTED_MEMBER: Code = Code::new("RE9001");

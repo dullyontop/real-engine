@@ -56,17 +56,10 @@ pub(super) fn viewport(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &
     }
     let view = View::new(rect, ed.view_camera(app));
 
-    let selected = ed.selected.clone();
+    let selection = ed.selection.clone();
     let navigating = ed.nav.active();
-    ed.gizmo.ui(
-        ui,
-        &response,
-        &view,
-        app,
-        selected.as_deref(),
-        navigating,
-        actions,
-    );
+    ed.gizmo
+        .ui(ui, &response, &view, app, &selection, navigating, actions);
     let taken = procedural::viewport_overlay(ed, ui, app, &view, actions);
 
     // Icons and the axis indicator, lit under the pointer unless the camera
@@ -79,7 +72,7 @@ pub(super) fn viewport(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &
     let icon = match (&view.screen, ed.view.icons) {
         (Some(screen), true) => {
             let icons = overlay::icons(app.world());
-            overlay::draw_icons(&painter, screen, &icons, selected.as_deref(), pointer)
+            overlay::draw_icons(&painter, screen, &icons, &selection, pointer)
         }
         _ => None,
     };
@@ -92,10 +85,10 @@ pub(super) fn viewport(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &
         None
     };
     // A click (not a drag, not with Alt, which orbits) on an axis end looks
-    // along it; on an icon, selects its light or camera. The gizmo's
-    // handles take a click before both.
-    let alt = ui.input(|i| i.modifiers.alt);
-    if response.clicked() && !alt && pointer.is_some() {
+    // along it; on an icon, selects its light or camera (Ctrl toggles it,
+    // Shift adds it). The gizmo's handles take a click before both.
+    let modifiers = ui.input(|i| i.modifiers);
+    if response.clicked() && !modifiers.alt && pointer.is_some() {
         if let Some(axis) = axis {
             if !ed.view.game_camera
                 && let Some(cam) = ed.camera.as_mut()
@@ -103,7 +96,7 @@ pub(super) fn viewport(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &
                 cam.look_from(axis);
             }
         } else if let Some(id) = icon {
-            ed.select_next = Some(id);
+            ed.select_next = Some(selection.clicked(&id, modifiers));
         }
     }
 
@@ -127,7 +120,7 @@ fn view_bar(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Vec<Act
             ui.checkbox(&mut ed.view.icons, "Light and camera icons");
             ui.checkbox(&mut ed.view.outline, "Selection outline");
             ui.separator();
-            let has_selection = ed.selected.is_some();
+            let has_selection = !ed.selection.is_empty();
             if ui
                 .add_enabled(has_selection, egui::Button::new("Frame selection (F)"))
                 .clicked()

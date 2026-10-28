@@ -300,8 +300,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # D2 (ADR-0036): every replay of the island, the plaza and the valley, run on
-  # each platform, writes its state_hash every 60 frames; `d2` compares them.
+  # D2 (ADR-0036): every replay of the island, the plaza, the valley and the
+  # scenes fixture (ADR-0059), run on each platform, writes its state_hash
+  # every 60 frames; `d2` compares them.
   d2-run:
     strategy:
       fail-fast: false
@@ -325,7 +326,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p out
-          cargo xtask d2 --project examples/island --project examples/plaza --project examples/valley --json --out out/d2.json
+          cargo xtask d2 --project examples/island --project examples/plaza --project examples/valley --project crates/re_app/tests/fixtures/scenes --json --out out/d2.json
       - uses: actions/upload-artifact@v7
         with:
           name: d2-${{ runner.os }}

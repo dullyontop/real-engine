@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use re_geom::polygon::{self, Shape, Triangles};
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::{
     NodeCtx, NodeDef, NodeError, NodeRegistry, NodeSpec, Params, PortDef, Streaming, within,
@@ -20,7 +20,7 @@ use crate::value::{Field, MeshValue, Output, Points, PortType, Shapes};
 const MAX_DISTANCE: f64 = 100_000.0;
 
 /// Parameters of `shape.polygon`.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct PolygonParams {
     /// The outer contour, `[x, z]` in metres (3 points or more, either
@@ -52,7 +52,7 @@ fn polygon_node(_: &NodeCtx, p: &PolygonParams) -> Result<Output, NodeError> {
 }
 
 /// A boolean operation.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BoolOp {
     /// Area in `a` or `b`.
@@ -67,7 +67,7 @@ pub enum BoolOp {
 }
 
 /// Parameters of `shape.boolean`.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct BooleanParams {
     /// `union`, `intersect`, `difference` (`a` minus `b`) or `xor`.
@@ -89,7 +89,7 @@ fn boolean(ctx: &NodeCtx, p: &BooleanParams) -> Result<Output, NodeError> {
 }
 
 /// How an offset turns corners.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Join {
     /// An arc.
@@ -102,7 +102,7 @@ pub enum Join {
 }
 
 /// Parameters of `shape.offset`.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct OffsetParams {
     /// Metres to grow the shapes by (negative shrinks them).
@@ -135,7 +135,7 @@ fn offset(ctx: &NodeCtx, p: &OffsetParams) -> Result<Output, NodeError> {
 }
 
 /// Parameters of `shape.mesh`.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct ShapeMeshParams {
     /// The height of the flat mesh, in metres.
@@ -191,7 +191,7 @@ fn shared_triangles(ctx: &NodeCtx, shapes: &Shapes) -> Result<Arc<Triangles>, No
 }
 
 /// Parameters of `field.from_shapes`.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct FromShapesParams {
     /// Samples per side when no `field` is connected (2 to 4097).
@@ -311,7 +311,7 @@ pub(super) fn dist2_to_segment(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
 }
 
 /// Which points `points.mask` keeps.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Keep {
     /// Points inside the shapes.
@@ -322,7 +322,7 @@ pub enum Keep {
 }
 
 /// Parameters of `points.mask`.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct MaskParams {
     /// `inside` or `outside`.

@@ -15,16 +15,24 @@
 //! **Load** is reading the scene file, spawning it, and the first simulation
 //! sync (which builds the static cells). **Step** is one 60 Hz frame of
 //! `re_compat::physics::step`: the sync with the world, the substeps and the
-//! write-back. **Peak RSS** is the process's high-water mark.
+//! write-back. **Frame** is then one 60 Hz frame of the compat runtime on the
+//! same map, as a server runs it ([`CompatVm::frame`]) with one R15
+//! character standing on the map: the phases that find the Humanoids,
+//! seats, Animators and sounds of the world, the physics, and the script
+//! scheduler, timed phase by phase. **Peak RSS** is the process's
+//! high-water mark.
 
 #[path = "../tests/fixtures/physics/bigmap.rs"]
 mod bigmap;
 
+use std::sync::Arc;
 use std::time::Duration;
 
-use re_compat::{CompatSetup, physics};
+use re_compat::{CompatSetup, CompatVm, SignalBehavior, physics};
 use re_core::time::Instant;
 use re_scene::World;
+use re_script::host::{NoServices, WorldHost};
+use re_script::{ContextKind, RuntimeConfig};
 
 const LOAD_BUDGET_S: f64 = 30.0;
 const STEP_BUDGET_MS: f64 = 8.0;
@@ -152,25 +160,31 @@ fn main() {
         times.push(t.elapsed());
         assert!(d.is_empty(), "frame {f}: {d:?}");
     }
-    let n = times.len().max(1) as f64;
-    let mean = times.iter().map(|d| ms(*d)).sum::<f64>() / n;
-    let mut sorted: Vec<f64> = times.iter().map(|d| ms(*d)).collect();
-    sorted.sort_by(f64::total_cmp);
-    let pct = |p: f64| {
-        sorted
-            .get(((sorted.len() as f64 - 1.0) * p) as usize)
-            .copied()
-            .unwrap_or(0.0)
-    };
+    let step = Stats::of(&times);
+    let mean = step.mean;
+    let frame = runtime_frames(&setup, &mut world, a.frames);
     let rss = peak_rss_mb();
     let load_s = load.as_secs_f64();
     let pass = load_s <= LOAD_BUDGET_S && mean <= STEP_BUDGET_MS && rss <= RSS_BUDGET_MB;
 
     if a.json {
+        let phases: Vec<String> = PHASES
+            .iter()
+            .zip(&frame.phases)
+            .map(|(name, d)| {
+                format!(
+                    "\"{name}\":{:.3}",
+                    ms(*d) / frame.frames.len().max(1) as f64
+                )
+            })
+            .collect();
+        let f = Stats::of(&frame.frames);
         println!(
             "{{\"parts\":{},\"frames\":{},\"seed\":{},\"touch_every\":{},\"parts_moved\":{moved},\
              \"scene_file_mb\":{file_mb:.1},\"cells\":{cells},\"bodies\":{bodies},\"simulated_parts\":{simulated},\
              \"load_s\":{load_s:.3},\"step_mean_ms\":{mean:.3},\"step_p50_ms\":{:.3},\"step_p95_ms\":{:.3},\"step_max_ms\":{:.3},\
+             \"frame_mean_ms\":{:.3},\"frame_p50_ms\":{:.3},\"frame_p95_ms\":{:.3},\"frame_max_ms\":{:.3},\
+             \"frame_phase_mean_ms\":{{{}}},\
              \"peak_rss_mb\":{rss:.0},\
              \"budgets\":{{\"load_s\":{LOAD_BUDGET_S},\"step_mean_ms\":{STEP_BUDGET_MS},\"peak_rss_mb\":{RSS_BUDGET_MB}}},\
              \"pass\":{pass}}}",
@@ -178,9 +192,14 @@ fn main() {
             a.frames,
             a.seed,
             a.touch_every,
-            pct(0.5),
-            pct(0.95),
-            pct(1.0),
+            step.p50,
+            step.p95,
+            step.max,
+            f.mean,
+            f.p50,
+            f.p95,
+            f.max,
+            phases.join(","),
         );
     } else {
         println!(
@@ -190,15 +209,124 @@ fn main() {
         println!("load {load_s:.2} s (budget {LOAD_BUDGET_S} s)");
         println!(
             "step mean {mean:.3} ms, p50 {:.3}, p95 {:.3}, max {:.3} over {} frames (budget {STEP_BUDGET_MS} ms)",
-            pct(0.5),
-            pct(0.95),
-            pct(1.0),
-            a.frames
+            step.p50, step.p95, step.max, a.frames
         );
+        let f = Stats::of(&frame.frames);
+        println!(
+            "frame mean {:.3} ms, p50 {:.3}, p95 {:.3}, max {:.3} over {} frames",
+            f.mean,
+            f.p50,
+            f.p95,
+            f.max,
+            frame.frames.len()
+        );
+        for (name, d) in PHASES.iter().zip(&frame.phases) {
+            println!(
+                "  {name} mean {:.3} ms",
+                ms(*d) / frame.frames.len().max(1) as f64
+            );
+        }
         println!("peak RSS {rss:.0} MB (budget {RSS_BUDGET_MB} MB)");
         println!("{}", if pass { "PASS" } else { "FAIL" });
     }
     if !pass {
         std::process::exit(1);
     }
+}
+
+/// The mean and percentiles of some durations, in milliseconds.
+struct Stats {
+    mean: f64,
+    p50: f64,
+    p95: f64,
+    max: f64,
+}
+
+impl Stats {
+    fn of(times: &[Duration]) -> Stats {
+        let mut sorted: Vec<f64> = times.iter().map(|d| ms(*d)).collect();
+        sorted.sort_by(f64::total_cmp);
+        let pct = |p: f64| {
+            sorted
+                .get(((sorted.len() as f64 - 1.0) * p) as usize)
+                .copied()
+                .unwrap_or(0.0)
+        };
+        Stats {
+            mean: sorted.iter().sum::<f64>() / sorted.len().max(1) as f64,
+            p50: pct(0.5),
+            p95: pct(0.95),
+            max: pct(1.0),
+        }
+    }
+}
+
+/// The phases of a compat runtime frame, in the order they run.
+const PHASES: [&str; 6] = [
+    "pre_render",
+    "pre_animation",
+    "pre_simulation",
+    "physics",
+    "media",
+    "post_simulation",
+];
+
+/// The runtime frames' times, and each phase's total.
+struct Frames {
+    frames: Vec<Duration>,
+    phases: [Duration; 6],
+}
+
+/// Runs `n` frames of the compat runtime on `world`, as a server runs them,
+/// with one R15 character standing near the middle of the map.
+fn runtime_frames(setup: &Arc<CompatSetup>, world: &mut World, n: usize) -> Frames {
+    let dir = std::env::temp_dir().join(format!("re-bigmap-vm-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a temporary directory");
+    let vm = CompatVm::new(
+        setup,
+        ContextKind::Server,
+        world,
+        &RuntimeConfig::new(&dir),
+        SignalBehavior::Deferred,
+    )
+    .expect("the server context starts");
+    let workspace = re_compat::services::core::find_service(world, vm.game(), "Workspace")
+        .expect("the map has a Workspace");
+    let at = re_compat::datatypes::CFrame::from_position([0.0, 20.0, 0.0]);
+    let model = re_compat::humanoid::rig::build(world, &setup.classes, "R15", "Runner", None, at)
+        .expect("the character builds");
+    re_compat::instance::tree::set_parent(world, model, Some(workspace))
+        .expect("the character joins the Workspace");
+    let mut services = NoServices::default();
+    let mut host = WorldHost {
+        world,
+        services: &mut services,
+    };
+    let dt = 1.0 / 60.0;
+    let mut out = Frames {
+        frames: Vec::with_capacity(n),
+        phases: [Duration::ZERO; 6],
+    };
+    for f in 0..n {
+        let start = Instant::now();
+        let mut d = Vec::new();
+        let mut t = start;
+        for (i, phase) in out.phases.iter_mut().enumerate() {
+            d.extend(match i {
+                0 => vm.pre_render(&mut host, dt),
+                1 => vm.pre_animation(&mut host, dt),
+                2 => vm.pre_simulation(&mut host, dt),
+                3 => vm.physics(&mut host, dt),
+                4 => vm.media(&mut host, dt),
+                _ => vm.post_simulation(&mut host, dt),
+            });
+            let now = Instant::now();
+            *phase += now - t;
+            t = now;
+        }
+        out.frames.push(start.elapsed());
+        assert!(d.is_empty(), "runtime frame {f}: {d:?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    out
 }

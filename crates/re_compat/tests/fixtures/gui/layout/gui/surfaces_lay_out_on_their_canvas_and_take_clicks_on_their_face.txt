@@ -1,0 +1,70 @@
+frame 0: 1 drawn, hovered none, sinks false, focus none
+  surface ReplicatedStorage/PlayerGui/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+  item ReplicatedStorage/PlayerGui/SurfaceGui/TextButton at (150.0, 75.0) size (100.0, 50.0) clip (0.0, 0.0, 400.0, 200.0)
+  ReplicatedStorage/PlayerGui/SurfaceGui.AbsoluteSize = (400.0, 200.0)
+  ReplicatedStorage/PlayerGui/SurfaceGui.AbsolutePosition = (0.0, 0.0)
+  ReplicatedStorage/PlayerGui/SurfaceGui/TextButton.AbsolutePosition = (150.0, 75.0)
+  ReplicatedStorage/PlayerGui/SurfaceGui/TextButton.AbsoluteSize = (100.0, 50.0)
+  ReplicatedStorage/PlayerGui/SurfaceGui/TextButton.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/SurfaceGui/TextButton.TextBounds = (39.65800094604492, 20.0)
+  ReplicatedStorage/PlayerGui/SurfaceGui/TextButton.TextFits = true
+frame 1: 1 drawn, hovered ReplicatedStorage/PlayerGui/SurfaceGui/TextButton, sinks true, focus none
+  surface ReplicatedStorage/PlayerGui/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+frame 2: 1 drawn, hovered ReplicatedStorage/PlayerGui/SurfaceGui/TextButton, sinks true, focus none
+  surface ReplicatedStorage/PlayerGui/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+frame 3: 1 drawn, hovered none, sinks false, focus none
+  surface ReplicatedStorage/PlayerGui/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+frame 4: 1 drawn, hovered none, sinks false, focus none
+  surface ReplicatedStorage/PlayerGui/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+frame 5: 1 drawn, hovered none, sinks false, focus none
+  surface ReplicatedStorage/PlayerGui/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+frame 6: 1 drawn, hovered none, sinks false, focus none
+  surface ReplicatedStorage/PlayerGui/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+frame 7: 1 drawn, hovered none, sinks false, focus none
+  surface ReplicatedStorage/PlayerGui/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+frame 8: 1 drawn, hovered none, sinks false, focus none
+  surface ReplicatedStorage/PlayerGui/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+frame 9: 1 drawn, hovered none, sinks false, focus none
+  surface ReplicatedStorage/PlayerGui/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+frame 10: 1 drawn, hovered none, sinks false, focus none
+  surface ReplicatedStorage/PlayerGui/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+frame 11: 1 drawn, hovered none, sinks false, focus none
+  surface ReplicatedStorage/PlayerGui/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+frame 12: 1 drawn, hovered none, sinks false, focus none
+  surface ReplicatedStorage/PlayerGui/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+frame 13: 2 drawn, hovered ReplicatedStorage/PlayerGui/ScreenGui/Frame, sinks true, focus none
+  surface ReplicatedStorage/PlayerGui/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame at (0.0, 36.0) size (800.0, 564.0) clip (0.0, 0.0, 800.0, 600.0)
+  ReplicatedStorage/PlayerGui/ScreenGui.AbsoluteSize = (800.0, 564.0)
+  ReplicatedStorage/PlayerGui/ScreenGui.AbsolutePosition = (0.0, 0.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame.AbsolutePosition = (0.0, 0.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame.AbsoluteSize = (800.0, 564.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame.AbsoluteRotation = 0.0
+frame 14: 2 drawn, hovered ReplicatedStorage/PlayerGui/ScreenGui/Frame, sinks true, focus none
+  surface ReplicatedStorage/PlayerGui/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+frame 15: 2 drawn, hovered none, sinks false, focus none
+  surface ReplicatedStorage/PlayerGui/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+frame 16: 1 drawn, hovered ReplicatedStorage/PlayerGui/SurfaceGui/TextButton, sinks true, focus none
+  surface ReplicatedStorage/PlayerGui/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+  gone ReplicatedStorage/PlayerGui/ScreenGui/Frame
+frame 17: 1 drawn, hovered ReplicatedStorage/PlayerGui/SurfaceGui/TextButton, sinks true, focus none
+  surface ReplicatedStorage/PlayerGui/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+frame 18: 1 drawn, hovered none, sinks false, focus none
+  surface ReplicatedStorage/PlayerGui/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+frame 19: 1 drawn, hovered none, sinks false, focus none
+  surface ReplicatedStorage/PlayerGui/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+frame 20: 1 drawn, hovered none, sinks false, focus none
+  surface ReplicatedStorage/PlayerGui/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+frame 21: 1 drawn, hovered none, sinks false, focus none
+  surface ReplicatedStorage/PlayerGui/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+frame 22: 1 drawn, hovered none, sinks false, focus none
+  surface Workspace/Part/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+  item Workspace/Part/SurfaceGui/TextButton at (150.0, 75.0) size (100.0, 50.0) clip (0.0, 0.0, 400.0, 200.0)
+frame 23: 1 drawn, hovered none, sinks false, focus none
+  surface Workspace/Part/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+frame 24: 1 drawn, hovered none, sinks false, focus none
+  surface Workspace/Part/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+frame 25: 1 drawn, hovered none, sinks false, focus none
+  surface Workspace/Part/SurfaceGui canvas (400.0, 200.0) texture [400, 200] at 1.0 pixels a point
+frame 26: 0 drawn, hovered none, sinks false, focus none
+  gone Workspace/Part/SurfaceGui/TextButton

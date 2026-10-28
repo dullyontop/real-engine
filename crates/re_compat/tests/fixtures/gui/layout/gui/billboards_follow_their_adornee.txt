@@ -1,0 +1,25 @@
+frame 0: 1 drawn, hovered none, sinks false, focus none
+  item ReplicatedStorage/PlayerGui/BillboardGui/Frame at (357.15555, 273.5778) size (85.68888, 52.84444) clip (0.0, 0.0, 800.0, 600.0)
+  ReplicatedStorage/PlayerGui/BillboardGui.AbsoluteSize = (85.68888092041016, 52.84444046020508)
+  ReplicatedStorage/PlayerGui/BillboardGui.AbsolutePosition = (357.1555480957031, 237.57778930664063)
+  ReplicatedStorage/PlayerGui/BillboardGui/Frame.AbsolutePosition = (357.1555480957031, 237.57778930664063)
+  ReplicatedStorage/PlayerGui/BillboardGui/Frame.AbsoluteSize = (85.68888092041016, 52.84444046020508)
+  ReplicatedStorage/PlayerGui/BillboardGui/Frame.AbsoluteRotation = 0.0
+frame 1: 1 drawn, hovered none, sinks false, focus none
+  item ReplicatedStorage/PlayerGui/BillboardGui/Frame at (378.5778, 284.28888) size (42.84444, 31.42222) clip (0.0, 0.0, 800.0, 600.0)
+  ReplicatedStorage/PlayerGui/BillboardGui.AbsoluteSize = (42.84444046020508, 31.42222023010254)
+  ReplicatedStorage/PlayerGui/BillboardGui.AbsolutePosition = (378.5777893066406, 248.28887939453125)
+  ReplicatedStorage/PlayerGui/BillboardGui/Frame.AbsolutePosition = (378.5777893066406, 248.28887939453125)
+  ReplicatedStorage/PlayerGui/BillboardGui/Frame.AbsoluteSize = (42.84444046020508, 31.42222023010254)
+frame 2: 0 drawn, hovered none, sinks false, focus none
+  gone ReplicatedStorage/PlayerGui/BillboardGui/Frame
+frame 3: 1 drawn, hovered none, sinks false, focus none
+  item ReplicatedStorage/PlayerGui/BillboardGui/Frame at (385.7185, 287.85925) size (28.56296, 24.281479) clip (0.0, 0.0, 800.0, 600.0)
+  ReplicatedStorage/PlayerGui/BillboardGui.AbsoluteSize = (28.562959671020508, 24.281478881835938)
+  ReplicatedStorage/PlayerGui/BillboardGui.AbsolutePosition = (385.718505859375, 251.8592529296875)
+  ReplicatedStorage/PlayerGui/BillboardGui/Frame.AbsolutePosition = (385.718505859375, 251.8592529296875)
+  ReplicatedStorage/PlayerGui/BillboardGui/Frame.AbsoluteSize = (28.562959671020508, 24.281478881835938)
+  ReplicatedStorage/PlayerGui/BillboardGui/Frame.AbsoluteRotation = 0.0
+frame 4: 0 drawn, hovered none, sinks false, focus none
+  gone ReplicatedStorage/PlayerGui/BillboardGui/Frame
+frame 5: 0 drawn, hovered none, sinks false, focus none

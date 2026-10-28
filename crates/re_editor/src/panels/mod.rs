@@ -15,9 +15,11 @@ mod viewport;
 use re_app::App;
 
 use crate::Panel;
-use crate::editor::{Action, Editor, Pending};
+use crate::editor::{Action, Editor};
 use crate::layout::PanelId;
+use crate::selection::Selection;
 
+pub(crate) use hierarchy::{GENERATED_NAME, Rename};
 pub(crate) use palette::palette_action;
 
 /// Draws every panel into the root `ui`.
@@ -60,8 +62,8 @@ pub(crate) fn draw(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut 
     palette::palette(ed, ui.ctx(), app, actions);
 
     actions.extend(later);
-    if let Some(id) = select_now {
-        select(ed, Some(id));
+    if let Some(selection) = select_now {
+        select(ed, selection);
     }
 }
 
@@ -93,7 +95,7 @@ impl egui_dock::TabViewer for Tabs<'_> {
                 return;
             }
             PanelId::Hierarchy => {
-                hierarchy::hierarchy(ed, ui, app.world(), actions);
+                hierarchy::hierarchy(ed, ui, app, actions);
                 Panel::Hierarchy
             }
             PanelId::Inspector => {
@@ -136,9 +138,8 @@ impl egui_dock::TabViewer for Tabs<'_> {
     }
 }
 
-fn select(ed: &mut Editor, id: Option<String>) {
-    if ed.selected != id {
-        ed.pending = Pending::default();
-    }
-    ed.selected = id;
+/// Applies a clicked selection. Input pending in the Inspector belongs to the
+/// entity it showed, so it is dropped when the active entity changes.
+fn select(ed: &mut Editor, selection: Selection) {
+    ed.change_selection(selection);
 }
