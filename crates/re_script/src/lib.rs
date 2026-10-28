@@ -49,7 +49,7 @@ pub mod sched {
 }
 
 pub use api::{DEFINITIONS_PATH, definitions, write_definitions};
-pub use budget::untimed;
+pub use budget::{trips as budget_trips, untimed};
 pub use compile::{
     COMPILER_ID, bytecode_version, chunk_mode, compile_bytecode, compile_check, compiler,
     compiler_for, luau_version,

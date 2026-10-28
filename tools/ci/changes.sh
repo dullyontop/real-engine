@@ -7,8 +7,8 @@
 # - fmt: every run but the scheduled ones.
 # - code (clippy, test, xtask): the change touches anything but documentation,
 #   which is the files under docs/ and the Markdown files at the root.
-# - full (the jobs that build release `real`: verify-*, xvfb-smoke,
-#   build-package, build-web): a pull request that touches anything but
+# - full (the jobs that build release `real`: verify, build-package,
+#   build-web and platforms): a pull request that touches anything but
 #   documentation, or a push to main that changes a build input.
 # - msrv and deny: the change touches a build input (Cargo.lock, a Cargo.toml,
 #   rust-toolchain.toml, .cargo/, deny.toml, .github/ or tools/ci/). deny also

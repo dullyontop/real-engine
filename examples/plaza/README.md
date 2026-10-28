@@ -1,8 +1,8 @@
 # Plaza
 
 A small game written in Roblox-style Luau for Real Engine's compatibility
-layer (`[compat] api = "roblox"`). CI checks the layer with it
-(`verify-plaza`).
+layer (`[compat] api = "roblox"`). CI checks the layer with it, in the
+`verify` job.
 
 Coins spawn around a grass plaza from a seed. Touching one collects it, and
 it comes back a few seconds later. The counter in the top left shows your

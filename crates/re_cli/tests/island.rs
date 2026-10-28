@@ -28,7 +28,8 @@ fn text(o: &Output) -> String {
 }
 
 /// luau-lsp is an external tool (ADR-0026): without it on PATH these tests
-/// say so and pass; `verify-demo` and the acceptance commands install it.
+/// say so and pass; CI's `test` and `verify` jobs and the acceptance commands
+/// install it.
 fn have_checker() -> bool {
     let found = Command::new("luau-lsp").arg("--version").output().is_ok();
     if !found {

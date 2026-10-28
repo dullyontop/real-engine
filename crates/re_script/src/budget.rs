@@ -32,6 +32,7 @@ thread_local! {
     static DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
     static TRIPPED: Cell<bool> = const { Cell::new(false) };
     static COUNTER: Cell<u32> = const { Cell::new(0) };
+    static TRIPS: Cell<u64> = const { Cell::new(0) };
 }
 
 unsafe extern "C-unwind" fn interrupt(state: *mut ffi::lua_State, gc: c_int) {
@@ -46,6 +47,7 @@ unsafe extern "C-unwind" fn interrupt(state: *mut ffi::lua_State, gc: c_int) {
     let tripped = TRIPPED.with(Cell::get)
         || (check && DEADLINE.with(Cell::get).is_some_and(|d| Instant::now() > d) && {
             TRIPPED.with(|t| t.set(true));
+            TRIPS.with(|n| n.set(n.get() + 1));
             true
         });
     if tripped {
@@ -91,6 +93,13 @@ pub(crate) fn arm(deadline: Instant) -> Saved {
 pub(crate) fn restore(saved: Saved) {
     DEADLINE.with(|d| d.set(saved.deadline));
     TRIPPED.with(|t| t.set(saved.tripped));
+}
+
+/// How many times a budget has tripped on the current thread. Tests count trips
+/// rather than time a runaway script, so a slow machine cannot fail them.
+#[doc(hidden)]
+pub fn trips() -> u64 {
+    TRIPS.with(Cell::get)
 }
 
 /// Runs `f` outside the budget: the deadline moves back by the time `f` took.

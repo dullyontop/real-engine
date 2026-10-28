@@ -1,10 +1,12 @@
 # CI for Real Engine (ADR-0023, docs/M1_PLAN.md WP0).
 #
 # Its checks are the merge rule (ADR-0023 and its amendments):
-# - on Ubuntu, 12: fmt, clippy, test, msrv, deny, xtask, verify-demo,
-#   xvfb-smoke, verify-plaza (M2) and verify-valley (WP28; it also checks the
-#   sample game, examples/town); build-web (WP29 PR "portable"); build-package,
-#   the packaged Linux games (ADR-0037, WP19 PR "bundles");
+# - on Ubuntu, 9: fmt, clippy, test, msrv, deny, xtask; verify, every
+#   example's checks on one build of release `real` (the island's, the
+#   plaza's of M2, the valley's of WP28 and the sample game's, examples/town;
+#   ADR-0023's amendment for WP31 PR "one build"); build-web (WP29 PR
+#   "portable"); build-package, the packaged Linux games (ADR-0037, WP19 PR
+#   "bundles");
 # - while the repository is public, the Windows and macOS checks and d2 of
 #   platforms.yml, which the `platforms` job calls with the release checks
 #   (ADR-0023's amendment for the public repository). A private repository's
@@ -47,15 +49,18 @@ on:
   workflow_dispatch:
 
 concurrency:
+  # A new push to a PR cancels the PR's older run. A push to main cancels no
+  # run: a job cancelled before its end saves no cargo cache, and PR runs
+  # restore main's. Of the pushes that come while a run on main goes, only the
+  # newest waits for it (ADR-0023's amendment for WP31 PR "one build").
   group: ci-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_BUILD_JOBS: 2
 
 jobs:
   changes:
@@ -180,10 +185,17 @@ jobs:
       - uses: ./.github/actions/linux-setup
       - run: cargo xtask check
 
-  verify-demo:
+  verify:
+    # Every example's checks, with release `real` built once (ADR-0023's
+    # amendment for WP31 PR "one build"): the island's (M1_PLAN), the plaza's
+    # (M2_PLAN), the valley's (M3_PLAN WP28) and the sample game's
+    # (examples/town, WP48), each step as the job that checked it before
+    # (verify-demo, xvfb-smoke, verify-plaza and verify-valley). Each check
+    # runs whenever the build passed, so a failing example does not hide the
+    # others, and the job fails if any check failed.
     needs: changes
     if: needs.changes.outputs.full == 'true'
-    timeout-minutes: 50
+    timeout-minutes: 60
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -195,11 +207,17 @@ jobs:
           curl -fsSL -o /tmp/luau-lsp.zip https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-linux-x86_64.zip
           echo "1a2ea1ae4f98f8946cefd970a4b54853e11ab4775e6932faa7f60cf920346567  /tmp/luau-lsp.zip" | sha256sum -c -
           sudo unzip -o /tmp/luau-lsp.zip -d /usr/local/bin && sudo chmod +x /usr/local/bin/luau-lsp
-      - name: real verify on the demo
+      - name: Build release real
+        id: build
         run: |
+          cargo build --locked --release -p re_cli
           mkdir -p out
-          cargo run --locked --release -p re_cli -- verify --project examples/island --json > out/verify.json
-      - name: Check the verify report (M1_PLAN, definition of done item 2)
+
+      - name: "island: real verify"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: target/release/real verify --project examples/island --json > out/verify-island.json
+      - name: "island: check the verify report (M1_PLAN, definition of done item 2)"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         # verify exits 0 when a stage is skipped, so the report itself is checked:
         # every stage ran and passed, at least three replays (each run twice with
         # the same state_hash, one of them regenerating the island, one the full
@@ -215,34 +233,24 @@ jobs:
             and ([.stages[] | select(.name == "goldens") | .data.checks[]] as $g
                  | ($g | length) >= 4 and all($g[]; .matches))
             and (.perf | type == "object")
-          ' out/verify.json
-          jq -r '.stages[] | "\(.name): ok=\(.ok)"' out/verify.json
-          jq -r '.stages[] | select(.name == "replays") | .data.runs[] | "replay \(.file): \(.frames) frames, deterministic=\(.deterministic), regenerations=\(.regenerations | length)"' out/verify.json
-          jq -r '.stages[] | select(.name == "goldens") | .data.checks[] | "golden \(.golden): \(.summary)"' out/verify.json
+          ' out/verify-island.json
+          jq -r '.stages[] | "\(.name): ok=\(.ok)"' out/verify-island.json
+          jq -r '.stages[] | select(.name == "replays") | .data.runs[] | "replay \(.file): \(.frames) frames, deterministic=\(.deterministic), regenerations=\(.regenerations | length)"' out/verify-island.json
+          jq -r '.stages[] | select(.name == "goldens") | .data.checks[] | "golden \(.golden): \(.summary)"' out/verify-island.json
+      - name: "island: windowed run under Xvfb (must print RUN OK)"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          xvfb-run -a -s "-screen 0 1280x720x24" target/release/real run --project examples/island --frames 300 --exit-after | tee out/run-island.log
+          grep -qx 'RUN OK' out/run-island.log
 
-  verify-plaza:
-    needs: changes
-    if: needs.changes.outputs.full == 'true'
-    timeout-minutes: 45
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/linux-setup
-        with:
-          cargo-cache: release
-      - name: Install luau-lsp 1.70.1
-        run: |
-          curl -fsSL -o /tmp/luau-lsp.zip https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-linux-x86_64.zip
-          echo "1a2ea1ae4f98f8946cefd970a4b54853e11ab4775e6932faa7f60cf920346567  /tmp/luau-lsp.zip" | sha256sum -c -
-          sudo unzip -o /tmp/luau-lsp.zip -d /usr/local/bin && sudo chmod +x /usr/local/bin/luau-lsp
-      - run: cargo build --locked --release -p re_cli
-      - name: real check --types on the plaza
+      - name: "plaza: real check --types"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: target/release/real check --types --project examples/plaza
-      - name: real verify on the plaza
-        run: |
-          mkdir -p out
-          target/release/real verify --project examples/plaza --json > out/verify.json
-      - name: Check the verify report (M2_PLAN, definition of done item 2)
+      - name: "plaza: real verify"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: target/release/real verify --project examples/plaza --json > out/verify-plaza.json
+      - name: "plaza: check the verify report (M2_PLAN, definition of done item 2)"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         # Every stage ran and passed: the boot ran its 600 frames with no
         # uncaught error or stuck yield, the scan found nothing missing, at least
         # two replays ran twice with the same state_hash, the goldens match, and
@@ -263,46 +271,30 @@ jobs:
             and ([.stages[] | select(.name == "goldens") | .data.checks[]] as $g
                  | ($g | length) >= 2 and all($g[]; .matches))
             and (.perf | type == "object")
-          ' out/verify.json
-          jq -r '.stages[] | "\(.name): ok=\(.ok)"' out/verify.json
-          jq -r '.stages[] | select(.name == "replays") | .data.runs[] | "replay \(.file): \(.frames) frames, deterministic=\(.deterministic)"' out/verify.json
-          jq -r '.stages[] | select(.name == "net") | .data.runs[] | "networked \(.replay) over \(.transport): \(.frames) frames, same=\(.same)"' out/verify.json
-          jq -r '.stages[] | select(.name == "goldens") | .data.checks[] | "golden \(.golden): \(.summary)"' out/verify.json
-      - name: Windowed run under Xvfb (must print RUN OK)
+          ' out/verify-plaza.json
+          jq -r '.stages[] | "\(.name): ok=\(.ok)"' out/verify-plaza.json
+          jq -r '.stages[] | select(.name == "replays") | .data.runs[] | "replay \(.file): \(.frames) frames, deterministic=\(.deterministic)"' out/verify-plaza.json
+          jq -r '.stages[] | select(.name == "net") | .data.runs[] | "networked \(.replay) over \(.transport): \(.frames) frames, same=\(.same)"' out/verify-plaza.json
+          jq -r '.stages[] | select(.name == "goldens") | .data.checks[] | "golden \(.golden): \(.summary)"' out/verify-plaza.json
+      - name: "plaza: windowed run under Xvfb (must print RUN OK)"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
-          xvfb-run -a -s "-screen 0 1280x720x24" target/release/real run --project examples/plaza --frames 300 --exit-after | tee out/run.log
-          grep -qx 'RUN OK' out/run.log
+          xvfb-run -a -s "-screen 0 1280x720x24" target/release/real run --project examples/plaza --frames 300 --exit-after | tee out/run-plaza.log
+          grep -qx 'RUN OK' out/run-plaza.log
 
-  verify-valley:
-    # The M3 example (M3_PLAN WP28): a streamed world (ADR-0042). ADR-0023's
-    # WP28 amendment makes it required. The sample game (examples/town) is
-    # checked here too, after the valley, sharing the build.
-    needs: changes
-    if: needs.changes.outputs.full == 'true'
-    timeout-minutes: 50
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/linux-setup
-        with:
-          cargo-cache: release
-      - name: Install luau-lsp 1.70.1
-        run: |
-          curl -fsSL -o /tmp/luau-lsp.zip https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-linux-x86_64.zip
-          echo "1a2ea1ae4f98f8946cefd970a4b54853e11ab4775e6932faa7f60cf920346567  /tmp/luau-lsp.zip" | sha256sum -c -
-          sudo unzip -o /tmp/luau-lsp.zip -d /usr/local/bin && sudo chmod +x /usr/local/bin/luau-lsp
-      - run: cargo build --locked --release -p re_cli
-      - name: The committed walker model and sounds are what their generators write
+      - name: "valley: the committed walker model and sounds are what their generators write"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           (cd examples/valley && python3 tools/make_walker.py && python3 tools/make_sounds.py)
           git diff --exit-code -- examples/valley/models/walker.glb examples/valley/assets
-      - name: real check --types on the valley
+      - name: "valley: real check --types"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: target/release/real check --types --project examples/valley
-      - name: real verify on the valley
-        run: |
-          mkdir -p out
-          target/release/real verify --project examples/valley --json > out/verify.json
-      - name: Check the verify report (M3_PLAN WP28)
+      - name: "valley: real verify"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: target/release/real verify --project examples/valley --json > out/verify-valley.json
+      - name: "valley: check the verify report (M3_PLAN WP28)"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         # Every stage ran and passed, the walk, drive, cross-cell, getout and
         # overlook replays each ran twice with the same state_hash, and at least
         # eight goldens match.
@@ -321,29 +313,36 @@ jobs:
             and ([.stages[] | select(.name == "goldens") | .data.checks[]] as $g
                  | ($g | length) >= 8 and all($g[]; .matches))
             and (.perf | type == "object")
-          ' out/verify.json
-          jq -r '.stages[] | "\(.name): ok=\(.ok)"' out/verify.json
-          jq -r '.stages[] | select(.name == "replays") | .data.runs[] | "replay \(.file): \(.frames) frames, deterministic=\(.deterministic), state_hash=\(.state_hash)"' out/verify.json
-          jq -r '.stages[] | select(.name == "goldens") | .data.checks[] | "golden \(.golden): \(.summary)"' out/verify.json
-      - name: real verify on the valley with GL
+          ' out/verify-valley.json
+          jq -r '.stages[] | "\(.name): ok=\(.ok)"' out/verify-valley.json
+          jq -r '.stages[] | select(.name == "replays") | .data.runs[] | "replay \(.file): \(.frames) frames, deterministic=\(.deterministic), state_hash=\(.state_hash)"' out/verify-valley.json
+          jq -r '.stages[] | select(.name == "goldens") | .data.checks[] | "golden \(.golden): \(.summary)"' out/verify-valley.json
+      - name: "valley: real verify with GL"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         env:
           RE_BACKENDS: gl
         run: |
-          target/release/real verify --project examples/valley --json > out/verify-gl.json
-          jq -e '.ok == true and ([.stages[] | select(.name == "goldens") | .data.checks[]] | length >= 8 and all(.[]; .matches))' out/verify-gl.json
-      - name: Windowed run under Xvfb (must print RUN OK)
+          target/release/real verify --project examples/valley --json > out/verify-valley-gl.json
+          jq -e '.ok == true and ([.stages[] | select(.name == "goldens") | .data.checks[]] | length >= 8 and all(.[]; .matches))' out/verify-valley-gl.json
+      - name: "valley: windowed run under Xvfb (must print RUN OK)"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
-          xvfb-run -a -s "-screen 0 1280x720x24" target/release/real run --project examples/valley --frames 300 --exit-after | tee out/run.log
-          grep -qx 'RUN OK' out/run.log
-      - name: The committed town models and sounds are what their generators write
+          xvfb-run -a -s "-screen 0 1280x720x24" target/release/real run --project examples/valley --frames 300 --exit-after | tee out/run-valley.log
+          grep -qx 'RUN OK' out/run-valley.log
+
+      - name: "town: the committed models and sounds are what their generators write"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           (cd examples/town && python3 tools/make_models.py && python3 tools/make_sounds.py)
           git diff --exit-code -- examples/town/models examples/town/assets
-      - name: real check --types on the town
+      - name: "town: real check --types"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: target/release/real check --types --project examples/town
-      - name: real verify on the town
+      - name: "town: real verify"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: target/release/real verify --project examples/town --json > out/verify-town.json
-      - name: Check the town's verify report
+      - name: "town: check the verify report"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         # Every stage ran and passed, the drive, shift and newtown replays each
         # ran twice with the same state_hash, and at least seven goldens match.
         run: |
@@ -361,39 +360,23 @@ jobs:
           ' out/verify-town.json
           jq -r '.stages[] | select(.name == "replays") | .data.runs[] | "replay \(.file): \(.frames) frames, deterministic=\(.deterministic), state_hash=\(.state_hash)"' out/verify-town.json
           jq -r '.stages[] | select(.name == "goldens") | .data.checks[] | "golden \(.golden): \(.summary)"' out/verify-town.json
-      - name: real verify on the town with GL
+      - name: "town: real verify with GL"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         env:
           RE_BACKENDS: gl
         run: |
           target/release/real verify --project examples/town --json > out/verify-town-gl.json
           jq -e '.ok == true and ([.stages[] | select(.name == "goldens") | .data.checks[]] | length >= 7 and all(.[]; .matches))' out/verify-town-gl.json
+
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: verify-valley
+          name: verify
           path: |
-            out/verify*.json
-            examples/valley/.real/out/goldens/
-            examples/town/.real/out/goldens/
+            out/
+            examples/*/.real/out/goldens/
           if-no-files-found: ignore
           retention-days: 14
-
-  xvfb-smoke:
-    needs: changes
-    if: needs.changes.outputs.full == 'true'
-    timeout-minutes: 45
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/linux-setup
-        with:
-          cargo-cache: release
-      - run: cargo build --locked --release -p re_cli
-      - name: Windowed run under Xvfb (must print RUN OK)
-        run: |
-          mkdir -p out
-          xvfb-run -a -s "-screen 0 1280x720x24" target/release/real run --project examples/island --frames 300 --exit-after | tee out/run.log
-          grep -qx 'RUN OK' out/run.log
 
   build-package:
     # ADR-0037 (WP19): `real build` makes the Linux game folder (with its

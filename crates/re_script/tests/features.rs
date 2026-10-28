@@ -390,11 +390,16 @@ fn reloading_an_entry_script_reconnects_its_callbacks() {
 #[test]
 fn cpu_budget_stops_runaway_loops_and_the_context_stays_usable() {
     let mut rig = Rig::with_config(Rig::budget(RuntimeConfig::new(project()), 20));
-    let t = Instant::now();
+    // The budget's trips are counted rather than the loops timed, so a loaded
+    // machine cannot fail the test (ADR-0023's amendment for WP31 PR "one build").
+    let trips = re_script::budget_trips();
     let d = rig.exec_err("while true do end");
-    println!("after {:?}", t.elapsed());
     assert_eq!(d.code, codes::TIMEOUT);
-    assert!(t.elapsed() < Duration::from_secs(2));
+    assert_eq!(
+        re_script::budget_trips(),
+        trips + 1,
+        "the budget stopped the loop"
+    );
     assert_eq!(rig.exec("return 40 + 2").unwrap(), 42);
 
     // In a script thread: the thread ends, the context keeps going.
@@ -405,11 +410,16 @@ fn cpu_budget_stops_runaway_loops_and_the_context_stays_usable() {
     assert!(rig.step(STEP).is_empty());
     assert_eq!(rig.output(), ["still alive"]);
 
-    // pcall cannot swallow it: the budget stays tripped until re-armed.
-    let t = Instant::now();
+    // pcall cannot swallow it: the budget stays tripped until re-armed, so it
+    // trips once, and the outer loop's next safepoint raises outside the pcall.
+    let trips = re_script::budget_trips();
     let d = rig.exec_err("for i = 1, 1e9 do pcall(function() while true do end end) end");
     assert_eq!(d.code, codes::TIMEOUT);
-    assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
+    assert_eq!(
+        re_script::budget_trips(),
+        trips + 1,
+        "one trip, never re-armed"
+    );
     assert_eq!(rig.exec("return 'ok'").unwrap(), "ok");
 }
 
