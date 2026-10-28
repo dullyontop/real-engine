@@ -129,7 +129,8 @@ impl AssetMeta {
         }
     }
 
-    fn parse(text: &str, shown_meta: &str) -> Result<AssetMeta, Diagnostic> {
+    /// Parses a sidecar's text; `shown_meta` is its path, for diagnostics.
+    pub(crate) fn parse(text: &str, shown_meta: &str) -> Result<AssetMeta, Diagnostic> {
         let meta: AssetMeta = serde_json::from_str(text).map_err(|e| {
             Diagnostic::error(codes::META_INVALID, format!("invalid asset sidecar: {e}"))
                 .at(Location::file_at(shown_meta, e.line() as u32, e.column() as u32))

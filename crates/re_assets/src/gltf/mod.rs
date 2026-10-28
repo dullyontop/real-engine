@@ -414,9 +414,7 @@ pub(crate) fn import_gltf_with(
 
     let mut clips = Vec::new();
     for anim in document.animations() {
-        let name = anim
-            .name()
-            .map_or_else(|| format!("animation_{}", anim.index()), str::to_owned);
+        let name = clip_name(&anim);
         let mut targets: BTreeMap<usize, TargetChannels> = BTreeMap::new();
         let mut duration = 0.0f32;
         for channel in anim.channels() {
@@ -542,6 +540,27 @@ fn load_buffers(
         out.push(data);
     }
     Ok(out)
+}
+
+/// The name a clip is imported under: the animation's glTF name, or
+/// `animation_<index>`.
+fn clip_name(anim: &gltf::Animation) -> String {
+    anim.name()
+        .map_or_else(|| format!("animation_{}", anim.index()), str::to_owned)
+}
+
+/// The names of a glTF file's animations and skins, as the importer names
+/// them (`animation_<n>` and `skin_<n>` when unnamed): what `<model>#<name>`
+/// can name in `AnimPlayer.clip` and `SkinnedMesh.asset`. Read from the
+/// document alone, without loading its buffers or images; both are empty for
+/// a file that does not parse.
+pub fn gltf_names(bytes: &[u8]) -> (Vec<String>, Vec<String>) {
+    let Ok(gltf) = gltf::Gltf::from_slice(bytes) else {
+        return (Vec::new(), Vec::new());
+    };
+    let clips = gltf.document.animations().map(|a| clip_name(&a)).collect();
+    let skins = gltf.document.skins().map(|s| skin::skin_name(&s)).collect();
+    (clips, skins)
 }
 
 /// The external files (buffers and images, not `data:` URIs) a glTF document

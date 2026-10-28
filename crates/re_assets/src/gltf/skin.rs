@@ -20,6 +20,12 @@ use crate::codes;
 /// The number of influences a vertex keeps.
 const INFLUENCES: usize = 4;
 
+/// The name a skin is imported under: its glTF name, or `skin_<index>`.
+pub(crate) fn skin_name(skin: &gltf::Skin) -> String {
+    skin.name()
+        .map_or_else(|| format!("skin_{}", skin.index()), str::to_owned)
+}
+
 /// The name of every node: its glTF name or `node_<index>`, with a joint whose
 /// name another node also has renamed `<name>#<index>` (one warning per name).
 pub(crate) fn node_names(
@@ -220,10 +226,7 @@ where
     // Per skin: old (glTF) joint index -> new index.
     let mut remaps: Vec<Vec<u16>> = Vec::new();
     for skin in document.skins() {
-        let s = skin.index();
-        let name = skin
-            .name()
-            .map_or_else(|| format!("skin_{s}"), str::to_owned);
+        let name = skin_name(&skin);
         let bad = |message: String| {
             Diagnostic::error(codes::SKIN_INVALID, format!("skin `{name}`: {message}")).at(at())
         };

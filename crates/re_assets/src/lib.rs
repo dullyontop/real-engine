@@ -53,7 +53,7 @@ mod watch;
 
 pub use self::gltf::{
     GLTF_IMPORTER_VERSION, ImportedGltf, ImportedMaterial, ImportedMesh, ImportedNode,
-    ImportedTexture, image_id, import_gltf,
+    ImportedTexture, gltf_names, image_id, import_gltf,
 };
 pub use cache::{
     CACHE_FORMAT_VERSION, CacheOutcome, ProcessedCache, cache_key, decode_entry, encode_entry,
@@ -67,7 +67,7 @@ pub use material::{
 pub use meta::AssetMeta;
 pub use server::{
     AssetInfo, AssetServer, GLTF_IMPORTER, Handle, LoadedAsset, ProcessedAsset, ProcessedTexture,
-    ReloadReport, TEXTURE_IMPORTER, TEXTURE_IMPORTER_VERSION, TEXTURE_REPEAT_AT_LOAD,
+    ReloadReport, TEXTURE_IMPORTER, TEXTURE_IMPORTER_VERSION, TEXTURE_REPEAT_AT_LOAD, import_key,
 };
 pub use texture::{AssetsConfig, TEXTURE_ENCODER, TextureCompression, TextureQuality};
 pub use watch::{AssetChange, AssetWatcher};

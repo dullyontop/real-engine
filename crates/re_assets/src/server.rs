@@ -777,27 +777,8 @@ impl AssetServer {
         // External files resolve against the glTF's folder and may not leave
         // the project.
         let resolve = |uri: &str| gltf_path.as_ref().and_then(|p| p.join_relative(uri).ok());
-        let mut deps = Vec::new();
-        let mut dep_bytes: Vec<Vec<u8>> = Vec::new();
-        for uri in external_uris(&bytes) {
-            if let Some(p) = resolve(&uri) {
-                dep_bytes.push(
-                    self.files
-                        .read_source(p.as_str())
-                        .map(|b| b.to_vec())
-                        .unwrap_or_default(),
-                );
-                deps.push(p.as_str().to_owned());
-            }
-        }
-        let mut sources: Vec<&[u8]> = vec![&bytes];
-        sources.extend(dep_bytes.iter().map(Vec::as_slice));
-        let key = cache_key(
-            "gltf",
-            GLTF_IMPORTER_VERSION,
-            &self.config.cache_settings(&meta.settings_bytes()),
-            &sources,
-        );
+        let (deps, dep_bytes) = gltf_deps(&self.files, rel, &bytes);
+        let key = gltf_key(&self.config, &meta, &bytes, &dep_bytes);
         if let Some(cached) = self
             .cache
             .get::<CachedGltf>(&key)
@@ -877,12 +858,7 @@ impl AssetServer {
         } else {
             TextureRole::Rgba
         };
-        let key = cache_key(
-            "texture",
-            TEXTURE_IMPORTER_VERSION,
-            &self.config.cache_settings(&meta.settings_bytes()),
-            &[&bytes],
-        );
+        let key = texture_key(&self.config, &meta, &bytes);
         let config = self.config;
         let (data, _) = self.cache.get_or_insert_with(&key, || {
             decode_image(&bytes, format, &format!("`{rel}`"), rel)
@@ -963,6 +939,101 @@ fn encode_gltf_textures(imported: &mut ImportedGltf, config: &AssetsConfig) {
         };
         t.data = texture::process(std::mem::take(&mut t.data), role, config);
     }
+}
+
+/// The processed-cache key a texture imports under.
+fn texture_key(config: &AssetsConfig, meta: &AssetMeta, bytes: &[u8]) -> blake3::Hash {
+    cache_key(
+        "texture",
+        TEXTURE_IMPORTER_VERSION,
+        &config.cache_settings(&meta.settings_bytes()),
+        &[bytes],
+    )
+}
+
+/// The processed-cache key a glTF file imports under, with the bytes of the
+/// other files it reads ([`gltf_deps`]).
+fn gltf_key(
+    config: &AssetsConfig,
+    meta: &AssetMeta,
+    bytes: &[u8],
+    deps: &[Vec<u8>],
+) -> blake3::Hash {
+    let mut sources: Vec<&[u8]> = vec![bytes];
+    sources.extend(deps.iter().map(Vec::as_slice));
+    cache_key(
+        "gltf",
+        GLTF_IMPORTER_VERSION,
+        &config.cache_settings(&meta.settings_bytes()),
+        &sources,
+    )
+}
+
+/// The other files the glTF file `rel` reads (external buffers and images,
+/// resolved against its folder; those outside the project are left out),
+/// with their bytes (empty for one that cannot be read), as its cache key
+/// counts them.
+fn gltf_deps(files: &ProjectFiles, rel: &str, bytes: &[u8]) -> (Vec<String>, Vec<Vec<u8>>) {
+    let Ok(gltf_path) = ProjectPath::new(rel) else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut deps = Vec::new();
+    let mut dep_bytes = Vec::new();
+    for uri in external_uris(bytes) {
+        if let Ok(p) = gltf_path.join_relative(&uri) {
+            dep_bytes.push(
+                files
+                    .read_source(p.as_str())
+                    .map(|b| b.to_vec())
+                    .unwrap_or_default(),
+            );
+            deps.push(p.as_str().to_owned());
+        }
+    }
+    (deps, dep_bytes)
+}
+
+/// The processed-cache key the project file `rel` (a texture or a glTF model)
+/// imports under now: what an [`AssetServer`] import looks up, from the
+/// file's bytes and those of the files it reads, its sidecar's settings and
+/// `config`, worked out without importing anything or writing a sidecar.
+/// `None` for another kind of file, and for one with no sidecar yet (its
+/// first import makes one). With [`ProcessedCache::contains`], it tells a
+/// file imported for the current importer from a stale one (the editor's
+/// asset index, ADR-0064 §7).
+///
+/// # Errors
+///
+/// [`codes::READ_FAILED`] when the file or its sidecar cannot be read,
+/// [`codes::META_INVALID`] for a sidecar that is not valid.
+pub fn import_key(
+    files: &ProjectFiles,
+    config: AssetsConfig,
+    rel: &str,
+) -> Result<Option<blake3::Hash>, Diagnostic> {
+    let lower = rel.to_ascii_lowercase();
+    let texture = [".png", ".jpg", ".jpeg"].iter().any(|s| lower.ends_with(s));
+    let gltf = [".gltf", ".glb"].iter().any(|s| lower.ends_with(s));
+    if !texture && !gltf {
+        return Ok(None);
+    }
+    let shown_meta = format!("{rel}.meta.json");
+    let read_failed = |what: &str, e: &dyn fmt::Display| {
+        Diagnostic::error(codes::READ_FAILED, format!("cannot read `{what}`: {e}"))
+            .at(Location::file(what))
+    };
+    let meta = match files.read_str(&shown_meta) {
+        Ok(text) => AssetMeta::parse(&text, &shown_meta)?,
+        Err(e) if e.is_not_found() => return Ok(None),
+        Err(e) => return Err(read_failed(&shown_meta, &e)),
+    };
+    let bytes = files.read_source(rel).map_err(|e| read_failed(rel, &e))?;
+    Ok(Some(if texture {
+        texture_key(&config, &meta, &bytes)
+    } else {
+        let (_, deps) = gltf_deps(files, rel, &bytes);
+        gltf_key(&config, &meta, &bytes, &deps)
+    }))
 }
 
 /// The source bytes of `data`, or an error for another form.
