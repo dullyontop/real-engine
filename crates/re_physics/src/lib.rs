@@ -43,8 +43,8 @@
 //!   and Jolt's late reports about them dropped;
 //! * a kinematic body that stops receiving targets stops, instead of drifting on;
 //! * the step a body falls asleep in reports its final pose;
-//! * meshes and heightfields on moving bodies are refused with `RE5003`, positions
-//!   beyond ±5 km with `RE5006`, never with a panic.
+//! * meshes on dynamic bodies and heightfields on moving ones are refused with
+//!   `RE5003`, positions beyond ±5 km with `RE5006`, never with a panic.
 //!
 //! Limits that stay: rest heights include up to 0.02 m of Jolt's penetration slop
 //! (oxijolt 1.1.0 does not expose `PhysicsSettings`); a body's position is its shape
@@ -59,6 +59,7 @@ mod config;
 mod convert;
 mod jobs;
 pub mod parts;
+mod probe;
 mod query;
 mod ragdoll;
 mod shapes;
@@ -89,7 +90,7 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
     },
     DiagInfo {
         code: codes::STATIC_ONLY_SHAPE,
-        title: "Mesh or heightfield collider on a moving body",
+        title: "Mesh collider on a dynamic body, or heightfield on a moving one",
         page: include_str!("../explain/RE5003.md"),
     },
     DiagInfo {
