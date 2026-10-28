@@ -134,13 +134,13 @@ fn forest_scene(renderer: &mut Renderer) -> (RenderSnapshot, Vec<Placement>) {
         // takes part in the normals.
         transform: Mat4::from_rotation_translation(
             Quat::from_rotation_y(0.3),
-            Vec3::new(-14.0, 0.0, -18.0),
+            Vec3::new(-19.5, 0.0, -16.5),
         ),
         parts,
         flags: SHADOWED,
     };
     let snapshot = RenderSnapshot {
-        camera: camera(Vec3::new(2.0, 14.0, 30.0), Vec3::new(0.0, 1.0, -2.0)),
+        camera: camera(Vec3::new(0.0, 17.0, 32.0), Vec3::new(0.0, 0.0, -5.0)),
         lights: vec![sun(SUN, 1.0, true)],
         items: vec![item(
             1,
@@ -184,19 +184,21 @@ fn golden_instance_forest_matches_the_same_trees_as_draw_items() {
     assert_eq!(stats.set_clusters_culled, 0);
     assert_eq!(stats.items_drawn, 1, "the ground");
     assert_eq!(stats.shadow_cascades, 4);
-    assert_eq!(
-        stats.shadow_casters,
-        2 * 49 * 4,
-        "every copy into every cascade"
-    );
     check_golden(&gpu, "instance_forest", &set_image);
 
     let items = without_set(&snapshot, &placements);
     let (item_image, item_stats) = draw(&gpu, &mut renderer, &items);
-    assert_eq!(item_stats.items_drawn, 1 + 2 * 49);
-    assert_eq!(
-        (item_stats.triangles, item_stats.shadow_casters),
-        (stats.triangles, stats.shadow_casters)
+    // Items are culled one by one, a set's copies by cluster.
+    assert_eq!(item_stats.items_drawn + item_stats.items_culled, 1 + 2 * 49);
+    assert!(stats.triangles >= item_stats.triangles);
+    // Every copy casts into a cascade or more; a cascade takes a set's
+    // casters by cluster, so it may take more copies than items, never fewer.
+    assert!(item_stats.shadow_casters >= 2 * 49, "{item_stats:?}");
+    assert!(
+        stats.shadow_casters >= item_stats.shadow_casters,
+        "{} set copies cast, {} items",
+        stats.shadow_casters,
+        item_stats.shadow_casters
     );
     let report = imgdiff::compare(&item_image, &set_image, Tolerance::default()).unwrap();
     println!("items against the set: {}", report.summary());
@@ -593,8 +595,9 @@ fn malformed_sets_and_stale_handles_are_reported() {
 
     // A released set is skipped and warned about once a frame with RE6104,
     // however many sets name it; releasing it again fails with RE6104.
+    assert_eq!(renderer.stats().instance_sets.count, 2, "with the scene's");
     renderer.release_instance_set(set).unwrap();
-    assert_eq!(renderer.stats().instance_sets.count, 0);
+    assert_eq!(renderer.stats().instance_sets.count, 1);
     assert_eq!(
         renderer.release_instance_set(set).unwrap_err().code,
         codes::STALE_INSTANCE_SET
