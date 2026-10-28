@@ -14,10 +14,11 @@
 #
 # Its check runs attach to the branch's head commit, so the PR shows them.
 # build-windows and build-macos run the whole suite and `real verify` on the
-# island, the plaza and the valley (WP18 PR "blocking"; the valley since WP28's
-# #175). build-package-windows and build-package-macos build and check the
-# packaged games (ADR-0037, WP19 PR "bundles"). d2-run and d2 check that every
-# replay's state_hash agrees on the three platforms (ADR-0036, WP18 PR "d2").
+# island, the plaza, the valley and the town (WP18 PR "blocking"; the valley
+# since WP28's #175, the town since WP48's first PR). build-package-windows
+# and build-package-macos build and check the packaged games (ADR-0037, WP19
+# PR "bundles"). d2-run and d2 check that every replay's state_hash agrees on
+# the three platforms (ADR-0036, WP18 PR "d2").
 # Action majors as in ci.yml.
 
 name: Platforms
@@ -51,18 +52,18 @@ jobs:
       - run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked --release -p re_cli
-      - name: real build the island, the plaza and the valley
+      - name: real build the island, the plaza, the valley and the town
         shell: bash
         run: |
           mkdir -p out
-          for project in island plaza valley; do
+          for project in island plaza valley town; do
             target/release/real build --project "examples/$project" --out "dist/$project" --json > "out/build-$project.json"
             jq -r '"\(.files | join(", ")): \(.entries | length) entries, \([.entries[].stored_size] | add) bytes; notices for \(.notices.crates) crates"' "out/build-$project.json"
           done
       - name: real verify --package
         shell: bash
         run: |
-          for project in island plaza valley; do
+          for project in island plaza valley town; do
             target/release/real verify --project "examples/$project" --package "dist/$project"
           done
       - name: The game imports no C runtime DLL
@@ -103,16 +104,16 @@ jobs:
       - run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked --release -p re_cli
-      - name: real build the island, the plaza and the valley
+      - name: real build the island, the plaza, the valley and the town
         run: |
           mkdir -p out
-          for project in island plaza valley; do
+          for project in island plaza valley town; do
             target/release/real build --project "examples/$project" --out "dist/$project" --json > "out/build-$project.json"
             jq -r '"\(.files | join(", ")): \(.entries | length) entries, \([.entries[].stored_size] | add) bytes; notices for \(.notices.crates) crates"' "out/build-$project.json"
           done
       - name: real verify --package
         run: |
-          for project in island plaza valley; do
+          for project in island plaza valley town; do
             target/release/real verify --project "examples/$project" --package "dist/$project"
           done
       - name: The app is sealed, and its Info.plist is valid
@@ -159,7 +160,7 @@ jobs:
         env:
           RE_BACKENDS: dx12
         run: cargo test --locked --no-fail-fast -p re_render -p re_app -p re_cli -p re_editor -p re_web -- --test-threads=1
-      - name: real verify on the island, the plaza and the valley
+      - name: real verify on the island, the plaza, the valley and the town
         if: success() || failure()
         shell: bash
         env:
@@ -168,7 +169,7 @@ jobs:
           mkdir -p out
           cargo build --locked --release -p re_cli
           status=0
-          for project in island plaza valley; do
+          for project in island plaza valley town; do
             echo "== $project"
             report="out/verify-$project.json"
             target/release/real verify --project "examples/$project" --json > "$report" || true
@@ -202,6 +203,7 @@ jobs:
             examples/island/.real/out/goldens/
             examples/plaza/.real/out/goldens/
             examples/valley/.real/out/goldens/
+            examples/town/.real/out/goldens/
           if-no-files-found: ignore
           retention-days: 14
 
@@ -226,7 +228,7 @@ jobs:
         env:
           RE_BACKENDS: metal
         run: cargo test --locked --no-fail-fast -p re_render -p re_app -p re_cli -p re_editor -p re_web -- --test-threads=1
-      - name: real verify on the island, the plaza and the valley
+      - name: real verify on the island, the plaza, the valley and the town
         if: success() || failure()
         env:
           RE_BACKENDS: metal
@@ -234,7 +236,7 @@ jobs:
           mkdir -p out
           cargo build --locked --release -p re_cli
           status=0
-          for project in island plaza valley; do
+          for project in island plaza valley town; do
             echo "== $project"
             report="out/verify-$project.json"
             target/release/real verify --project "examples/$project" --json > "$report" || true
@@ -268,11 +270,13 @@ jobs:
             examples/island/.real/out/goldens/
             examples/plaza/.real/out/goldens/
             examples/valley/.real/out/goldens/
+            examples/town/.real/out/goldens/
           if-no-files-found: ignore
           retention-days: 14
 
-  # D2 (ADR-0036): every replay of the island, the plaza and the valley, run on
-  # each platform, writes its state_hash every 60 frames; `d2` compares them.
+  # D2 (ADR-0036): every replay of the island, the plaza, the valley and the
+  # town, run on each platform, writes its state_hash every 60 frames; `d2`
+  # compares them.
   d2-run:
     strategy:
       fail-fast: false
@@ -292,7 +296,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p out
-          cargo xtask d2 --project examples/island --project examples/plaza --project examples/valley --json --out out/d2.json
+          cargo xtask d2 --project examples/island --project examples/plaza --project examples/valley --project examples/town --json --out out/d2.json
       - uses: actions/upload-artifact@v7
         with:
           name: d2-${{ runner.os }}
