@@ -5,6 +5,10 @@
 //!
 //! The test has a binary of its own because the counting allocator counts
 //! everything the process allocates.
+#![expect(
+    unsafe_code,
+    reason = "a counting global allocator wraps the system one"
+)]
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -110,7 +114,11 @@ fn play(a: &mut Audio) -> (usize, u64) {
                 a.stream_underruns(),
             );
         }
-        assert!(Instant::now() < deadline, "the clip did not end");
+        assert!(
+            Instant::now() < deadline,
+            "the clip did not end in a minute ({} underruns)",
+            a.stream_underruns()
+        );
         let now = a.stream_underruns();
         if now > underruns {
             underruns = now;
