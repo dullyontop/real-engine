@@ -275,6 +275,15 @@ fn bad_controls_are_refused() {
             },
             "RE7411",
         ),
+        // Fades end within an hour.
+        (SoundOp::Stop { fade: 3600.5 }, "RE7411"),
+        (
+            SoundOp::Volume {
+                volume: 1.0,
+                fade: 1e30,
+            },
+            "RE7411",
+        ),
     ] {
         assert_eq!(codes(&a.apply(&[control(e, op)])), [code], "{op:?}");
         assert_eq!(
@@ -284,9 +293,9 @@ fn bad_controls_are_refused() {
         );
     }
     assert!(a.is_source_playing(e));
-    // A fade longer than any clock still plays.
+    // An hour's fade is the longest, and the sound plays on through it.
     assert!(
-        a.apply(&[control(e, SoundOp::Stop { fade: 1e30 })])
+        a.apply(&[control(e, SoundOp::Stop { fade: 3600.0 })])
             .is_empty()
     );
     a.render_headless(4800);

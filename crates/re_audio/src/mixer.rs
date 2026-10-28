@@ -37,6 +37,10 @@ const NOW: Tween = Tween {
 /// cost grows with the rate, and a huge rate never finishes a buffer.
 pub const MAX_RATE: f32 = 16.0;
 
+/// The longest fade a sound control takes, in seconds: an hour. A longer one
+/// is refused (RE7411).
+pub const MAX_FADE: f32 = 3600.0;
+
 /// The longest glide of a doppler change: a frame's step, up to this.
 const MAX_GLIDE: Duration = Duration::from_millis(100);
 
@@ -930,16 +934,17 @@ fn check_rate(rate: f32) -> Result<f32, Diagnostic> {
     }
 }
 
-/// Checks an op's values: a fade or a seek must be a finite number of seconds,
-/// 0 or more (RE7411); a volume and a rate as their own commands say.
+/// Checks an op's values: a fade must be from 0 to [`MAX_FADE`] seconds and a
+/// seek a finite number of seconds, 0 or more (RE7411); a volume and a rate as
+/// their own commands say.
 fn check_op(op: &SoundOp) -> Result<(), Diagnostic> {
     let fade = |fade: f32| {
-        if fade.is_finite() && fade >= 0.0 {
+        if (0.0..=MAX_FADE).contains(&fade) {
             Ok(())
         } else {
             Err(Diagnostic::error(
                 codes::INVALID_SOUND_CONTROL,
-                format!("fade {fade} s is not a finite number >= 0"),
+                format!("fade {fade} s is not a number of seconds from 0 to {MAX_FADE}"),
             ))
         }
     };

@@ -90,9 +90,9 @@ fn invalid(msg: String) -> HostError {
     HostError::new(HOST_INVALID_ARGUMENT_STR, msg)
 }
 
-/// The checks `audio_mix` makes of a sound control (ADR-0057 §8): a fade or a
-/// seek is 0 or more, a volume 0 or more, and a rate above 0 and at most
-/// [`re_audio::MAX_RATE`].
+/// The checks `audio_mix` makes of a sound control (ADR-0057 §8): a fade is
+/// from 0 to [`re_audio::MAX_FADE`] seconds, a seek and a volume 0 or more, and
+/// a rate above 0 and at most [`re_audio::MAX_RATE`].
 fn sound_op(op: &SoundOp) -> HostResult<()> {
     let at_least_0 = |v: f64, what: &str| {
         if v.is_finite() && v >= 0.0 {
@@ -101,24 +101,34 @@ fn sound_op(op: &SoundOp) -> HostResult<()> {
             Err(invalid(format!("{what} {v} must be 0 or more")))
         }
     };
+    let fade = |fade: f32| {
+        if (0.0..=re_audio::MAX_FADE).contains(&fade) {
+            Ok(())
+        } else {
+            Err(invalid(format!(
+                "fade {fade} must be from 0 to {} seconds",
+                re_audio::MAX_FADE
+            )))
+        }
+    };
     match *op {
         SoundOp::Start => Ok(()),
-        SoundOp::Stop { fade } | SoundOp::Pause { fade } | SoundOp::Resume { fade } => {
-            at_least_0(fade.into(), "fade")
+        SoundOp::Stop { fade: f } | SoundOp::Pause { fade: f } | SoundOp::Resume { fade: f } => {
+            fade(f)
         }
         SoundOp::Seek { seconds } => at_least_0(seconds, "seek"),
-        SoundOp::Volume { volume, fade } => {
+        SoundOp::Volume { volume, fade: f } => {
             at_least_0(volume.into(), "volume")?;
-            at_least_0(fade.into(), "fade")
+            fade(f)
         }
-        SoundOp::Rate { rate, fade } => {
+        SoundOp::Rate { rate, fade: f } => {
             if !(rate.is_finite() && rate > 0.0 && rate <= re_audio::MAX_RATE) {
                 return Err(invalid(format!(
                     "rate {rate} must be above 0 and at most {}",
                     re_audio::MAX_RATE
                 )));
             }
-            at_least_0(fade.into(), "fade")
+            fade(f)
         }
     }
 }
@@ -651,6 +661,7 @@ mod tests {
                 rate: 16.0,
                 fade: 3.0,
             },
+            SoundOp::Stop { fade: 3600.0 },
         ] {
             assert!(sound_op(&op).is_ok(), "{op:?}");
         }
@@ -680,6 +691,11 @@ mod tests {
             SoundOp::Rate {
                 rate: 1.0,
                 fade: f32::NAN,
+            },
+            SoundOp::Pause { fade: 3600.5 },
+            SoundOp::Volume {
+                volume: 1.0,
+                fade: 1e30,
             },
         ] {
             let e = sound_op(&op).unwrap_err();

@@ -46,7 +46,7 @@ mod wav;
 pub use capture::{CaptureBackend, CaptureSettings};
 pub use graph::{DEFAULT_SNAPSHOT, MAX_SENDS};
 pub use kira::sound::static_sound::StaticSoundData;
-pub use mixer::{Audio, MAX_RATE, linear_to_decibels, rms, sine};
+pub use mixer::{Audio, MAX_FADE, MAX_RATE, linear_to_decibels, rms, sine};
 pub use re_types::audio::{AudioCmd, AudioGraphDesc, BusLevel, Rolloff, SoundOp, Spatial};
 
 use re_core::DiagInfo;
