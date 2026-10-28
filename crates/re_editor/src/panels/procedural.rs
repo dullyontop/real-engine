@@ -25,6 +25,9 @@
 //! (`proc.clear_structure {source, key}`) for a key's structural ones and
 //! "Restore" (`proc.revert {source, key}`) for a deletion: one command, so
 //! one undo step, each.
+//!
+//! The Hierarchy's menu on a source or an entity it generates reverts,
+//! replaces, inserts, clears and bakes ([`entity_menu`]), one command each.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -34,12 +37,13 @@ use re_app::App;
 use re_core::Location;
 use re_proc::{GraphStore, NodeDef, NodeRegistry};
 use re_reflect::{FieldType, Value};
-use re_scene::structure::Replacement;
-use re_scene::{Entity, OverrideDoc, Overrides, World};
+use re_scene::structure::{INSERTED_PREFIX, Replacement, StructuralKind, is_generator_key};
+use re_scene::{Entity, Generated, OverrideDoc, Overrides, Procedural, Streamed, World};
 use re_types::graph::GraphDoc;
 use serde_json::{Map, Value as Json, json};
 
-use crate::editor::{Action, Editor, Pending, command};
+use super::hierarchy::item;
+use crate::editor::{Action, Editor, Pending, command, menu_key};
 use crate::widgets::schema::{self, Change, Env, Shape};
 
 /// Points the pointer is dragged across a seed strip per seed.
@@ -301,17 +305,243 @@ pub(super) fn viewport_overlay(
 }
 
 /// The procedural entries of the Hierarchy's context menu for the row of
-/// entity `id` (WP43: `proc.replace`, `proc.insert`, `proc.clear_structure`
-/// and `proc.bake`), after the editing ones. The menu acts on the selection,
-/// which holds `id` once the right click's selection applies (from the frame
-/// after the menu opens). Nothing yet.
+/// entity `id`, after the editing ones (ADR-0044 amendment §8), each one
+/// command and so one undo step. On a generated entity: "Revert overrides"
+/// (its field overrides, `proc.revert`), "Replace with prefab"
+/// (`proc.replace`), "Insert prefab" (as its child, `proc.insert`), "Clear
+/// structure" (its key's moves, replacements and inserts,
+/// `proc.clear_structure`) and "Bake" (the selected entities its source
+/// generates, `proc.bake {keys}`). On a procedural source: "Insert prefab",
+/// "Clear structure" and "Bake", for all of its output. The prefabs are the
+/// asset index's. An entry that has nothing to do, or that the command
+/// would refuse, is disabled and says why.
 pub(super) fn entity_menu(
-    _ed: &mut Editor,
-    _ui: &mut egui::Ui,
-    _app: &App,
-    _id: &str,
-    _actions: &mut Vec<Action>,
+    ed: &mut Editor,
+    ui: &mut egui::Ui,
+    app: &App,
+    id: &str,
+    actions: &mut Vec<Action>,
 ) {
+    let world = app.world();
+    let Ok(e) = world.entity(id) else {
+        return;
+    };
+    let (source, key) = match world.ecs.get::<Generated>(e) {
+        Some(g) => (g.source, Some(g.key.as_str())),
+        None => (e, None),
+    };
+    // A prefab instance's output is generated too; these entries are for a
+    // procedural source's.
+    if world.ecs.get::<Procedural>(source).is_none() {
+        return;
+    }
+    let Some(source_id) = world.id_of(source) else {
+        return;
+    };
+    let missing = |name: &str| {
+        app.commands()
+            .spec(name)
+            .is_none()
+            .then(|| format!("This build has no {name}"))
+    };
+    // Structural overrides and bakes are refused on a streamed source.
+    let streamed = world.ecs.get::<Streamed>(source).is_some().then(|| {
+        format!("`{source_id}` is streamed: structure and bakes need a source that generates whole")
+    });
+    let overrides = world.ecs.get::<Overrides>(source);
+    let prefabs = ed.assets.lists().of("prefab");
+    ui.separator();
+    if let Some(key) = key {
+        let edited = overrides.is_some_and(|o| {
+            o.0.iter()
+                .any(|o| matches!(o, OverrideDoc::Field { target, .. } if target == key))
+        });
+        let refused = missing("proc.revert")
+            .or_else(|| (!edited).then(|| "None of its fields are edited".to_string()));
+        let hover = "Put back the values the source generates for this entity's edited fields \
+                     (proc.revert)";
+        if entry(ui, ed, "Revert overrides", hover, refused) {
+            actions.push(command("proc.revert", json!({ "id": id })));
+        }
+        // An insert, or a part a replacement's prefab adds, is changed by
+        // clearing it.
+        let refused = missing("proc.replace")
+            .or_else(|| streamed.clone())
+            .or_else(|| {
+                (!is_generator_key(key)).then(|| {
+                    "Only an entity the graph generates is replaced: clear an insert's structure \
+                 instead"
+                        .to_string()
+                })
+            });
+        let replace = |prefab: &str| command("proc.replace", json!({ "id": id, "prefab": prefab }));
+        prefab_menu(
+            ui,
+            ed,
+            "Replace with prefab",
+            &prefabs,
+            refused,
+            replace,
+            actions,
+        );
+    }
+    let insert = |prefab: &str| {
+        let mut args = json!({
+            "source": source_id,
+            "key": free_insert_key(world, source, source_id, prefab),
+            "prefab": prefab,
+        });
+        if key.is_some() {
+            args["parent"] = json!(id);
+        }
+        command("proc.insert", args)
+    };
+    let refused = missing("proc.insert").or_else(|| streamed.clone());
+    prefab_menu(ui, ed, "Insert prefab", &prefabs, refused, insert, actions);
+    let structural = overrides.is_some_and(|o| {
+        o.0.iter()
+            .any(|o| o.structural_kind().is_some() && key.is_none_or(|k| o.target() == k))
+    });
+    let refused = missing("proc.clear_structure")
+        .or_else(|| streamed.clone())
+        .or_else(|| {
+            (!structural).then(|| "Nothing here is moved, replaced or inserted".to_string())
+        });
+    let (hover, args) = match key {
+        Some(k) => (
+            "Remove this entity's move, replacement and insert (proc.clear_structure)",
+            json!({ "source": source_id, "key": k }),
+        ),
+        None => (
+            "Remove every move, replacement and insert the source keeps (proc.clear_structure)",
+            json!({ "source": source_id }),
+        ),
+    };
+    if entry(ui, ed, "Clear structure", hover, refused) {
+        actions.push(command("proc.clear_structure", args));
+    }
+    let (hover, args) = match key {
+        Some(k) => {
+            // This entity and the other selected ones its source generates.
+            let mut keys = vec![k.to_string()];
+            for other in ed.selection.ids() {
+                let g = world
+                    .entity(other)
+                    .ok()
+                    .and_then(|o| world.ecs.get::<Generated>(o));
+                if let Some(g) = g.filter(|g| g.source == source && !keys.contains(&g.key)) {
+                    keys.push(g.key.clone());
+                }
+            }
+            (
+                "Make the selected generated entities authored ones; the source keeps generating \
+                 the rest (proc.bake)",
+                json!({ "source": source_id, "keys": keys }),
+            )
+        }
+        None => (
+            "Make everything the source generates authored entities; the source stops \
+             generating (proc.bake)",
+            json!({ "source": source_id }),
+        ),
+    };
+    let refused = missing("proc.bake").or_else(|| streamed.clone());
+    if entry(ui, ed, "Bake", hover, refused) {
+        actions.push(command("proc.bake", args));
+    }
+}
+
+/// A menu entry explained by `hover`, or disabled with `refused` saying
+/// why: true when it is chosen, which closes the menu.
+fn entry(
+    ui: &mut egui::Ui,
+    ed: &mut Editor,
+    label: &str,
+    hover: &str,
+    refused: Option<String>,
+) -> bool {
+    let r = item(ui, ed, label, None, refused.is_none()).on_hover_text(hover);
+    let r = match refused {
+        Some(why) => r.on_disabled_hover_text(why),
+        None => r,
+    };
+    let chosen = r.clicked();
+    if chosen {
+        ui.close();
+    }
+    chosen
+}
+
+/// A submenu `label` listing the project's prefabs: choosing one sends
+/// `make(prefab)`. Disabled with `refused` saying why.
+fn prefab_menu(
+    ui: &mut egui::Ui,
+    ed: &mut Editor,
+    label: &str,
+    prefabs: &[String],
+    refused: Option<String>,
+    make: impl Fn(&str) -> Action,
+    actions: &mut Vec<Action>,
+) {
+    if let Some(why) = refused {
+        item(ui, ed, label, None, false).on_disabled_hover_text(why);
+        return;
+    }
+    let r = ui.menu_button(label, |ui| {
+        for prefab in prefabs {
+            if item(ui, ed, prefab, None, true).clicked() {
+                actions.push(make(prefab));
+                ui.close();
+            }
+        }
+        if prefabs.is_empty() {
+            ui.label(RichText::new("No prefabs in the project.").weak());
+        }
+    });
+    ed.pending
+        .rects
+        .insert(menu_key(label), vec![r.response.rect]);
+}
+
+/// A key for a prefab inserted into the output of `source` (id
+/// `source_id`): the prefab file's name made a key (lower-case letters,
+/// digits, `_` and `-`), with a number when that insert, or an entity with
+/// its id, exists.
+fn free_insert_key(world: &World, source: Entity, source_id: &str, prefab: &str) -> String {
+    let file = prefab.rsplit('/').next().unwrap_or(prefab);
+    let stem = file.strip_suffix(".prefab.json").unwrap_or(file);
+    let mut base: String = stem
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if base.is_empty() {
+        base = "prefab".to_string();
+    }
+    let overrides = world.ecs.get::<Overrides>(source);
+    let taken = |k: &str| {
+        let target = format!("{INSERTED_PREFIX}{k}");
+        world.id_taken(&format!("{source_id}/{target}"))
+            || overrides.is_some_and(|o| {
+                o.position_structural(&target, StructuralKind::Inserted)
+                    .is_some()
+            })
+    };
+    (1..)
+        .map(|n| {
+            if n == 1 {
+                base.clone()
+            } else {
+                format!("{base}{n}")
+            }
+        })
+        .find(|k| !taken(k))
+        .unwrap_or(base)
 }
 
 fn display(world: &World, e: Entity, id: &str) -> String {
