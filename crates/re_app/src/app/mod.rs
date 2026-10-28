@@ -149,8 +149,14 @@ pub struct App {
     actions: ActionFrame,
     replay: Option<Replay>,
     /// The run's seed: `[scripts] seed`, or the seed of the replay being
-    /// played. Native scripts' `math.random` starts from it.
+    /// played. Native scripts' `math.random` starts from it, and so do the
+    /// ids the World makes during play.
     seed: i64,
+    /// Whether the World's id generator has the session stream of `seed`
+    /// (ADR-0036 amendment): unset when the App is made, and cleared by
+    /// `play_replay` and when a fresh World takes the old one's place
+    /// (`restart`, `open_scene`), so the next played frame seeds it.
+    ids_seeded: bool,
     /// How fast simulation time runs against frame time (`time.set_scale`):
     /// the frame time the clock advances by is multiplied by it.
     time_scale: f64,

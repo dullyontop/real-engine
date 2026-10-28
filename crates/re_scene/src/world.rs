@@ -176,6 +176,18 @@ impl World {
         }
     }
 
+    /// The generator [`World::new_id`] draws from.
+    pub fn id_gen(&self) -> &IdGen {
+        self.ecs.resource::<IdGen>()
+    }
+
+    /// Replaces the generator [`World::new_id`] draws from: the App gives a
+    /// played world [`IdGen::session`] at its first frame (ADR-0036
+    /// amendment). It is not part of [`World::state_hash`].
+    pub fn set_id_gen(&mut self, ids: IdGen) {
+        self.ecs.insert_resource(ids);
+    }
+
     /// True if `id` names a live entity or one stashed with an unloaded
     /// cell (ADR-0042), so a new entity must not take it.
     pub fn id_taken(&self, id: &str) -> bool {
@@ -396,7 +408,8 @@ impl World {
     /// entities (with their keys), overrides, `GlobalTransform` and the
     /// session's suppressions. Ids, child order and [`World::state_hash`] are
     /// identical. ECS resources are not copied, except `IdIndex` and
-    /// `TagIndex` (rebuilt by hooks), the suppressions, the stream stash
+    /// `TagIndex` (rebuilt by hooks), the id generator (so the copy
+    /// continues this world's sequence), the suppressions, the stream stash
     /// of unloaded authored roots and the open documents (with their
     /// validators); change feeds are
     /// not copied either; a caller that needs one of its own
@@ -407,6 +420,7 @@ impl World {
         let mut ecs = EcsWorld::new();
         let registry = self.registry.rebuild_for(&mut ecs);
         let mut out = World::from_parts(ecs, registry, self.generators.clone());
+        out.ecs.insert_resource(self.id_gen().clone());
         out.ecs.insert_resource(self.suppressions().clone());
         out.ecs
             .insert_resource(self.ecs.resource::<crate::docs::OpenDocs>().clone());

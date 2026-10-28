@@ -173,6 +173,8 @@ impl App {
         self.attach_debugger();
         self.clock.reset();
         self.time_scale = 1.0;
+        // The fresh World makes the first run's ids again.
+        self.ids_seeded = false;
         self.stream_tick = 0;
     }
 

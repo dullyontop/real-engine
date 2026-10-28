@@ -60,8 +60,10 @@ impl App {
         // Its scene changes are checked as the run makes them (ADR-0059 §6).
         self.scenes.expect(scenes);
         // The run starts from the replay's seed: scripts that already run
-        // start their `math.random` again from it.
+        // start their `math.random` again from it, and the next frame starts
+        // the World's ids from it.
         self.seed = seed;
+        self.ids_seeded = false;
         if let Some(scripts) = &mut self.scripts
             && let Err(e) = scripts.reseed(seed)
         {
@@ -172,6 +174,15 @@ impl App {
     fn begin_frame(&mut self, frame_time: Duration) -> HalfFrame {
         let frame_start = Instant::now();
         let f = self.frame;
+        // Run-time ids repeat (ADR-0036 amendment): before anything can spawn,
+        // a run's first frame (and the first after a replay starts or a
+        // restart) gives the World the session stream of the run's seed. Not
+        // while compat's contexts run: their server and client streams are
+        // fixed, and the App's World is then the server's.
+        if !self.ids_seeded && self.compat.is_none() {
+            self.world.set_id_gen(re_scene::IdGen::session(self.seed));
+            self.ids_seeded = true;
+        }
         self.service_debugger();
         self.input_phase(f);
         self.pre_render_phase(frame_time);

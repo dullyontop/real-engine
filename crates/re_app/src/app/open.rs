@@ -130,6 +130,7 @@ impl App {
             actions: ActionFrame::default(),
             replay: None,
             seed: config.scripts.seed,
+            ids_seeded: false,
             time_scale: 1.0,
             physics,
             physics_sync: PhysicsSync::new(),
