@@ -73,15 +73,32 @@ pub(crate) fn ui(panel: &mut DebugPanel, ui: &mut egui::Ui) {
     let stopped = debugger.stopped();
     ui.horizontal(|ui| {
         let can = stopped.is_some();
-        for (label, how, key) in [
-            ("Continue", Resume::Continue, "F5"),
-            ("Step over", Resume::StepOver, "F10"),
-            ("Step in", Resume::StepIn, "F11"),
-            ("Step out", Resume::StepOut, "Shift+F11"),
+        // No keys are bound to these, so the hover says what each does.
+        for (label, how, what) in [
+            (
+                "Continue",
+                Resume::Continue,
+                "Run until the next breakpoint",
+            ),
+            (
+                "Step over",
+                Resume::StepOver,
+                "Run to the next line, over calls",
+            ),
+            (
+                "Step in",
+                Resume::StepIn,
+                "Run to the next line, into calls",
+            ),
+            (
+                "Step out",
+                Resume::StepOut,
+                "Run until this function returns",
+            ),
         ] {
             if ui
                 .add_enabled(can, egui::Button::new(label))
-                .on_hover_text(key)
+                .on_hover_text(what)
                 .clicked()
             {
                 debugger.resume(how);
