@@ -38,6 +38,7 @@ pub const SUFFIX: &str = ".animgraph.json";
 #[serde(deny_unknown_fields)]
 pub struct CreateArgs {
     /// The new file, relative to the project, ending in `.animgraph.json`.
+    #[schemars(extend("x-real-path" = "write"))]
     pub path: String,
     /// The graph to write (validated); an empty graph when omitted.
     #[serde(default)]
@@ -49,6 +50,7 @@ pub struct CreateArgs {
 #[serde(deny_unknown_fields)]
 pub struct EditArgs {
     /// The graph file, relative to the project.
+    #[schemars(extend("x-real-path" = "write"))]
     pub path: String,
     /// The changes, applied in order and checked together.
     pub ops: Vec<EditOp>,
@@ -103,10 +105,12 @@ pub enum EditOp {
 #[serde(deny_unknown_fields)]
 pub struct ValidateArgs {
     /// The graph file, relative to the project.
+    #[schemars(extend("x-real-path" = "read"))]
     pub path: String,
     /// A skinned mesh asset (`<model>#<skin>`) to bind the graph to as
     /// well, which loads its clips and resolves its masks.
     #[serde(default)]
+    #[schemars(extend("x-real-path" = "read"))]
     pub skin: Option<String>,
 }
 
