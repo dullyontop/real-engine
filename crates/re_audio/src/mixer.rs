@@ -626,7 +626,7 @@ impl Audio {
                 format!("cannot decode audio clip `{name}`: {why}"),
             )
             .at(Location::file(name))
-            .with_hint("M1 plays WAV files (PCM or float, mono or stereo)")
+            .with_hint("the engine plays WAV files (PCM or float, mono or stereo)")
         };
         let data = crate::wav::decode(&file).map_err(|e| decode_failed(e.to_string()))?;
         self.clips.insert(name.to_owned(), data.clone());
