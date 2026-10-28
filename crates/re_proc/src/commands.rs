@@ -1,6 +1,8 @@
 //! The `graph.*` commands (ARCHITECTURE §6): `proc.create_source`,
 //! `graph.set_param` and `graph.regenerate` (edit), `graph.generate`, `graph.report` and
-//! `graph.migration_report` (read).
+//! `graph.migration_report` (read). The graph-editing commands are in
+//! [`crate::edit`], and the graph param commands in
+//! [`crate::params::commands`].
 
 use std::path::Path;
 
@@ -17,6 +19,8 @@ use crate::codes;
 use crate::generator::{
     GENERATOR, ParamOverrides, apply_overrides, overrides_text, parse_overrides, validate_override,
 };
+use crate::params::GRAPH_KEY;
+use crate::params::commands::check_graph_value;
 use crate::store::{Budget, GraphStore};
 
 /// Arguments of `graph.set_param`.
@@ -25,12 +29,16 @@ use crate::store::{Budget, GraphStore};
 pub struct SetParamArgs {
     /// The procedural source's id.
     pub source: String,
-    /// The node's id in the source's graph.
-    pub node: String,
-    /// The parameter's name.
+    /// The node's id in the source's graph. Without it, `param` is one of
+    /// the graph's params (`graph.params` lists them), which is how a
+    /// source's graph is tuned (ADR-0061 §3).
+    #[serde(default)]
+    pub node: Option<String>,
+    /// The parameter's name: the node's, or the graph's without `node`.
     pub param: String,
-    /// The new value, checked against the node kind's parameter schema;
-    /// `null` removes the override (the graph's own value applies again).
+    /// The new value, checked against the node kind's parameter schema, or
+    /// the graph param's type and range; `null` removes it (the graph's own
+    /// value applies again).
     pub value: Json,
 }
 
@@ -56,7 +64,8 @@ pub struct GenerateArgs {
     #[serde(default)]
     pub seed: Option<i64>,
     /// Parameter overrides to try on top of the source's:
-    /// `{"<node>": {"<param>": value}}`.
+    /// `{"<node>": {"<param>": value}}`, and graph param values:
+    /// `{"$graph": {"<param>": value}}`.
     #[serde(default)]
     pub params: Option<Map<String, Json>>,
     /// Time budget in milliseconds (default 10000).
@@ -117,9 +126,10 @@ pub struct CreateSourceArgs {
 pub const CREATED_NODE: &str = "gen";
 
 /// What a command needs about its graph source.
-struct Source {
+pub(crate) struct Source {
     entity: Entity,
-    doc: GraphDoc,
+    /// The source's graph as generation sees it ([`GraphStore::current`]).
+    pub(crate) doc: GraphDoc,
     /// `GraphSource.params`, or why it does not parse.
     overrides: Result<ParamOverrides, String>,
     seed: i64,
@@ -128,7 +138,7 @@ struct Source {
 impl Source {
     /// The source's overrides; text that does not parse is an error rather
     /// than "no overrides", so a new override never silently replaces it.
-    fn overrides(&self, id: &str) -> Result<ParamOverrides, Diagnostic> {
+    pub(crate) fn overrides(&self, id: &str) -> Result<ParamOverrides, Diagnostic> {
         self.overrides.clone().map_err(|e| {
             Diagnostic::error(codes::UNKNOWN_OVERRIDE, format!("{id}: {e}"))
                 .at(Location::entity(id.to_string()))
@@ -157,7 +167,7 @@ fn at_source(d: Diagnostic, source: &str) -> Diagnostic {
     }
 }
 
-fn graph_source(world: &World, id: &str) -> Result<Source, Diagnostic> {
+pub(crate) fn graph_source(world: &World, id: &str) -> Result<Source, Diagnostic> {
     let entity = world.entity(id).map_err(|e| e.to_diagnostic())?;
     let not_graph = |why: String| {
         Diagnostic::error(
@@ -293,14 +303,51 @@ fn set_param<C: EditTarget>(
     let store = store_of(world).expect("graph_source checked the store");
     let registry = store.evaluator().registry();
     let overrides = src.overrides(&a.source)?;
-    let current = current_doc(&src.doc, &overrides, registry, &a.source);
-    validate_override(&current, registry, &a.node, &a.param, &a.value)
-        .map_err(|d| at_source(d, &a.source))?;
-    let overrides = with_override(overrides, &a.node, &a.param, &a.value);
+    let (key, label, value) = match &a.node {
+        // A graph param's value, stored under `$graph` (ADR-0061 §3).
+        None => {
+            let value = check_graph_value(&src.doc, &a.param, &a.value)
+                .map_err(|d| at_source(d, &a.source))?;
+            (GRAPH_KEY, a.param.clone(), value)
+        }
+        Some(node) => {
+            let current = current_doc(&src.doc, &overrides, registry, &a.source);
+            validate_override(&current, registry, node, &a.param, &a.value)
+                .map_err(|d| at_source(d, &a.source))?;
+            if let Some(name) = src
+                .doc
+                .node(node)
+                .and_then(|n| n.params.get(&a.param))
+                .and_then(GraphDoc::param_ref)
+                .filter(|_| !a.value.is_null())
+            {
+                call.push_diagnostic(
+                    Diagnostic::warning(
+                        codes::BINDING_OVERRIDDEN,
+                        format!(
+                            "{}: `{node}.{}` is bound to graph param `{name}`; this override replaces the binding for this source",
+                            a.source, a.param
+                        ),
+                    )
+                    .at(Location::entity(a.source.clone()))
+                    .with_hint(format!(
+                        "set the graph param instead: graph.set_param {{\"source\": \"{}\", \"param\": \"{name}\", \"value\": …}}",
+                        a.source
+                    )),
+                );
+            }
+            (
+                node.as_str(),
+                format!("{node}.{}", a.param),
+                a.value.clone(),
+            )
+        }
+    };
+    let overrides = with_override(overrides, key, &a.param, &value);
     let text = overrides_text(&overrides);
     call.transact(
         target,
-        format!("graph.set_param {}.{}", a.node, a.param),
+        format!("graph.set_param {label}"),
         vec![Op::SetField {
             id: a.source.clone(),
             component: "GraphSource".into(),
@@ -312,7 +359,7 @@ fn set_param<C: EditTarget>(
         "source": a.source,
         "node": a.node,
         "param": a.param,
-        "value": a.value,
+        "value": value,
         "params": parse_overrides(&text).unwrap_or_default(),
     }))
 }
@@ -402,10 +449,16 @@ fn generate<C: EditTarget>(
                 .at(Location::command("graph.generate")));
             };
             for (param, value) in values {
-                let current = current_doc(&src.doc, &overrides, &registry, &a.source);
-                validate_override(&current, &registry, node, param, value)
-                    .map_err(|d| at_source(d, &a.source))?;
-                overrides = with_override(overrides, node, param, value);
+                let value = if node == GRAPH_KEY {
+                    check_graph_value(&src.doc, param, value)
+                        .map_err(|d| at_source(d, &a.source))?
+                } else {
+                    let current = current_doc(&src.doc, &overrides, &registry, &a.source);
+                    validate_override(&current, &registry, node, param, value)
+                        .map_err(|d| at_source(d, &a.source))?;
+                    value.clone()
+                };
+                overrides = with_override(overrides, node, param, &value);
             }
         }
     }
@@ -711,13 +764,17 @@ fn migration_report<C: EditTarget>(
 }
 
 /// Registers `graph.set_param` and `graph.regenerate` (edit tier) and
-/// `graph.generate` and `graph.report` (read tier).
+/// `graph.generate` and `graph.report` (read tier), the graph-editing
+/// commands and the graph param commands.
 ///
-/// * `graph.set_param {source, node, param, value}` checks the value against
-///   the node kind's parameter schema and stores it in the source's
-///   `GraphSource.params` with one ordinary `set_field`, so it is undoable
-///   and saved with the scene; the graph file or builder script is never
-///   rewritten. The source regenerates when the world next runs
+/// * `graph.set_param {source, node?, param, value}` checks the value against
+///   the node kind's parameter schema, or without `node` against the graph
+///   param's declaration (`RE4201`, `RE4202`), and stores it in the source's
+///   `GraphSource.params` (graph param values under `"$graph"`) with one
+///   ordinary `set_field`, so it is undoable and saved with the scene; the
+///   graph file or builder script is never rewritten. An override of a node
+///   param bound to a graph param replaces the binding for the source, with
+///   warning `RE4212`. The source regenerates when the world next runs
 ///   `regenerate_changed` (end of frame).
 /// * `graph.regenerate {source, seed?}` sets `Procedural.seed` (undoable)
 ///   and regenerates now, returning the `RegenReport` (the `derived:` assets
@@ -742,10 +799,31 @@ pub fn register_commands<C: EditTarget + 'static>(registry: &mut CommandRegistry
     );
     registry.register_typed::<SetParamArgs, _>(
         "graph.set_param",
-        "Set one parameter of one node of a procedural source's graph (stored on the source, undoable).",
+        "Set one of a procedural source's graph params (without `node`), or one parameter of one node of its graph; stored on the source, undoable.",
         Tier::Edit,
         true,
         set_param::<C>,
+    );
+    registry.register_typed::<crate::ParamsArgs, _>(
+        "graph.params",
+        "A graph's params, in the order the inspector shows them: each declaration, a source's value, the value in use and the node params bound to it. Pass a procedural `source` or a `graph` file.",
+        Tier::Read,
+        true,
+        crate::params::commands::params::<C>,
+    );
+    registry.register_typed::<crate::DeclareParamArgs, _>(
+        "graph.declare_param",
+        "Add a typed param to a graph file, or replace the declaration of that name (name, type, default, min, max, values, extensions, doc); node params bind to it with graph.set_default and {\"$param\": name}.",
+        Tier::Edit,
+        true,
+        crate::params::commands::declare_param::<C>,
+    );
+    registry.register_typed::<crate::RemoveParamArgs, _>(
+        "graph.remove_param",
+        "Remove a param from a graph file, with the sources' values for it; refused while node params are bound to it unless `unbind`, which writes its default in their place.",
+        Tier::Edit,
+        true,
+        crate::params::commands::remove_param::<C>,
     );
     registry.register_typed::<RegenerateArgs, _>(
         "graph.regenerate",

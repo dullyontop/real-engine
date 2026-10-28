@@ -726,6 +726,8 @@ fn builder_scripts_return_a_graph() {
         .unwrap();
     assert_eq!(g.name, "island");
     assert_eq!(g.seed, 1234);
+    // Without params or outputs a builder's graph stays version 1.
+    assert_eq!(g.version, 1);
     assert_eq!(g.nodes.len(), 4);
     assert_eq!(g.nodes[0].id, "n1");
     assert_eq!(g.edges.len(), 3);
@@ -783,6 +785,129 @@ fn builders_record_version_one_unless_a_kind_asks_for_another() {
         "{}",
         errs[0].message
     );
+}
+
+#[test]
+fn builders_declare_params_and_outputs_as_version_two() {
+    let good = "local g = proc.graph('t', { seed = 1 })\n\
+        local hills = g:param('height', { type = 'number', default = 16, min = 1, max = 64, doc = 'Hill height.' })\n\
+        g:param('style', { type = 'enum', values = { 'soft', 'sharp' }, default = 'soft' })\n\
+        local h = g:node('terrain.heightfield', { size = 33, height = hills }, nil, 'h')\n\
+        g:output('field', h, { doc = 'The heights.' })\n\
+        g:output('again', h:out('out'))\n\
+        assert(hills.name == 'height')\n\
+        return g";
+    let bad = [
+        (
+            "dup",
+            "g:param('a', { type = 'number' })\ng:param('a', { type = 'bool' })",
+            "already exists",
+        ),
+        ("untyped", "g:param('a', { default = 1 })", "need a type"),
+        (
+            "badtype",
+            "g:param('a', { type = 'float' })",
+            "is not one of",
+        ),
+        (
+            "option",
+            "g:param('a', { type = 'number', step = 1 })",
+            "unknown option",
+        ),
+        (
+            "nonstring",
+            "g:param('a', { type = 'number', doc = { 'x' } })",
+            "doc must be a string, got table",
+        ),
+        (
+            "part",
+            "local p = g:param('a', { type = 'number' })\ng:node('terrain.heightfield', { size = { p } })",
+            "not part of one",
+        ),
+        (
+            "foreign",
+            "local o = proc.graph('o', { seed = 1 })\nlocal p = o:param('a', { type = 'number' })\ng:node('terrain.heightfield', { height = p })",
+            "belongs to another graph",
+        ),
+        (
+            "outs",
+            "local h = g:node('terrain.heightfield', {})\ng:output('o', h)\ng:output('o', h)",
+            "already exists",
+        ),
+    ];
+    let mut files = vec![("scripts/tools/good.luau".to_string(), good.to_string())];
+    for (name, body, _) in bad {
+        files.push((
+            format!("scripts/tools/{name}.luau"),
+            format!("local g = proc.graph('t', {{ seed = 1 }})\n{body}\nreturn g"),
+        ));
+    }
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(p, t)| (p.as_str(), t.as_str()))
+        .collect();
+    let dir = temp_project(&files);
+    let mut rig = Rig::at(dir.path());
+    let Rig {
+        rt,
+        world,
+        services,
+    } = &mut rig;
+    let g = rt
+        .run_builder(
+            &mut re_script::WorldHost { world, services },
+            "scripts/tools/good.luau",
+        )
+        .unwrap();
+    assert_eq!(g.version, 2);
+    let doc = serde_json::to_value(&g).unwrap();
+    assert_eq!(
+        doc["params"],
+        json!([
+            {"name": "height", "type": "number", "default": 16, "min": 1.0, "max": 64.0, "doc": "Hill height."},
+            {"name": "style", "type": "enum", "default": "soft", "values": ["soft", "sharp"]},
+        ])
+    );
+    assert_eq!(
+        doc["nodes"][0]["params"]["height"],
+        json!({"$param": "height"})
+    );
+    assert_eq!(doc["nodes"][0]["params"]["size"], json!(33));
+    // The output types are what feeds them, which re_app fills in.
+    assert_eq!(
+        doc["outputs"],
+        json!([
+            {"name": "field", "type": "", "doc": "The heights."},
+            {"name": "again", "type": ""},
+        ])
+    );
+    let to_out: Vec<_> = g
+        .edges
+        .iter()
+        .filter(|e| e.to.0 == "$out")
+        .map(|e| (e.from.clone(), e.to.1.as_str()))
+        .collect();
+    assert_eq!(
+        to_out,
+        [
+            (("h".to_string(), "out".to_string()), "field"),
+            (("h".to_string(), "out".to_string()), "again"),
+        ]
+    );
+    for (name, _, expected) in bad {
+        let errs = rt
+            .run_builder(
+                &mut re_script::WorldHost { world, services },
+                &format!("scripts/tools/{name}.luau"),
+            )
+            .unwrap_err();
+        assert_eq!(errs[0].code, codes::GRAPH_BUILDER, "{name}");
+        assert!(
+            errs[0].message.contains(expected),
+            "{name}: {}",
+            errs[0].message
+        );
+    }
 }
 
 #[test]

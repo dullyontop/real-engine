@@ -75,6 +75,9 @@ const _: () = {
     contract::<ActionFrame>();
     contract::<ButtonState>();
     contract::<GraphDoc>();
+    contract::<KindDoc>();
+    contract::<ParamDoc>();
+    contract::<PortDoc>();
     contract::<NodeDoc>();
     contract::<EdgeDoc>();
     contract::<ReplayDoc>();
@@ -1043,11 +1046,200 @@ fn graph_rules() {
         GraphDoc::from_json(&wrong),
         Err(GraphDocError::WrongFormat(_))
     ));
-    let newer = GRAPH.replacen(r#""version": 1, "name""#, r#""version": 2, "name""#, 1);
+    let newer = GRAPH.replacen(r#""version": 1, "name""#, r#""version": 3, "name""#, 1);
     assert_eq!(
         GraphDoc::from_json(&newer),
-        Err(GraphDocError::UnsupportedVersion(2))
+        Err(GraphDocError::UnsupportedVersion(3))
     );
+    // A version 1 file keeps any id but one starting with `$`.
+    let spaced = GRAPH.replace(r#""t""#, r#""my mesh""#);
+    assert!(GraphDoc::from_json(&spaced).is_ok());
+    let dollar = GRAPH.replace(r#""t""#, r#""$t""#);
+    assert_eq!(
+        GraphDoc::from_json(&dollar),
+        Err(GraphDocError::InvalidNodeId("$t".into()))
+    );
+}
+
+/// A kind graph (ADR-0061): a painted post with two params and one output.
+const GRAPH_V2: &str = r#"{ "format": "real-engine/graph", "version": 2, "name": "post", "seed": 0,
+  "kind": { "name": "project.post", "version": 2, "doc": "A painted post.",
+    "migrations": [ { "from": 1, "note": "`tall` became `height`.", "rename": { "tall": "height" } } ] },
+  "params": [
+    { "name": "height", "type": "number", "default": 4, "min": 2, "max": 12, "doc": "Height, in metres." },
+    { "name": "material", "type": "file", "default": "materials/iron.material.json", "extensions": [".material.json"] }
+  ],
+  "inputs": [ { "name": "ground", "type": "field", "required": true } ],
+  "outputs": [ { "name": "post", "type": "fragment", "doc": "The post's entity." } ],
+  "nodes": [
+    { "id": "pole", "kind": "mesh.primitive", "version": 1, "params": { "shape": "cylinder", "height": { "$param": "height" } } },
+    { "id": "painted", "kind": "material.assign", "version": 1, "params": { "material": { "$param": "material" } } },
+    { "id": "out", "kind": "fragment.merge", "version": 1, "params": {} }
+  ],
+  "edges": [
+    { "from": ["pole", "mesh"], "to": ["painted", "mesh"] },
+    { "from": ["painted", "mesh"], "to": ["out", "pole"] },
+    { "from": ["out", "fragment"], "to": ["$out", "post"] }
+  ] }"#;
+
+#[test]
+fn graph_version_2() {
+    let doc = GraphDoc::from_json(GRAPH_V2).unwrap();
+    let kind = doc.kind.as_ref().unwrap();
+    assert_eq!(
+        (kind.name.as_str(), kind.version, kind.oldest),
+        ("project.post", 2, 1)
+    );
+    assert_eq!(kind.migrations[0].rename["tall"], "height");
+    assert!(!kind.migrations[0].changes_output);
+    assert_eq!(doc.params[0].ty, ParamType::Number);
+    assert_eq!(doc.params[1].ty, ParamType::File);
+    assert_eq!(doc.params[1].doc, "");
+    assert!(doc.inputs[0].required && !doc.outputs[0].required);
+    let height = &doc.node("pole").unwrap().params["height"];
+    assert_eq!(GraphDoc::param_ref(height), Some("height"));
+    assert_eq!(
+        GraphDoc::param_ref(&serde_json::json!({ "$param": 1 })),
+        None
+    );
+    assert_eq!(
+        GraphDoc::param_ref(&serde_json::json!({ "$param": "a", "b": 1 })),
+        None
+    );
+    round_trip(&doc);
+    // Written in field order, with defaults and empty fields left out.
+    let pretty = doc.to_json();
+    let order: Vec<usize> = [
+        "\"seed\"",
+        "\"kind\"",
+        "\"params\"",
+        "\"inputs\"",
+        "\"outputs\"",
+        "\"nodes\"",
+    ]
+    .iter()
+    .map(|k| pretty.find(k).unwrap())
+    .collect();
+    assert!(order.windows(2).all(|w| w[0] < w[1]), "{pretty}");
+    for absent in [
+        "oldest",
+        "changes_output",
+        "\"remove\"",
+        "\"set\"",
+        "\"values\"",
+        "\"required\": false",
+    ] {
+        assert!(!pretty.contains(absent), "{absent} in {pretty}");
+    }
+    assert_eq!(GraphDoc::from_json(&pretty).unwrap(), doc);
+    assert_eq!(GraphDoc::from_json(&pretty).unwrap().to_json(), pretty);
+    round_trip(&ParamType::Str);
+    assert_eq!(
+        serde_json::to_string(&ParamType::Str).unwrap(),
+        "\"string\""
+    );
+    assert_eq!(serde_json::to_string(&ParamType::Vec2).unwrap(), "\"vec2\"");
+}
+
+#[test]
+fn graph_versions_and_ids() {
+    // A new document is version 1 until it uses a version 2 field.
+    let mut doc = GraphDoc::from_json(GRAPH).unwrap();
+    assert_eq!(GraphDoc::new("g", 0).version, 1);
+    assert_eq!(doc.version_2_use(), None);
+    doc.raise_version();
+    assert_eq!(doc.version, 1);
+    doc.outputs.push(PortDoc {
+        name: "ground".into(),
+        ty: "mesh".into(),
+        required: false,
+        doc: String::new(),
+    });
+    assert_eq!(
+        doc.validate(),
+        Err(GraphDocError::NeedsVersion2("`outputs`".into()))
+    );
+    doc.raise_version();
+    assert_eq!(doc.version, 2);
+    assert_eq!(doc.validate(), Ok(()));
+    doc.outputs.clear();
+    doc.raise_version();
+    assert_eq!(doc.version, 2, "nothing lowers a version");
+
+    // Each version 2 use needs version 2.
+    let v1 =
+        |text: &str| GraphDoc::from_json(&text.replacen(r#""version": 2"#, r#""version": 1"#, 1));
+    assert!(matches!(v1(GRAPH_V2), Err(GraphDocError::NeedsVersion2(_))));
+    let bound = GRAPH.replace(r#"{ "size": 256 }"#, r#"{ "size": { "$param": "size" } }"#);
+    assert!(matches!(
+        GraphDoc::from_json(&bound),
+        Err(GraphDocError::NeedsVersion2(_))
+    ));
+    // A reference inside a value is data in version 1, and `re_proc`'s to judge in version 2.
+    let nested = GRAPH.replace(r#"[1, 2]"#, r#"[{ "$param": "a" }]"#);
+    assert!(GraphDoc::from_json(&nested).is_ok());
+
+    // Version 2 ids are letters, digits, `_` and `-`.
+    let v2 =
+        |text: &str| GraphDoc::from_json(&text.replacen(r#""version": 1"#, r#""version": 2"#, 1));
+    assert!(v2(GRAPH).is_ok());
+    for bad in ["my mesh", "a/b", "$t", "", "t.1"] {
+        let renamed = GRAPH.replace(r#""t""#, &format!("{bad:?}"));
+        assert_eq!(
+            v2(&renamed),
+            Err(GraphDocError::InvalidNodeId(bad.into())),
+            "{bad}"
+        );
+    }
+    assert!(GraphDoc::valid_node_id("street_row-2"));
+
+    // `$in` only starts edges, `$out` only ends them.
+    let wrong_end = GRAPH_V2.replace(r#"["$out", "post"] }"#, r#"["$in", "post"] }"#);
+    assert_eq!(
+        GraphDoc::from_json(&wrong_end),
+        Err(GraphDocError::MisplacedPortNode {
+            edge: 2,
+            node: "$in".into()
+        })
+    );
+    let wrong_start = GRAPH_V2.replace(
+        r#"{ "from": ["pole", "mesh"]"#,
+        r#"{ "from": ["$out", "mesh"]"#,
+    );
+    assert_eq!(
+        GraphDoc::from_json(&wrong_start),
+        Err(GraphDocError::MisplacedPortNode {
+            edge: 0,
+            node: "$out".into()
+        })
+    );
+    let from_input = GRAPH_V2.replace(
+        r#"{ "from": ["pole", "mesh"]"#,
+        r#"{ "from": ["$in", "ground"]"#,
+    );
+    assert!(GraphDoc::from_json(&from_input).is_ok());
+    let unknown = GRAPH_V2.replace(r#"["painted", "mesh"] },"#, r#"["paint", "mesh"] },"#);
+    assert_eq!(
+        GraphDoc::from_json(&unknown),
+        Err(GraphDocError::UnknownNode {
+            edge: 0,
+            node: "paint".into()
+        })
+    );
+    // Unknown keys in the new blocks are errors too.
+    let extra = GRAPH_V2.replace(
+        r#""doc": "A painted post.","#,
+        r#""doc": "A painted post.", "colour": 1,"#,
+    );
+    assert!(matches!(
+        GraphDoc::from_json(&extra),
+        Err(GraphDocError::Parse(_))
+    ));
+    let bad_type = GRAPH_V2.replace(r#""type": "number""#, r#""type": "float""#);
+    assert!(matches!(
+        GraphDoc::from_json(&bad_type),
+        Err(GraphDocError::Parse(_))
+    ));
 }
 
 const REPLAY: &str = r#"{ "$schema": "../../schemas/replay.schema.json", "version": 1, "seed": 1234, "frames": 600,

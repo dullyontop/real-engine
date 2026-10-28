@@ -27,7 +27,9 @@ pub const GENERATOR: &str = "graph";
 pub const GENERATOR_VERSION: u32 = 1;
 
 /// Per-node parameter overrides, as stored in `GraphSource.params`:
-/// `{"<node id>": {"<param>": <value>}}`.
+/// `{"<node id>": {"<param>": <value>}}`, and the source's graph param
+/// values under the key [`GRAPH_KEY`](crate::params::GRAPH_KEY):
+/// `{"$graph": {"<graph param>": <value>}}` (ADR-0061 §3).
 pub type ParamOverrides = Map<String, Json>;
 
 /// Parses `GraphSource.params` (empty text is no overrides).
@@ -115,7 +117,9 @@ fn check_override_inner(
             n.kind
         )));
     }
-    let mut params = n.params.clone();
+    // A node param bound to a graph param is checked with the param's value.
+    let base = crate::params::bound_params(doc, n);
+    let mut params = base.clone();
     if value.is_null() {
         params.remove(param);
     } else {
@@ -143,8 +147,8 @@ fn check_override_inner(
                 n.kind
             )));
         }
-        let changes_doc = n.params.get(param) != Some(value) && !value.is_null();
-        if changes_doc && migrate(&Json::Object(n.params.clone())).ok() == Some(migrated.clone()) {
+        let changes_doc = base.get(param) != Some(value) && !value.is_null();
+        if changes_doc && migrate(&Json::Object(base)).ok() == Some(migrated.clone()) {
             return Err(unknown(format!(
                 "node `{node}` ({}) is written for version {}, where `{param}` has no effect",
                 n.kind, n.version
@@ -158,18 +162,31 @@ fn check_override_inner(
         .map_err(|e| refused(format!("node `{node}` ({}): {e}", n.kind)))
 }
 
-/// `doc` with `overrides` applied on top of its node parameters. An override
-/// naming an unknown node or parameter, or a value the node refuses, is
-/// skipped with an `RE4011` warning (the node keeps its document value).
+/// `doc` with `overrides` applied: first the source's graph param values,
+/// which replace the defaults the bound node params take
+/// ([`apply_values`](crate::params::apply_values); a value the graph no
+/// longer takes is skipped with an `RE4201` or `RE4202` warning), then the
+/// per-node overrides on top of the node parameters. A per-node override
+/// replaces a binding. One naming an unknown node or parameter, or a value
+/// the node refuses, is skipped with an `RE4011` warning (the node keeps its
+/// document value).
 pub fn apply_overrides(
     doc: &GraphDoc,
     overrides: &ParamOverrides,
     registry: &NodeRegistry,
     source_id: &str,
 ) -> (GraphDoc, Vec<Diagnostic>) {
-    let mut out = doc.clone();
-    let mut warnings = Vec::new();
-    let mut nodes: Vec<&String> = overrides.keys().collect();
+    let (mut out, mut warnings) = match overrides
+        .get(crate::params::GRAPH_KEY)
+        .and_then(Json::as_object)
+    {
+        Some(values) => crate::params::apply_values(doc, values, source_id),
+        None => (doc.clone(), Vec::new()),
+    };
+    let mut nodes: Vec<&String> = overrides
+        .keys()
+        .filter(|k| *k != crate::params::GRAPH_KEY)
+        .collect();
     nodes.sort();
     for node in nodes {
         let Some(params) = overrides[node].as_object() else {

@@ -50,7 +50,10 @@ pub use anim::{
 pub use audio::{
     AudioCmd, AudioGraphDesc, BusLevel, EffectDesc, EffectParam, Rolloff, SoundOp, Spatial,
 };
-pub use graph::{EdgeDoc, GraphDoc, GraphDocError, NodeDoc};
+pub use graph::{
+    EdgeDoc, GraphDoc, GraphDocError, KindDoc, KindMigrationDoc, NodeDoc, ParamDoc, ParamType,
+    PortDoc,
+};
 pub use host::{HostError, HostResult, HostServices};
 pub use ids::EntityId;
 pub use input::{

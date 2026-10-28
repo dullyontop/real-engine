@@ -102,8 +102,10 @@ end)
 c:disconnect()
 task.spawn(function() task.wait() end)
 local g = proc.graph("island", { seed = 1 })
-local h = g:node("terrain.heightfield", { size = 64 })
+local hills = g:param("hills", { type = "number", default = 16, min = 1, max = 64, doc = "Hill height." })
+local h = g:node("terrain.heightfield", { size = 64, height = hills })
 g:node("terrain.mesh", nil, { field = h:out("out") })
+g:output("ground", h, { doc = "The heights." })
 warn(script.path, script.context, v.x)
 "#;
 

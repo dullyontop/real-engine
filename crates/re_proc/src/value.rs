@@ -32,6 +32,22 @@ pub enum PortType {
 }
 
 impl PortType {
+    /// Every port type.
+    pub const ALL: [PortType; 6] = [
+        PortType::Field,
+        PortType::Mesh,
+        PortType::Points,
+        PortType::Fragment,
+        PortType::Shapes,
+        PortType::Path,
+    ];
+
+    /// The port type whose [`port_name`](Self::port_name) is `name`, as a
+    /// graph's declared inputs and outputs name their types (ADR-0061 §4).
+    pub fn from_name(name: &str) -> Option<PortType> {
+        Self::ALL.into_iter().find(|t| t.port_name() == name)
+    }
+
     /// The name of a node's output port of this type (`field`, `mesh`,
     /// `points`, `fragment`, `shapes` or `path`).
     pub fn port_name(self) -> &'static str {

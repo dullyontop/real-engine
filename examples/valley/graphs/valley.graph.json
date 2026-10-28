@@ -1,6 +1,6 @@
 {
   "format": "real-engine/graph",
-  "version": 1,
+  "version": 2,
   "name": "valley",
   "seed": 7,
   "nodes": [

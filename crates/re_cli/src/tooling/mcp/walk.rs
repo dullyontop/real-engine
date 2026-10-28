@@ -267,6 +267,11 @@ fn arguments(command: &str) -> Option<Vec<Json>> {
         "graph.set_param" => vec![json!({
             "source": "rocks", "node": "gen", "param": "count", "value": 3
         })],
+        "graph.params" => vec![json!({ "graph": graph }), json!({ "source": "rocks" })],
+        "graph.declare_param" => vec![json!({
+            "graph": graph, "name": "walked", "type": "integer", "default": 3, "min": 1
+        })],
+        "graph.remove_param" => vec![json!({ "graph": graph, "name": "walked" })],
         "graph.regenerate" => vec![json!({ "source": "rocks", "seed": 2 })],
         "graph.generate" => vec![json!({ "source": "rocks" })],
         "graph.report" => vec![json!({ "source": "rocks" })],

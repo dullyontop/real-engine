@@ -16,12 +16,19 @@
 //! kind asks for another, as in `"terrain.heightfield@2"` (ADR-0043). Node ids are `n1`, `n2`, … in creation order unless an id
 //! is given. The result is a [`GraphDoc`]; `re_script` does not depend on
 //! `re_proc`, which validates node kinds and ports.
+//!
+//! A builder can give its graph typed params and declared outputs (ADR-0061
+//! §10): `g:param(name, { type = "number", default = 16, min = 1 })` returns
+//! a handle that, as a node param's value, binds that param, and
+//! `g:output(name, from)` declares an output fed by a node or port. Its type
+//! is left empty for `re_app` to fill from what feeds it, which only
+//! `re_proc` knows. A graph that declares neither is version 1, as before.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use mlua::{AnyUserData, Lua, Result, Table, UserData, UserDataFields, UserDataMethods, Value};
-use re_types::graph::{EdgeDoc, GraphDoc, NodeDoc};
+use re_types::graph::{EdgeDoc, GraphDoc, NodeDoc, ParamDoc, ParamType, PortDoc};
 
 use super::{Lib, json};
 use crate::api::libs::host_err;
@@ -41,6 +48,17 @@ declare extern type Graph with
     function node(self, kind: string, params: { [string]: any }?, inputs: { [string]: GraphNode | GraphPort }?, id: string?): GraphNode
     -- Connects an output to a node's input port.
     function connect(self, from: GraphNode | GraphPort, to: GraphNode, port: string): ()
+    -- Declares a typed graph param, which the inspector, recipes and graph.set_param set
+    -- per source. Given as a node param's value, the handle binds that param.
+    -- type: number, integer, bool, string, enum, vec2, vec3, color, file or curve.
+    function param(self, name: string, options: { type: string, default: any?, min: number?, max: number?, values: { string }?, extensions: { string }?, doc: string? }): GraphParam
+    -- Declares an output of the graph, fed by a node or port, of the type it brings.
+    function output(self, name: string, from: GraphNode | GraphPort, options: { doc: string? }?): ()
+end
+
+-- A param of a Graph; as a node param's value it binds that param to it.
+declare extern type GraphParam with
+    read name: string
 end
 
 -- A node of a Graph; as an input it stands for its \"out\" port.
@@ -77,8 +95,171 @@ struct PortRef {
     port: String,
 }
 
+/// A graph param (`GraphParam`): as a node param's value, it records the
+/// reference `{"$param": name}` (ADR-0061 §2).
+#[derive(Clone, Debug)]
+struct ParamRef {
+    graph: Rc<RefCell<GraphDoc>>,
+    name: String,
+}
+
+/// The graph param `v` is a handle of, if it is one; a handle of another
+/// graph is an error.
+fn param_handle(graph: &Rc<RefCell<GraphDoc>>, v: &Value, what: &str) -> Result<Option<String>> {
+    let Value::UserData(ud) = v else {
+        return Ok(None);
+    };
+    let Ok(p) = ud.borrow::<ParamRef>() else {
+        return Ok(None);
+    };
+    if !Rc::ptr_eq(&p.graph, graph) {
+        return Err(bad(format!(
+            "{what}: param {:?} belongs to another graph",
+            p.name
+        )));
+    }
+    Ok(Some(p.name.clone()))
+}
+
+/// True when `v` holds a graph param handle inside a table, at any depth.
+fn holds_param(v: &Value, depth: usize) -> Result<bool> {
+    match v {
+        Value::UserData(ud) => Ok(ud.borrow::<ParamRef>().is_ok()),
+        Value::Table(t) if depth < 32 => {
+            for pair in t.pairs::<Value, Value>() {
+                if holds_param(&pair?.1, depth + 1)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// A node's params as JSON: each graph param handle given as a param's
+/// value becomes the reference `{"$param": name}`.
+fn node_params(
+    lua: &Lua,
+    graph: &Rc<RefCell<GraphDoc>>,
+    kind: &str,
+    params: Table,
+) -> Result<serde_json::Map<String, serde_json::Value>> {
+    let refs = lua.create_table()?;
+    for pair in params.pairs::<Value, Value>() {
+        let (k, v) = pair?;
+        let what = format!("node {kind:?} param {}", k.to_string().unwrap_or_default());
+        let v = match param_handle(graph, &v, &what)? {
+            Some(name) => {
+                let r = lua.create_table()?;
+                r.raw_set(GraphDoc::PARAM_REF, name)?;
+                Value::Table(r)
+            }
+            None if holds_param(&v, 0)? => {
+                return Err(bad(format!(
+                    "{what}: a graph param stands for a whole param's value, not part of one"
+                )));
+            }
+            None => v,
+        };
+        refs.raw_set(k, v)?;
+    }
+    match json::to_json(lua, &Value::Table(refs))? {
+        serde_json::Value::Object(m) => Ok(m),
+        serde_json::Value::Array(a) if a.is_empty() => Ok(Default::default()),
+        _ => Err(bad(format!(
+            "node {kind:?}: params must be a table of named values"
+        ))),
+    }
+}
+
+/// A graph param declaration from `g:param`'s options.
+fn param_decl(lua: &Lua, name: &str, options: Table) -> Result<ParamDoc> {
+    let what = format!("param {name:?}");
+    let mut ty = None;
+    let mut decl = ParamDoc {
+        name: name.to_string(),
+        ty: ParamType::Number,
+        default: None,
+        min: None,
+        max: None,
+        values: Vec::new(),
+        extensions: Vec::new(),
+        doc: String::new(),
+    };
+    let strings = |v: Value, key: &str| -> Result<Vec<String>> {
+        match json::to_json(lua, &v)? {
+            serde_json::Value::Array(a) => a
+                .into_iter()
+                .map(|s| match s {
+                    serde_json::Value::String(s) => Ok(s),
+                    other => Err(bad(format!("{what}: {key} holds {other}, not a string"))),
+                })
+                .collect(),
+            other => Err(bad(format!(
+                "{what}: {key} must be a list of strings, got {other}"
+            ))),
+        }
+    };
+    let number = |v: Value, key: &str| -> Result<f64> {
+        match v {
+            Value::Integer(i) => Ok(i as f64),
+            Value::Number(n) if n.is_finite() => Ok(n),
+            other => Err(bad(format!(
+                "{what}: {key} must be a finite number, got {}",
+                other.type_name()
+            ))),
+        }
+    };
+    for pair in options.pairs::<String, Value>() {
+        let (key, v) = pair?;
+        match key.as_str() {
+            "type" => {
+                let s = text(v, &format!("{what}: type"))?;
+                ty = Some(
+                    serde_json::from_value::<ParamType>(serde_json::Value::String(s.clone()))
+                        .map_err(|_| {
+                            bad(format!(
+                                "{what}: type {s:?} is not one of number, integer, bool, string, enum, vec2, vec3, color, file and curve"
+                            ))
+                        })?,
+                );
+            }
+            "default" => decl.default = Some(json::to_json(lua, &v)?),
+            "min" => decl.min = Some(number(v, "min")?),
+            "max" => decl.max = Some(number(v, "max")?),
+            "values" => decl.values = strings(v, "values")?,
+            "extensions" => decl.extensions = strings(v, "extensions")?,
+            "doc" => decl.doc = text(v, &format!("{what}: doc"))?,
+            other => {
+                return Err(bad(format!(
+                    "{what}: unknown option {other:?} (type, default, min, max, values, extensions, doc)"
+                )));
+            }
+        }
+    }
+    decl.ty = ty.ok_or_else(|| {
+        bad(format!(
+            "{what}: options need a type, as {{ type = \"number\" }}"
+        ))
+    })?;
+    Ok(decl)
+}
+
 fn bad(msg: impl std::fmt::Display) -> mlua::Error {
     super::error(codes::GRAPH_BUILDER, msg)
+}
+
+/// A builder option that must be a string, such as a param's `type` or
+/// `doc` (`what` names it in the error).
+fn text(v: Value, what: &str) -> Result<String> {
+    match v {
+        Value::String(s) => Ok(s.to_str()?.to_string()),
+        other => Err(bad(format!(
+            "{what} must be a string, got {}",
+            other.type_name()
+        ))),
+    }
 }
 
 /// Reads a node or port handle that belongs to `graph`.
@@ -137,11 +318,7 @@ impl UserData for GraphBuilder {
                 // builder means the same thing on every engine (ADR-0043).
                 let (kind, version) = split_version(&kind)?;
                 let params = match params {
-                    Some(t) => match json::to_json(lua, &Value::Table(t))? {
-                        serde_json::Value::Object(m) => m,
-                        serde_json::Value::Array(a) if a.is_empty() => Default::default(),
-                        _ => return Err(bad(format!("node {kind:?}: params must be a table of named values"))),
-                    },
+                    Some(t) => node_params(lua, &g.0, &kind, t)?,
                     None => Default::default(),
                 };
                 let mut edges = Vec::new();
@@ -188,6 +365,60 @@ impl UserData for GraphBuilder {
                 Ok(())
             },
         );
+        methods.add_method("param", |lua, g, (name, options): (String, Table)| {
+            let decl = param_decl(lua, &name, options)?;
+            let mut doc = g.0.borrow_mut();
+            if doc.params.iter().any(|d| d.name == name) {
+                return Err(bad(format!(
+                    "a param named {name:?} already exists in graph {:?}",
+                    doc.name
+                )));
+            }
+            doc.params.push(decl);
+            Ok(ParamRef {
+                graph: g.0.clone(),
+                name,
+            })
+        });
+        methods.add_method(
+            "output",
+            |_, g, (name, from, options): (String, Value, Option<Table>)| {
+                let from = source(&g.0, &from, &format!("output {name:?}"))?;
+                let mut doc_text = String::new();
+                if let Some(options) = options {
+                    for pair in options.pairs::<String, Value>() {
+                        let (key, v) = pair?;
+                        match key.as_str() {
+                            "doc" => doc_text = text(v, &format!("output {name:?}: doc"))?,
+                            other => {
+                                return Err(bad(format!(
+                                    "output {name:?}: unknown option {other:?} (doc)"
+                                )));
+                            }
+                        }
+                    }
+                }
+                let mut doc = g.0.borrow_mut();
+                if doc.outputs.iter().any(|o| o.name == name) {
+                    return Err(bad(format!(
+                        "an output named {name:?} already exists in graph {:?}",
+                        doc.name
+                    )));
+                }
+                // The type is what `from` brings, which re_app fills in.
+                doc.outputs.push(PortDoc {
+                    name: name.clone(),
+                    ty: String::new(),
+                    required: false,
+                    doc: doc_text,
+                });
+                doc.edges.push(EdgeDoc {
+                    from,
+                    to: (GraphDoc::OUTPUTS.to_string(), name),
+                });
+                Ok(())
+            },
+        );
         super::strict_userdata(methods, "Graph");
     }
 }
@@ -219,6 +450,15 @@ impl UserData for PortRef {
     }
 }
 
+impl UserData for ParamRef {
+    fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
+        fields.add_field_method_get("name", |_, p| Ok(p.name.clone()));
+    }
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        super::strict_userdata(methods, "GraphParam");
+    }
+}
+
 /// The graph a builder chunk returned, validated.
 pub(crate) fn graph_from_value(v: &Value) -> std::result::Result<GraphDoc, String> {
     let Value::UserData(ud) = v else {
@@ -230,7 +470,9 @@ pub(crate) fn graph_from_value(v: &Value) -> std::result::Result<GraphDoc, Strin
     let g = ud.borrow::<GraphBuilder>().map_err(|_| {
         "a builder script must return the graph made with proc.graph(...)".to_string()
     })?;
-    let doc = g.0.borrow().clone();
+    let mut doc = g.0.borrow().clone();
+    // A graph with params or outputs is version 2 (ADR-0061 §1).
+    doc.raise_version();
     doc.validate()
         .map_err(|e| format!("the graph is not valid: {e:?}"))?;
     Ok(doc)

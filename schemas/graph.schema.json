@@ -9,7 +9,7 @@
       "type": "string"
     },
     "version": {
-      "description": "The file format version, [`GraphDoc::VERSION`].",
+      "description": "The file format version, 1 or [`GraphDoc::VERSION`].",
       "type": "integer",
       "format": "uint32",
       "minimum": 0
@@ -22,6 +22,38 @@
       "description": "The default seed. A procedural source's `Procedural.seed` wins over it.",
       "type": "integer",
       "format": "int64"
+    },
+    "kind": {
+      "description": "Makes the file a node kind (version 2; ADR-0061 §6). Omitted when absent.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/KindDoc"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "params": {
+      "description": "The graph's params, in the order an inspector shows them (version 2;\nADR-0061 §2). Omitted when empty.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ParamDoc"
+      }
+    },
+    "inputs": {
+      "description": "A node kind's inputs, fed to edges from `[\"$in\", name]` (version 2;\nADR-0061 §4). Omitted when empty.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PortDoc"
+      }
+    },
+    "outputs": {
+      "description": "The graph's outputs, each fed by one edge to `[\"$out\", name]` (version\n2; ADR-0061 §4). Omitted when empty.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PortDoc"
+      }
     },
     "nodes": {
       "description": "The nodes, in file order.",
@@ -61,6 +93,225 @@
     "edges"
   ],
   "$defs": {
+    "KindDoc": {
+      "description": "What makes a graph file a node kind (ADR-0061 §6).",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The kind's name: `project.` then lowercase letters, digits, `_` and `.`.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The kind's current version, from 1.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "oldest": {
+          "description": "The oldest version an instance may record. 1 when omitted.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "doc": {
+          "description": "What the kind makes, for `describe` and the editor.",
+          "type": "string"
+        },
+        "migrations": {
+          "description": "One step per version, from `oldest` up to `version`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/KindMigrationDoc"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version"
+      ]
+    },
+    "KindMigrationDoc": {
+      "description": "One version step of a kind graph's params: `rename`, then `remove`, then\n`set` (ADR-0061 §6).",
+      "type": "object",
+      "properties": {
+        "from": {
+          "description": "The version this step upgrades from.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "note": {
+          "description": "What changed, for the migration report.",
+          "type": "string"
+        },
+        "changes_output": {
+          "description": "True if the new version gives different output for some params.",
+          "type": "boolean"
+        },
+        "rename": {
+          "description": "Params renamed, old name to new name.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "remove": {
+          "description": "Params removed.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "set": {
+          "description": "Params set to a value (added, or replaced).",
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "from"
+      ]
+    },
+    "ParamDoc": {
+      "description": "A graph param's declaration (ADR-0061 §2).",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Letters, digits and `_`, starting with a letter; at most 64 bytes.",
+          "type": "string"
+        },
+        "type": {
+          "description": "The value's type.",
+          "$ref": "#/$defs/ParamType"
+        },
+        "default": {
+          "description": "The value when a source or an instance gives none. Required outside\nkind graphs."
+        },
+        "min": {
+          "description": "The smallest value (`number` and `integer`), inclusive.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "max": {
+          "description": "The largest value (`number` and `integer`), inclusive.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "values": {
+          "description": "The allowed values of an `enum`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "extensions": {
+          "description": "The endings a `file` accepts, such as `.prefab.json`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "doc": {
+          "description": "What the param does, for the inspector's tooltip.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type"
+      ]
+    },
+    "ParamType": {
+      "description": "The type of a graph param (ADR-0061 §2).",
+      "oneOf": [
+        {
+          "description": "A finite number.",
+          "type": "string",
+          "const": "number"
+        },
+        {
+          "description": "A whole number, at most 2^53 in size.",
+          "type": "string",
+          "const": "integer"
+        },
+        {
+          "description": "`true` or `false`.",
+          "type": "string",
+          "const": "bool"
+        },
+        {
+          "description": "A string.",
+          "type": "string",
+          "const": "string"
+        },
+        {
+          "description": "One of `values`.",
+          "type": "string",
+          "const": "enum"
+        },
+        {
+          "description": "`[x, y]`.",
+          "type": "string",
+          "const": "vec2"
+        },
+        {
+          "description": "`[x, y, z]`.",
+          "type": "string",
+          "const": "vec3"
+        },
+        {
+          "description": "`[r, g, b]` or `[r, g, b, a]`, linear.",
+          "type": "string",
+          "const": "color"
+        },
+        {
+          "description": "A project path, or `\"\"` for none.",
+          "type": "string",
+          "const": "file"
+        },
+        {
+          "description": "`[[x, y], …]`: 2 to 256 points with `x` strictly increasing.",
+          "type": "string",
+          "const": "curve"
+        }
+      ]
+    },
+    "PortDoc": {
+      "description": "A declared input or output of a graph (ADR-0061 §4).",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Letters, digits and `_`; unique on its side.",
+          "type": "string"
+        },
+        "type": {
+          "description": "A port type name, such as `field` or `fragment`; `re_proc` checks it.",
+          "type": "string"
+        },
+        "required": {
+          "description": "An input that every instance must connect. Inputs only.",
+          "type": "boolean"
+        },
+        "doc": {
+          "description": "What the port carries, for `describe` and the editor.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type"
+      ]
+    },
     "NodeDoc": {
       "description": "One node of a [`GraphDoc`].",
       "type": "object",
@@ -71,36 +322,43 @@
         },
         "kind": {
           "description": "The node type, for example `terrain.heightfield`.",
-          "type": "string",
-          "enum": [
-            "terrain.heightfield",
-            "terrain.island_mask",
-            "terrain.mesh",
-            "terrain.chunks",
-            "terrain.water_plane",
-            "terrain.erode",
-            "field.combine",
-            "field.remap",
-            "scatter.poisson",
-            "scatter.grid_jitter",
-            "points.filter",
-            "points.pick",
-            "points.instance",
-            "mesh.primitive",
-            "mesh.transform",
-            "mesh.merge",
-            "material.assign",
-            "fragment.merge",
-            "shape.polygon",
-            "shape.boolean",
-            "shape.offset",
-            "shape.mesh",
-            "field.from_shapes",
-            "points.mask",
-            "path.spline",
-            "road.mesh",
-            "road.footprint",
-            "terrain.conform"
+          "anyOf": [
+            {
+              "enum": [
+                "terrain.heightfield",
+                "terrain.island_mask",
+                "terrain.mesh",
+                "terrain.chunks",
+                "terrain.water_plane",
+                "terrain.erode",
+                "field.combine",
+                "field.remap",
+                "scatter.poisson",
+                "scatter.grid_jitter",
+                "points.filter",
+                "points.pick",
+                "points.instance",
+                "mesh.primitive",
+                "mesh.transform",
+                "mesh.merge",
+                "material.assign",
+                "fragment.merge",
+                "shape.polygon",
+                "shape.boolean",
+                "shape.offset",
+                "shape.mesh",
+                "field.from_shapes",
+                "points.mask",
+                "path.spline",
+                "road.mesh",
+                "road.footprint",
+                "terrain.conform"
+              ]
+            },
+            {
+              "type": "string",
+              "pattern": "^project\\.[a-z0-9_.]+$"
+            }
           ]
         },
         "version": {
@@ -139,78 +397,166 @@
               "params": {
                 "properties": {
                   "size": {
-                    "description": "Samples per side (2 to 2049). The field is centred on the source.",
-                    "type": "integer",
-                    "format": "uint32",
-                    "minimum": 0,
-                    "default": 128
+                    "anyOf": [
+                      {
+                        "description": "Samples per side (2 to 2049). The field is centred on the source.",
+                        "type": "integer",
+                        "format": "uint32",
+                        "minimum": 0,
+                        "default": 128
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Samples per side (2 to 2049). The field is centred on the source."
                   },
                   "cell": {
-                    "description": "Distance between samples, in metres.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 1.0
+                    "anyOf": [
+                      {
+                        "description": "Distance between samples, in metres.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 1.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Distance between samples, in metres."
                   },
                   "scale": {
-                    "description": "Noise frequency: noise units per metre (smaller is broader).",
-                    "type": "number",
-                    "format": "float",
-                    "default": 0.009999999776482582
+                    "anyOf": [
+                      {
+                        "description": "Noise frequency: noise units per metre (smaller is broader).",
+                        "type": "number",
+                        "format": "float",
+                        "default": 0.009999999776482582
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Noise frequency: noise units per metre (smaller is broader)."
                   },
                   "height": {
-                    "description": "Height of the highest possible point, in metres (heights run from 0 to this).",
-                    "type": "number",
-                    "format": "float",
-                    "default": 30.0
+                    "anyOf": [
+                      {
+                        "description": "Height of the highest possible point, in metres (heights run from 0 to this).",
+                        "type": "number",
+                        "format": "float",
+                        "default": 30.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Height of the highest possible point, in metres (heights run from 0 to this)."
                   },
                   "noise": {
-                    "description": "The noise: `fbm`, `ridged` or `warped`.",
-                    "$ref": "#/$defs/terrain.heightfield.NoiseKind",
-                    "default": "fbm"
+                    "anyOf": [
+                      {
+                        "description": "The noise: `fbm`, `ridged` or `warped`.",
+                        "$ref": "#/$defs/terrain.heightfield.NoiseKind",
+                        "default": "fbm"
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The noise: `fbm`, `ridged` or `warped`."
                   },
                   "basis": {
-                    "description": "The base noise: `perlin` or `simplex`.",
-                    "$ref": "#/$defs/terrain.heightfield.BasisKind",
-                    "default": "perlin"
+                    "anyOf": [
+                      {
+                        "description": "The base noise: `perlin` or `simplex`.",
+                        "$ref": "#/$defs/terrain.heightfield.BasisKind",
+                        "default": "perlin"
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The base noise: `perlin` or `simplex`."
                   },
                   "octaves": {
-                    "description": "Number of octaves (1 to 16).",
-                    "type": "integer",
-                    "format": "uint32",
-                    "minimum": 0,
-                    "default": 5
+                    "anyOf": [
+                      {
+                        "description": "Number of octaves (1 to 16).",
+                        "type": "integer",
+                        "format": "uint32",
+                        "minimum": 0,
+                        "default": 5
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Number of octaves (1 to 16)."
                   },
                   "lacunarity": {
-                    "description": "Frequency multiplier per octave.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 2.0
+                    "anyOf": [
+                      {
+                        "description": "Frequency multiplier per octave.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 2.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Frequency multiplier per octave."
                   },
                   "gain": {
-                    "description": "Amplitude multiplier per octave.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 0.5
+                    "anyOf": [
+                      {
+                        "description": "Amplitude multiplier per octave.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 0.5
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Amplitude multiplier per octave."
                   },
                   "warp": {
-                    "description": "Warp strength in noise units (`warped` only).",
-                    "type": "number",
-                    "format": "float",
-                    "default": 1.0
+                    "anyOf": [
+                      {
+                        "description": "Warp strength in noise units (`warped` only).",
+                        "type": "number",
+                        "format": "float",
+                        "default": 1.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Warp strength in noise units (`warped` only)."
                   },
                   "offset": {
-                    "description": "Moves the noise pattern, in metres `[x, z]`.",
-                    "type": "array",
-                    "items": {
-                      "type": "number",
-                      "format": "float"
-                    },
-                    "minItems": 2,
-                    "maxItems": 2,
-                    "default": [
-                      0.0,
-                      0.0
-                    ]
+                    "anyOf": [
+                      {
+                        "description": "Moves the noise pattern, in metres `[x, z]`.",
+                        "type": "array",
+                        "items": {
+                          "type": "number",
+                          "format": "float"
+                        },
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "default": [
+                          0.0,
+                          0.0
+                        ]
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Moves the noise pattern, in metres `[x, z]`."
                   }
                 },
                 "additionalProperties": false,
@@ -236,34 +582,74 @@
               "params": {
                 "properties": {
                   "size": {
-                    "description": "Samples per side (2 to 2049). `field.combine` resamples it to the\nother field's size, so it rarely needs changing.",
-                    "type": "integer",
-                    "format": "uint32",
-                    "minimum": 0,
-                    "default": 128
+                    "anyOf": [
+                      {
+                        "description": "Samples per side (2 to 2049). `field.combine` resamples it to the\nother field's size, so it rarely needs changing.",
+                        "type": "integer",
+                        "format": "uint32",
+                        "minimum": 0,
+                        "default": 128
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Samples per side (2 to 2049). `field.combine` resamples it to the\nother field's size, so it rarely needs changing."
                   },
                   "cell": {
-                    "description": "Distance between samples, in metres.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 1.0
+                    "anyOf": [
+                      {
+                        "description": "Distance between samples, in metres.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 1.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Distance between samples, in metres."
                   },
                   "radius": {
-                    "description": "The island's radius as a fraction of the half extent (1 reaches the\nmiddle of each edge).",
-                    "type": "number",
-                    "format": "float",
-                    "default": 0.8999999761581421
+                    "anyOf": [
+                      {
+                        "description": "The island's radius as a fraction of the half extent (1 reaches the\nmiddle of each edge).",
+                        "type": "number",
+                        "format": "float",
+                        "default": 0.8999999761581421
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The island's radius as a fraction of the half extent (1 reaches the\nmiddle of each edge)."
                   },
                   "falloff": {
-                    "description": "The fraction of the radius over which the mask falls from 1 to 0.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 0.6000000238418579
+                    "anyOf": [
+                      {
+                        "description": "The fraction of the radius over which the mask falls from 1 to 0.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 0.6000000238418579
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The fraction of the radius over which the mask falls from 1 to 0."
                   },
                   "shape": {
-                    "description": "`circle` or `square`.",
-                    "$ref": "#/$defs/terrain.island_mask.MaskShape",
-                    "default": "circle"
+                    "anyOf": [
+                      {
+                        "description": "`circle` or `square`.",
+                        "$ref": "#/$defs/terrain.island_mask.MaskShape",
+                        "default": "circle"
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "`circle` or `square`."
                   }
                 },
                 "additionalProperties": false,
@@ -290,19 +676,43 @@
                 "additionalProperties": false,
                 "properties": {
                   "collider": {
-                    "description": "Also add a heightfield `Collider` built from the same samples.",
-                    "type": "boolean",
-                    "default": false
+                    "anyOf": [
+                      {
+                        "description": "Also add a heightfield `Collider` built from the same samples.",
+                        "type": "boolean",
+                        "default": false
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Also add a heightfield `Collider` built from the same samples."
                   },
                   "material": {
-                    "description": "A material file (`materials/grass.material.json`), or empty.",
-                    "type": "string",
-                    "default": ""
+                    "anyOf": [
+                      {
+                        "description": "A material file (`materials/grass.material.json`), or empty.",
+                        "type": "string",
+                        "default": ""
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "A material file (`materials/grass.material.json`), or empty."
                   },
                   "name": {
-                    "description": "The entity's name.",
-                    "type": "string",
-                    "default": "Terrain"
+                    "anyOf": [
+                      {
+                        "description": "The entity's name.",
+                        "type": "string",
+                        "default": "Terrain"
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The entity's name."
                   }
                 },
                 "description": "Parameters of `terrain.mesh`.",
@@ -328,21 +738,45 @@
                 "additionalProperties": false,
                 "properties": {
                   "material": {
-                    "description": "A material file (`materials/grass.material.json`), or empty.",
-                    "type": "string",
-                    "default": ""
+                    "anyOf": [
+                      {
+                        "description": "A material file (`materials/grass.material.json`), or empty.",
+                        "type": "string",
+                        "default": ""
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "A material file (`materials/grass.material.json`), or empty."
                   },
                   "max_level": {
-                    "description": "The coarsest level of detail (0 to 8): root tiles are 64 × 2^max_level\nsamples of the field's spacing.",
-                    "type": "integer",
-                    "format": "uint32",
-                    "minimum": 0,
-                    "default": 5
+                    "anyOf": [
+                      {
+                        "description": "The coarsest level of detail (0 to 8): root tiles are 64 × 2^max_level\nsamples of the field's spacing.",
+                        "type": "integer",
+                        "format": "uint32",
+                        "minimum": 0,
+                        "default": 5
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The coarsest level of detail (0 to 8): root tiles are 64 × 2^max_level\nsamples of the field's spacing."
                   },
                   "name": {
-                    "description": "The entity's name when the graph is not streamed.",
-                    "type": "string",
-                    "default": "Terrain"
+                    "anyOf": [
+                      {
+                        "description": "The entity's name when the graph is not streamed.",
+                        "type": "string",
+                        "default": "Terrain"
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The entity's name when the graph is not streamed."
                   }
                 },
                 "description": "Parameters of `terrain.chunks`.",
@@ -368,33 +802,73 @@
                 "additionalProperties": false,
                 "properties": {
                   "level": {
-                    "description": "The water's height, in metres.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 2.0
+                    "anyOf": [
+                      {
+                        "description": "The water's height, in metres.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 2.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The water's height, in metres."
                   },
                   "size": {
-                    "description": "The side length of the square plane, in metres.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 512.0
+                    "anyOf": [
+                      {
+                        "description": "The side length of the square plane, in metres.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 512.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The side length of the square plane, in metres."
                   },
                   "subdivisions": {
-                    "description": "Cells per side of the plane mesh (1 to 1024).",
-                    "type": "integer",
-                    "format": "uint32",
-                    "minimum": 0,
-                    "default": 1
+                    "anyOf": [
+                      {
+                        "description": "Cells per side of the plane mesh (1 to 1024).",
+                        "type": "integer",
+                        "format": "uint32",
+                        "minimum": 0,
+                        "default": 1
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Cells per side of the plane mesh (1 to 1024)."
                   },
                   "material": {
-                    "description": "A material file, or empty.",
-                    "type": "string",
-                    "default": ""
+                    "anyOf": [
+                      {
+                        "description": "A material file, or empty.",
+                        "type": "string",
+                        "default": ""
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "A material file, or empty."
                   },
                   "name": {
-                    "description": "The entity's name.",
-                    "type": "string",
-                    "default": "Water"
+                    "anyOf": [
+                      {
+                        "description": "The entity's name.",
+                        "type": "string",
+                        "default": "Water"
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The entity's name."
                   }
                 },
                 "description": "Parameters of `terrain.water_plane`.",
@@ -420,41 +894,89 @@
                 "additionalProperties": false,
                 "properties": {
                   "spacing": {
-                    "description": "Metres between the samples erosion runs on, when streamed (the\nfield's own spacing otherwise).",
-                    "type": "number",
-                    "format": "float",
-                    "default": 4.0
+                    "anyOf": [
+                      {
+                        "description": "Metres between the samples erosion runs on, when streamed (the\nfield's own spacing otherwise).",
+                        "type": "number",
+                        "format": "float",
+                        "default": 4.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Metres between the samples erosion runs on, when streamed (the\nfield's own spacing otherwise)."
                   },
                   "droplets": {
-                    "description": "Droplets per cell of the erosion grid.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 0.5
+                    "anyOf": [
+                      {
+                        "description": "Droplets per cell of the erosion grid.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 0.5
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Droplets per cell of the erosion grid."
                   },
                   "steps": {
-                    "description": "Steps a droplet lives at most.",
-                    "type": "integer",
-                    "format": "uint32",
-                    "minimum": 0,
-                    "default": 48
+                    "anyOf": [
+                      {
+                        "description": "Steps a droplet lives at most.",
+                        "type": "integer",
+                        "format": "uint32",
+                        "minimum": 0,
+                        "default": 48
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Steps a droplet lives at most."
                   },
                   "erosion": {
-                    "description": "Share of the free capacity eroded per step (0 to 1).",
-                    "type": "number",
-                    "format": "float",
-                    "default": 0.30000001192092896
+                    "anyOf": [
+                      {
+                        "description": "Share of the free capacity eroded per step (0 to 1).",
+                        "type": "number",
+                        "format": "float",
+                        "default": 0.30000001192092896
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Share of the free capacity eroded per step (0 to 1)."
                   },
                   "deposition": {
-                    "description": "Share of the excess sediment dropped per step (0 to 1).",
-                    "type": "number",
-                    "format": "float",
-                    "default": 0.30000001192092896
+                    "anyOf": [
+                      {
+                        "description": "Share of the excess sediment dropped per step (0 to 1).",
+                        "type": "number",
+                        "format": "float",
+                        "default": 0.30000001192092896
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Share of the excess sediment dropped per step (0 to 1)."
                   },
                   "capacity": {
-                    "description": "Sediment a droplet can carry, per unit of slope, speed and water.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 4.0
+                    "anyOf": [
+                      {
+                        "description": "Sediment a droplet can carry, per unit of slope, speed and water.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 4.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Sediment a droplet can carry, per unit of slope, speed and water."
                   }
                 },
                 "description": "Parameters of `terrain.erode`.",
@@ -479,15 +1001,31 @@
               "params": {
                 "properties": {
                   "op": {
-                    "description": "`add`, `sub`, `mul`, `min`, `max` or `lerp`.",
-                    "$ref": "#/$defs/field.combine.CombineOp",
-                    "default": "add"
+                    "anyOf": [
+                      {
+                        "description": "`add`, `sub`, `mul`, `min`, `max` or `lerp`.",
+                        "$ref": "#/$defs/field.combine.CombineOp",
+                        "default": "add"
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "`add`, `sub`, `mul`, `min`, `max` or `lerp`."
                   },
                   "t": {
-                    "description": "The blend factor of `lerp` (0 gives `a`, 1 gives `b`).",
-                    "type": "number",
-                    "format": "float",
-                    "default": 0.5
+                    "anyOf": [
+                      {
+                        "description": "The blend factor of `lerp` (0 gives `a`, 1 gives `b`).",
+                        "type": "number",
+                        "format": "float",
+                        "default": 0.5
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The blend factor of `lerp` (0 gives `a`, 1 gives `b`)."
                   }
                 },
                 "additionalProperties": false,
@@ -513,80 +1051,160 @@
               "params": {
                 "properties": {
                   "mode": {
-                    "description": "`clamp`, `linear`, `curve` or `terrace`.",
-                    "$ref": "#/$defs/field.remap.RemapMode",
-                    "default": "clamp"
+                    "anyOf": [
+                      {
+                        "description": "`clamp`, `linear`, `curve` or `terrace`.",
+                        "$ref": "#/$defs/field.remap.RemapMode",
+                        "default": "clamp"
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "`clamp`, `linear`, `curve` or `terrace`."
                   },
                   "min": {
-                    "description": "`clamp`: the lower bound.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 0.0
+                    "anyOf": [
+                      {
+                        "description": "`clamp`: the lower bound.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 0.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "`clamp`: the lower bound."
                   },
                   "max": {
-                    "description": "`clamp`: the upper bound.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 1.0
+                    "anyOf": [
+                      {
+                        "description": "`clamp`: the upper bound.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 1.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "`clamp`: the upper bound."
                   },
                   "in_min": {
-                    "description": "`linear`: the input value mapped to `out_min`.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 0.0
+                    "anyOf": [
+                      {
+                        "description": "`linear`: the input value mapped to `out_min`.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 0.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "`linear`: the input value mapped to `out_min`."
                   },
                   "in_max": {
-                    "description": "`linear`: the input value mapped to `out_max`.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 1.0
+                    "anyOf": [
+                      {
+                        "description": "`linear`: the input value mapped to `out_max`.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 1.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "`linear`: the input value mapped to `out_max`."
                   },
                   "out_min": {
-                    "description": "`linear`: the output for `in_min`.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 0.0
+                    "anyOf": [
+                      {
+                        "description": "`linear`: the output for `in_min`.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 0.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "`linear`: the output for `in_min`."
                   },
                   "out_max": {
-                    "description": "`linear`: the output for `in_max`.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 1.0
+                    "anyOf": [
+                      {
+                        "description": "`linear`: the output for `in_max`.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 1.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "`linear`: the output for `in_max`."
                   },
                   "points": {
-                    "description": "`curve`: at least two `[in, out]` points with increasing `in`.",
-                    "type": "array",
-                    "items": {
-                      "type": "array",
-                      "items": {
-                        "type": "number",
-                        "format": "float"
+                    "anyOf": [
+                      {
+                        "description": "`curve`: at least two `[in, out]` points with increasing `in`.",
+                        "type": "array",
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "type": "number",
+                            "format": "float"
+                          },
+                          "minItems": 2,
+                          "maxItems": 2
+                        },
+                        "default": [
+                          [
+                            0.0,
+                            0.0
+                          ],
+                          [
+                            1.0,
+                            1.0
+                          ]
+                        ]
                       },
-                      "minItems": 2,
-                      "maxItems": 2
-                    },
-                    "default": [
-                      [
-                        0.0,
-                        0.0
-                      ],
-                      [
-                        1.0,
-                        1.0
-                      ]
-                    ]
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "`curve`: at least two `[in, out]` points with increasing `in`."
                   },
                   "step": {
-                    "description": "`terrace`: the height of each step.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 1.0
+                    "anyOf": [
+                      {
+                        "description": "`terrace`: the height of each step.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 1.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "`terrace`: the height of each step."
                   },
                   "smooth": {
-                    "description": "`terrace`: 0 for sharp steps, up to 1 for a smooth ramp.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 0.0
+                    "anyOf": [
+                      {
+                        "description": "`terrace`: 0 for sharp steps, up to 1 for a smooth ramp.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 0.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "`terrace`: 0 for sharp steps, up to 1 for a smooth ramp."
                   }
                 },
                 "additionalProperties": false,
@@ -613,66 +1231,130 @@
                 "additionalProperties": false,
                 "properties": {
                   "radius": {
-                    "description": "The smallest distance between two points, in metres.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 4.0
+                    "anyOf": [
+                      {
+                        "description": "The smallest distance between two points, in metres.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 4.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The smallest distance between two points, in metres."
                   },
                   "attempts": {
-                    "description": "Candidates tried around each point before it is retired (Bridson's `k`).",
-                    "type": "integer",
-                    "format": "uint32",
-                    "minimum": 0,
-                    "default": 30
+                    "anyOf": [
+                      {
+                        "description": "Candidates tried around each point before it is retired (Bridson's `k`).",
+                        "type": "integer",
+                        "format": "uint32",
+                        "minimum": 0,
+                        "default": 30
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Candidates tried around each point before it is retired (Bridson's `k`)."
                   },
                   "max_points": {
-                    "description": "Stop after this many points.",
-                    "type": "integer",
-                    "format": "uint32",
-                    "minimum": 0,
-                    "default": 100000
+                    "anyOf": [
+                      {
+                        "description": "Stop after this many points.",
+                        "type": "integer",
+                        "format": "uint32",
+                        "minimum": 0,
+                        "default": 100000
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Stop after this many points."
                   },
                   "extent": {
-                    "description": "The side of the square to fill when no field is connected, in metres.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 64.0
+                    "anyOf": [
+                      {
+                        "description": "The side of the square to fill when no field is connected, in metres.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 64.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The side of the square to fill when no field is connected, in metres."
                   },
                   "height_min": {
-                    "description": "Drop points below this height (metres).",
-                    "type": [
-                      "number",
-                      "null"
+                    "anyOf": [
+                      {
+                        "description": "Drop points below this height (metres).",
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "format": "float",
+                        "default": null
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
                     ],
-                    "format": "float",
-                    "default": null
+                    "description": "Drop points below this height (metres)."
                   },
                   "height_max": {
-                    "description": "Drop points above this height (metres).",
-                    "type": [
-                      "number",
-                      "null"
+                    "anyOf": [
+                      {
+                        "description": "Drop points above this height (metres).",
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "format": "float",
+                        "default": null
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
                     ],
-                    "format": "float",
-                    "default": null
+                    "description": "Drop points above this height (metres)."
                   },
                   "slope_min": {
-                    "description": "Drop points flatter than this slope (rise over run: 0 is flat, 1 is 45°).",
-                    "type": [
-                      "number",
-                      "null"
+                    "anyOf": [
+                      {
+                        "description": "Drop points flatter than this slope (rise over run: 0 is flat, 1 is 45°).",
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "format": "float",
+                        "default": null
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
                     ],
-                    "format": "float",
-                    "default": null
+                    "description": "Drop points flatter than this slope (rise over run: 0 is flat, 1 is 45°)."
                   },
                   "slope_max": {
-                    "description": "Drop points steeper than this slope (rise over run).",
-                    "type": [
-                      "number",
-                      "null"
+                    "anyOf": [
+                      {
+                        "description": "Drop points steeper than this slope (rise over run).",
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "format": "float",
+                        "default": null
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
                     ],
-                    "format": "float",
-                    "default": null
+                    "description": "Drop points steeper than this slope (rise over run)."
                   }
                 },
                 "description": "Parameters of `scatter.poisson`.",
@@ -698,58 +1380,114 @@
                 "additionalProperties": false,
                 "properties": {
                   "spacing": {
-                    "description": "Distance between grid cells, in metres.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 4.0
+                    "anyOf": [
+                      {
+                        "description": "Distance between grid cells, in metres.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 4.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Distance between grid cells, in metres."
                   },
                   "jitter": {
-                    "description": "How far each point may move from its cell's centre, as a fraction of\nthe spacing (0 is a regular grid, 1 fills the cell).",
-                    "type": "number",
-                    "format": "float",
-                    "default": 0.5
+                    "anyOf": [
+                      {
+                        "description": "How far each point may move from its cell's centre, as a fraction of\nthe spacing (0 is a regular grid, 1 fills the cell).",
+                        "type": "number",
+                        "format": "float",
+                        "default": 0.5
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "How far each point may move from its cell's centre, as a fraction of\nthe spacing (0 is a regular grid, 1 fills the cell)."
                   },
                   "extent": {
-                    "description": "The side of the square to fill when no field is connected, in metres.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 64.0
+                    "anyOf": [
+                      {
+                        "description": "The side of the square to fill when no field is connected, in metres.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 64.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The side of the square to fill when no field is connected, in metres."
                   },
                   "height_min": {
-                    "description": "Drop points below this height (metres).",
-                    "type": [
-                      "number",
-                      "null"
+                    "anyOf": [
+                      {
+                        "description": "Drop points below this height (metres).",
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "format": "float",
+                        "default": null
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
                     ],
-                    "format": "float",
-                    "default": null
+                    "description": "Drop points below this height (metres)."
                   },
                   "height_max": {
-                    "description": "Drop points above this height (metres).",
-                    "type": [
-                      "number",
-                      "null"
+                    "anyOf": [
+                      {
+                        "description": "Drop points above this height (metres).",
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "format": "float",
+                        "default": null
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
                     ],
-                    "format": "float",
-                    "default": null
+                    "description": "Drop points above this height (metres)."
                   },
                   "slope_min": {
-                    "description": "Drop points flatter than this slope (rise over run: 0 is flat, 1 is 45°).",
-                    "type": [
-                      "number",
-                      "null"
+                    "anyOf": [
+                      {
+                        "description": "Drop points flatter than this slope (rise over run: 0 is flat, 1 is 45°).",
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "format": "float",
+                        "default": null
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
                     ],
-                    "format": "float",
-                    "default": null
+                    "description": "Drop points flatter than this slope (rise over run: 0 is flat, 1 is 45°)."
                   },
                   "slope_max": {
-                    "description": "Drop points steeper than this slope (rise over run).",
-                    "type": [
-                      "number",
-                      "null"
+                    "anyOf": [
+                      {
+                        "description": "Drop points steeper than this slope (rise over run).",
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "format": "float",
+                        "default": null
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
                     ],
-                    "format": "float",
-                    "default": null
+                    "description": "Drop points steeper than this slope (rise over run)."
                   }
                 },
                 "description": "Parameters of `scatter.grid_jitter`.",
@@ -775,52 +1513,100 @@
                 "additionalProperties": false,
                 "properties": {
                   "height_min": {
-                    "description": "Drop points below this height (metres).",
-                    "type": [
-                      "number",
-                      "null"
+                    "anyOf": [
+                      {
+                        "description": "Drop points below this height (metres).",
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "format": "float",
+                        "default": null
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
                     ],
-                    "format": "float",
-                    "default": null
+                    "description": "Drop points below this height (metres)."
                   },
                   "height_max": {
-                    "description": "Drop points above this height (metres).",
-                    "type": [
-                      "number",
-                      "null"
+                    "anyOf": [
+                      {
+                        "description": "Drop points above this height (metres).",
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "format": "float",
+                        "default": null
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
                     ],
-                    "format": "float",
-                    "default": null
+                    "description": "Drop points above this height (metres)."
                   },
                   "slope_min": {
-                    "description": "Drop points flatter than this slope (rise over run: 0 is flat, 1 is 45°).",
-                    "type": [
-                      "number",
-                      "null"
+                    "anyOf": [
+                      {
+                        "description": "Drop points flatter than this slope (rise over run: 0 is flat, 1 is 45°).",
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "format": "float",
+                        "default": null
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
                     ],
-                    "format": "float",
-                    "default": null
+                    "description": "Drop points flatter than this slope (rise over run: 0 is flat, 1 is 45°)."
                   },
                   "slope_max": {
-                    "description": "Drop points steeper than this slope (rise over run).",
-                    "type": [
-                      "number",
-                      "null"
+                    "anyOf": [
+                      {
+                        "description": "Drop points steeper than this slope (rise over run).",
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "format": "float",
+                        "default": null
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
                     ],
-                    "format": "float",
-                    "default": null
+                    "description": "Drop points steeper than this slope (rise over run)."
                   },
                   "mask_min": {
-                    "description": "With a `mask` field connected: drop points where the mask is below this.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 0.5
+                    "anyOf": [
+                      {
+                        "description": "With a `mask` field connected: drop points where the mask is below this.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 0.5
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "With a `mask` field connected: drop points where the mask is below this."
                   },
                   "density": {
-                    "description": "Keep each point with this probability (decided per point id, so the\nsame points survive whatever else changes).",
-                    "type": "number",
-                    "format": "float",
-                    "default": 1.0
+                    "anyOf": [
+                      {
+                        "description": "Keep each point with this probability (decided per point id, so the\nsame points survive whatever else changes).",
+                        "type": "number",
+                        "format": "float",
+                        "default": 1.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Keep each point with this probability (decided per point id, so the\nsame points survive whatever else changes)."
                   }
                 },
                 "description": "Parameters of `points.filter`.",
@@ -845,12 +1631,20 @@
               "params": {
                 "properties": {
                   "choices": {
-                    "description": "The choices; each point picks one at random by weight.",
-                    "type": "array",
-                    "items": {
-                      "$ref": "#/$defs/points.pick.Choice"
-                    },
-                    "default": []
+                    "anyOf": [
+                      {
+                        "description": "The choices; each point picks one at random by weight.",
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/$defs/points.pick.Choice"
+                        },
+                        "default": []
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The choices; each point picks one at random by weight."
                   }
                 },
                 "additionalProperties": false,
@@ -877,50 +1671,114 @@
                 "additionalProperties": false,
                 "properties": {
                   "prefab": {
-                    "description": "The prefab placed at untagged points (or at every point when\n`prefabs` is empty), relative to the project root.",
-                    "type": "string",
-                    "default": ""
+                    "anyOf": [
+                      {
+                        "description": "The prefab placed at untagged points (or at every point when\n`prefabs` is empty), relative to the project root.",
+                        "type": "string",
+                        "default": ""
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The prefab placed at untagged points (or at every point when\n`prefabs` is empty), relative to the project root."
                   },
                   "prefabs": {
-                    "description": "A prefab per tag (from `points.pick`); points whose tag has none and\nthat `prefab` does not cover are skipped.",
-                    "type": "object",
-                    "additionalProperties": {
-                      "type": "string"
-                    },
-                    "default": {}
+                    "anyOf": [
+                      {
+                        "description": "A prefab per tag (from `points.pick`); points whose tag has none and\nthat `prefab` does not cover are skipped.",
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "default": {}
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "A prefab per tag (from `points.pick`); points whose tag has none and\nthat `prefab` does not cover are skipped."
                   },
                   "random_yaw": {
-                    "description": "Turn each instance about Y by a random angle.",
-                    "type": "boolean",
-                    "default": true
+                    "anyOf": [
+                      {
+                        "description": "Turn each instance about Y by a random angle.",
+                        "type": "boolean",
+                        "default": true
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Turn each instance about Y by a random angle."
                   },
                   "align_to_normal": {
-                    "description": "Tilt each instance so its +Y follows the surface normal.",
-                    "type": "boolean",
-                    "default": false
+                    "anyOf": [
+                      {
+                        "description": "Tilt each instance so its +Y follows the surface normal.",
+                        "type": "boolean",
+                        "default": false
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Tilt each instance so its +Y follows the surface normal."
                   },
                   "scale_min": {
-                    "description": "The smallest random uniform scale.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 1.0
+                    "anyOf": [
+                      {
+                        "description": "The smallest random uniform scale.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 1.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The smallest random uniform scale."
                   },
                   "scale_max": {
-                    "description": "The largest random uniform scale.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 1.0
+                    "anyOf": [
+                      {
+                        "description": "The largest random uniform scale.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 1.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The largest random uniform scale."
                   },
                   "offset_y": {
-                    "description": "Raise (or sink) each instance by this many metres.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 0.0
+                    "anyOf": [
+                      {
+                        "description": "Raise (or sink) each instance by this many metres.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 0.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Raise (or sink) each instance by this many metres."
                   },
                   "name": {
-                    "description": "The instance entities' name; the prefab file's name when empty.",
-                    "type": "string",
-                    "default": ""
+                    "anyOf": [
+                      {
+                        "description": "The instance entities' name; the prefab file's name when empty.",
+                        "type": "string",
+                        "default": ""
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The instance entities' name; the prefab file's name when empty."
                   }
                 },
                 "description": "Parameters of `points.instance`.",
@@ -945,57 +1803,113 @@
               "params": {
                 "properties": {
                   "shape": {
-                    "description": "`box`, `sphere`, `cylinder`, `capsule` or `plane`.",
-                    "$ref": "#/$defs/mesh.primitive.PrimitiveShape",
-                    "default": "box"
+                    "anyOf": [
+                      {
+                        "description": "`box`, `sphere`, `cylinder`, `capsule` or `plane`.",
+                        "$ref": "#/$defs/mesh.primitive.PrimitiveShape",
+                        "default": "box"
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "`box`, `sphere`, `cylinder`, `capsule` or `plane`."
                   },
                   "size": {
-                    "description": "`box`: the full size `[x, y, z]`; `plane`: `[x, _, z]`.",
-                    "type": "array",
-                    "items": {
-                      "type": "number",
-                      "format": "float"
-                    },
-                    "minItems": 3,
-                    "maxItems": 3,
-                    "default": [
-                      1.0,
-                      1.0,
-                      1.0
-                    ]
+                    "anyOf": [
+                      {
+                        "description": "`box`: the full size `[x, y, z]`; `plane`: `[x, _, z]`.",
+                        "type": "array",
+                        "items": {
+                          "type": "number",
+                          "format": "float"
+                        },
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "default": [
+                          1.0,
+                          1.0,
+                          1.0
+                        ]
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "`box`: the full size `[x, y, z]`; `plane`: `[x, _, z]`."
                   },
                   "radius": {
-                    "description": "`sphere`, `cylinder`, `capsule`: the radius.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 0.5
+                    "anyOf": [
+                      {
+                        "description": "`sphere`, `cylinder`, `capsule`: the radius.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 0.5
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "`sphere`, `cylinder`, `capsule`: the radius."
                   },
                   "height": {
-                    "description": "`cylinder`: the full height; `capsule`: the length of the straight part.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 1.0
+                    "anyOf": [
+                      {
+                        "description": "`cylinder`: the full height; `capsule`: the length of the straight part.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 1.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "`cylinder`: the full height; `capsule`: the length of the straight part."
                   },
                   "segments": {
-                    "description": "Segments around (3 to 1024).",
-                    "type": "integer",
-                    "format": "uint32",
-                    "minimum": 0,
-                    "default": 24
+                    "anyOf": [
+                      {
+                        "description": "Segments around (3 to 1024).",
+                        "type": "integer",
+                        "format": "uint32",
+                        "minimum": 0,
+                        "default": 24
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Segments around (3 to 1024)."
                   },
                   "rings": {
-                    "description": "Rings: pole to pole for a sphere, per end for a capsule.",
-                    "type": "integer",
-                    "format": "uint32",
-                    "minimum": 0,
-                    "default": 12
+                    "anyOf": [
+                      {
+                        "description": "Rings: pole to pole for a sphere, per end for a capsule.",
+                        "type": "integer",
+                        "format": "uint32",
+                        "minimum": 0,
+                        "default": 12
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Rings: pole to pole for a sphere, per end for a capsule."
                   },
                   "subdivisions": {
-                    "description": "`plane`: cells per side.",
-                    "type": "integer",
-                    "format": "uint32",
-                    "minimum": 0,
-                    "default": 1
+                    "anyOf": [
+                      {
+                        "description": "`plane`: cells per side.",
+                        "type": "integer",
+                        "format": "uint32",
+                        "minimum": 0,
+                        "default": 1
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "`plane`: cells per side."
                   }
                 },
                 "additionalProperties": false,
@@ -1022,49 +1936,73 @@
                 "additionalProperties": false,
                 "properties": {
                   "translation": {
-                    "description": "Moves the mesh, in metres.",
-                    "type": "array",
-                    "items": {
-                      "type": "number",
-                      "format": "float"
-                    },
-                    "minItems": 3,
-                    "maxItems": 3,
-                    "default": [
-                      0.0,
-                      0.0,
-                      0.0
-                    ]
+                    "anyOf": [
+                      {
+                        "description": "Moves the mesh, in metres.",
+                        "type": "array",
+                        "items": {
+                          "type": "number",
+                          "format": "float"
+                        },
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "default": [
+                          0.0,
+                          0.0,
+                          0.0
+                        ]
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Moves the mesh, in metres."
                   },
                   "rotation": {
-                    "description": "Euler angles in degrees, applied X, then Y, then Z.",
-                    "type": "array",
-                    "items": {
-                      "type": "number",
-                      "format": "float"
-                    },
-                    "minItems": 3,
-                    "maxItems": 3,
-                    "default": [
-                      0.0,
-                      0.0,
-                      0.0
-                    ]
+                    "anyOf": [
+                      {
+                        "description": "Euler angles in degrees, applied X, then Y, then Z.",
+                        "type": "array",
+                        "items": {
+                          "type": "number",
+                          "format": "float"
+                        },
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "default": [
+                          0.0,
+                          0.0,
+                          0.0
+                        ]
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Euler angles in degrees, applied X, then Y, then Z."
                   },
                   "scale": {
-                    "description": "Scale per axis (applied first).",
-                    "type": "array",
-                    "items": {
-                      "type": "number",
-                      "format": "float"
-                    },
-                    "minItems": 3,
-                    "maxItems": 3,
-                    "default": [
-                      1.0,
-                      1.0,
-                      1.0
-                    ]
+                    "anyOf": [
+                      {
+                        "description": "Scale per axis (applied first).",
+                        "type": "array",
+                        "items": {
+                          "type": "number",
+                          "format": "float"
+                        },
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "default": [
+                          1.0,
+                          1.0,
+                          1.0
+                        ]
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Scale per axis (applied first)."
                   }
                 },
                 "description": "Parameters of `mesh.transform`.",
@@ -1111,9 +2049,17 @@
                 "additionalProperties": false,
                 "properties": {
                   "material": {
-                    "description": "A material file, relative to the project root\n(`materials/stone.material.json`); `re_app` loads it through `re_assets`.",
-                    "type": "string",
-                    "default": ""
+                    "anyOf": [
+                      {
+                        "description": "A material file, relative to the project root\n(`materials/stone.material.json`); `re_app` loads it through `re_assets`.",
+                        "type": "string",
+                        "default": ""
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "A material file, relative to the project root\n(`materials/stone.material.json`); `re_app` loads it through `re_assets`."
                   }
                 },
                 "description": "Parameters of `material.assign`.",
@@ -1139,9 +2085,17 @@
                 "additionalProperties": false,
                 "properties": {
                   "group": {
-                    "description": "When set, a group entity `<node>/group` with this name is created and\nevery entity of the inputs without a parent goes under it.",
-                    "type": "string",
-                    "default": ""
+                    "anyOf": [
+                      {
+                        "description": "When set, a group entity `<node>/group` with this name is created and\nevery entity of the inputs without a parent goes under it.",
+                        "type": "string",
+                        "default": ""
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "When set, a group entity `<node>/group` with this name is created and\nevery entity of the inputs without a parent goes under it."
                   }
                 },
                 "description": "Parameters of `fragment.merge`.",
@@ -1167,35 +2121,51 @@
                 "additionalProperties": false,
                 "properties": {
                   "points": {
-                    "description": "The outer contour, `[x, z]` in metres (3 points or more, either\ndirection).",
-                    "type": "array",
-                    "items": {
-                      "type": "array",
-                      "items": {
-                        "type": "number",
-                        "format": "double"
-                      },
-                      "minItems": 2,
-                      "maxItems": 2
-                    },
-                    "default": []
-                  },
-                  "holes": {
-                    "description": "Holes inside it, each 3 points or more.",
-                    "type": "array",
-                    "items": {
-                      "type": "array",
-                      "items": {
+                    "anyOf": [
+                      {
+                        "description": "The outer contour, `[x, z]` in metres (3 points or more, either\ndirection).",
                         "type": "array",
                         "items": {
-                          "type": "number",
-                          "format": "double"
+                          "type": "array",
+                          "items": {
+                            "type": "number",
+                            "format": "double"
+                          },
+                          "minItems": 2,
+                          "maxItems": 2
                         },
-                        "minItems": 2,
-                        "maxItems": 2
+                        "default": []
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
                       }
-                    },
-                    "default": []
+                    ],
+                    "description": "The outer contour, `[x, z]` in metres (3 points or more, either\ndirection)."
+                  },
+                  "holes": {
+                    "anyOf": [
+                      {
+                        "description": "Holes inside it, each 3 points or more.",
+                        "type": "array",
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "type": "array",
+                            "items": {
+                              "type": "number",
+                              "format": "double"
+                            },
+                            "minItems": 2,
+                            "maxItems": 2
+                          }
+                        },
+                        "default": []
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Holes inside it, each 3 points or more."
                   }
                 },
                 "description": "Parameters of `shape.polygon`.",
@@ -1220,9 +2190,17 @@
               "params": {
                 "properties": {
                   "op": {
-                    "description": "`union`, `intersect`, `difference` (`a` minus `b`) or `xor`.",
-                    "$ref": "#/$defs/shape.boolean.BoolOp",
-                    "default": "union"
+                    "anyOf": [
+                      {
+                        "description": "`union`, `intersect`, `difference` (`a` minus `b`) or `xor`.",
+                        "$ref": "#/$defs/shape.boolean.BoolOp",
+                        "default": "union"
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "`union`, `intersect`, `difference` (`a` minus `b`) or `xor`."
                   }
                 },
                 "additionalProperties": false,
@@ -1248,15 +2226,31 @@
               "params": {
                 "properties": {
                   "distance": {
-                    "description": "Metres to grow the shapes by (negative shrinks them).",
-                    "type": "number",
-                    "format": "double",
-                    "default": 0.0
+                    "anyOf": [
+                      {
+                        "description": "Metres to grow the shapes by (negative shrinks them).",
+                        "type": "number",
+                        "format": "double",
+                        "default": 0.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Metres to grow the shapes by (negative shrinks them)."
                   },
                   "join": {
-                    "description": "`round`, `miter` or `bevel`.",
-                    "$ref": "#/$defs/shape.offset.Join",
-                    "default": "round"
+                    "anyOf": [
+                      {
+                        "description": "`round`, `miter` or `bevel`.",
+                        "$ref": "#/$defs/shape.offset.Join",
+                        "default": "round"
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "`round`, `miter` or `bevel`."
                   }
                 },
                 "additionalProperties": false,
@@ -1283,15 +2277,31 @@
                 "additionalProperties": false,
                 "properties": {
                   "height": {
-                    "description": "The height of the flat mesh, in metres.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 0.0
+                    "anyOf": [
+                      {
+                        "description": "The height of the flat mesh, in metres.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 0.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The height of the flat mesh, in metres."
                   },
                   "material": {
-                    "description": "A material file (`materials/plaza.material.json`), or empty.",
-                    "type": "string",
-                    "default": ""
+                    "anyOf": [
+                      {
+                        "description": "A material file (`materials/plaza.material.json`), or empty.",
+                        "type": "string",
+                        "default": ""
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "A material file (`materials/plaza.material.json`), or empty."
                   }
                 },
                 "description": "Parameters of `shape.mesh`.",
@@ -1317,28 +2327,60 @@
                 "additionalProperties": false,
                 "properties": {
                   "size": {
-                    "description": "Samples per side when no `field` is connected (2 to 4097).",
-                    "type": "integer",
-                    "format": "uint32",
-                    "minimum": 0,
-                    "default": 129
+                    "anyOf": [
+                      {
+                        "description": "Samples per side when no `field` is connected (2 to 4097).",
+                        "type": "integer",
+                        "format": "uint32",
+                        "minimum": 0,
+                        "default": 129
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Samples per side when no `field` is connected (2 to 4097)."
                   },
                   "cell": {
-                    "description": "Metres between samples when no `field` is connected.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 1.0
+                    "anyOf": [
+                      {
+                        "description": "Metres between samples when no `field` is connected.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 1.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Metres between samples when no `field` is connected."
                   },
                   "falloff": {
-                    "description": "Outside the shapes, the mask falls from 1 to 0 over this many metres\n(0 for a hard edge).",
-                    "type": "number",
-                    "format": "float",
-                    "default": 0.0
+                    "anyOf": [
+                      {
+                        "description": "Outside the shapes, the mask falls from 1 to 0 over this many metres\n(0 for a hard edge).",
+                        "type": "number",
+                        "format": "float",
+                        "default": 0.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Outside the shapes, the mask falls from 1 to 0 over this many metres\n(0 for a hard edge)."
                   },
                   "invert": {
-                    "description": "Gives 0 inside and 1 outside instead.",
-                    "type": "boolean",
-                    "default": false
+                    "anyOf": [
+                      {
+                        "description": "Gives 0 inside and 1 outside instead.",
+                        "type": "boolean",
+                        "default": false
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Gives 0 inside and 1 outside instead."
                   }
                 },
                 "description": "Parameters of `field.from_shapes`.",
@@ -1363,9 +2405,17 @@
               "params": {
                 "properties": {
                   "keep": {
-                    "description": "`inside` or `outside`.",
-                    "$ref": "#/$defs/points.mask.Keep",
-                    "default": "inside"
+                    "anyOf": [
+                      {
+                        "description": "`inside` or `outside`.",
+                        "$ref": "#/$defs/points.mask.Keep",
+                        "default": "inside"
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "`inside` or `outside`."
                   }
                 },
                 "additionalProperties": false,
@@ -1391,35 +2441,75 @@
               "params": {
                 "properties": {
                   "points": {
-                    "description": "The control points (2 or more; 3 or more when `closed`). With a\n`field` connected, each point's `y` is added to the field's height\nunder it.",
-                    "type": "array",
-                    "items": {
-                      "$ref": "#/$defs/path.spline.PointDoc"
-                    },
-                    "default": []
+                    "anyOf": [
+                      {
+                        "description": "The control points (2 or more; 3 or more when `closed`). With a\n`field` connected, each point's `y` is added to the field's height\nunder it.",
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/$defs/path.spline.PointDoc"
+                        },
+                        "default": []
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The control points (2 or more; 3 or more when `closed`). With a\n`field` connected, each point's `y` is added to the field's height\nunder it."
                   },
                   "width": {
-                    "description": "The road's width in metres, where a point does not set one.",
-                    "type": "number",
-                    "format": "double",
-                    "default": 6.0
+                    "anyOf": [
+                      {
+                        "description": "The road's width in metres, where a point does not set one.",
+                        "type": "number",
+                        "format": "double",
+                        "default": 6.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The road's width in metres, where a point does not set one."
                   },
                   "bank": {
-                    "description": "The bank in degrees, where a point does not set one; positive raises\nthe left edge.",
-                    "type": "number",
-                    "format": "double",
-                    "default": 0.0
+                    "anyOf": [
+                      {
+                        "description": "The bank in degrees, where a point does not set one; positive raises\nthe left edge.",
+                        "type": "number",
+                        "format": "double",
+                        "default": 0.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The bank in degrees, where a point does not set one; positive raises\nthe left edge."
                   },
                   "spacing": {
-                    "description": "Metres between samples along the centreline.",
-                    "type": "number",
-                    "format": "double",
-                    "default": 1.0
+                    "anyOf": [
+                      {
+                        "description": "Metres between samples along the centreline.",
+                        "type": "number",
+                        "format": "double",
+                        "default": 1.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Metres between samples along the centreline."
                   },
                   "closed": {
-                    "description": "Joins the last point back to the first.",
-                    "type": "boolean",
-                    "default": false
+                    "anyOf": [
+                      {
+                        "description": "Joins the last point back to the first.",
+                        "type": "boolean",
+                        "default": false
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Joins the last point back to the first."
                   }
                 },
                 "additionalProperties": false,
@@ -1446,27 +2536,59 @@
                 "additionalProperties": false,
                 "properties": {
                   "junction_radius": {
-                    "description": "Roads are cut back this far (metres) around a junction, and the\njunction surface fills the disc (0 for no junctions).",
-                    "type": "number",
-                    "format": "double",
-                    "default": 8.0
+                    "anyOf": [
+                      {
+                        "description": "Roads are cut back this far (metres) around a junction, and the\njunction surface fills the disc (0 for no junctions).",
+                        "type": "number",
+                        "format": "double",
+                        "default": 8.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Roads are cut back this far (metres) around a junction, and the\njunction surface fills the disc (0 for no junctions)."
                   },
                   "snap": {
-                    "description": "A road end this close (metres) to another road makes a junction.",
-                    "type": "number",
-                    "format": "double",
-                    "default": 2.0
+                    "anyOf": [
+                      {
+                        "description": "A road end this close (metres) to another road makes a junction.",
+                        "type": "number",
+                        "format": "double",
+                        "default": 2.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "A road end this close (metres) to another road makes a junction."
                   },
                   "bank_fade": {
-                    "description": "Over this distance (metres) before a junction, the bank fades to 0\nand the road eases to the junction's height.",
-                    "type": "number",
-                    "format": "double",
-                    "default": 10.0
+                    "anyOf": [
+                      {
+                        "description": "Over this distance (metres) before a junction, the bank fades to 0\nand the road eases to the junction's height.",
+                        "type": "number",
+                        "format": "double",
+                        "default": 10.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Over this distance (metres) before a junction, the bank fades to 0\nand the road eases to the junction's height."
                   },
                   "material": {
-                    "description": "A material file (`materials/asphalt.material.json`), or empty.",
-                    "type": "string",
-                    "default": ""
+                    "anyOf": [
+                      {
+                        "description": "A material file (`materials/asphalt.material.json`), or empty.",
+                        "type": "string",
+                        "default": ""
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "A material file (`materials/asphalt.material.json`), or empty."
                   }
                 },
                 "description": "Parameters of `road.mesh`.",
@@ -1492,10 +2614,18 @@
                 "additionalProperties": false,
                 "properties": {
                   "margin": {
-                    "description": "Metres to grow the footprint by on each side (for a verge, or to\nkeep scattered props off the road).",
-                    "type": "number",
-                    "format": "double",
-                    "default": 0.0
+                    "anyOf": [
+                      {
+                        "description": "Metres to grow the footprint by on each side (for a verge, or to\nkeep scattered props off the road).",
+                        "type": "number",
+                        "format": "double",
+                        "default": 0.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Metres to grow the footprint by on each side (for a verge, or to\nkeep scattered props off the road)."
                   }
                 },
                 "description": "Parameters of `road.footprint`.",
@@ -1521,22 +2651,46 @@
                 "additionalProperties": false,
                 "properties": {
                   "shoulder": {
-                    "description": "Flat ground kept on each side beyond the road's edge, in metres.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 0.5
+                    "anyOf": [
+                      {
+                        "description": "Flat ground kept on each side beyond the road's edge, in metres.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 0.5
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Flat ground kept on each side beyond the road's edge, in metres."
                   },
                   "blend": {
-                    "description": "Past the shoulder, the ground blends back to the field over this many\nmetres.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 6.0
+                    "anyOf": [
+                      {
+                        "description": "Past the shoulder, the ground blends back to the field over this many\nmetres.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 6.0
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "Past the shoulder, the ground blends back to the field over this many\nmetres."
                   },
                   "depth": {
-                    "description": "The flattened ground sits this far below the road's centreline, so\nthe road surface is drawn above it.",
-                    "type": "number",
-                    "format": "float",
-                    "default": 0.05000000074505806
+                    "anyOf": [
+                      {
+                        "description": "The flattened ground sits this far below the road's centreline, so\nthe road surface is drawn above it.",
+                        "type": "number",
+                        "format": "float",
+                        "default": 0.05000000074505806
+                      },
+                      {
+                        "$ref": "#/$defs/ParamRef"
+                      }
+                    ],
+                    "description": "The flattened ground sits this far below the road's centreline, so\nthe road surface is drawn above it."
                   }
                 },
                 "description": "Parameters of `terrain.conform`.",
@@ -1857,6 +3011,19 @@
           ]
         }
       ]
+    },
+    "ParamRef": {
+      "description": "A reference to a graph param: the node param takes the param's value (ADR-0061 §2).",
+      "type": "object",
+      "properties": {
+        "$param": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "$param"
+      ],
+      "additionalProperties": false
     }
   }
 }

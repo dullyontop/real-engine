@@ -392,7 +392,7 @@ impl Evaluator {
             return Evaluation {
                 report,
                 ids,
-                sinks: vec![false; graph.nodes.len()],
+                output_nodes: Vec::new(),
                 outputs: vec![None; graph.nodes.len()],
                 domain: opts.domain,
             };
@@ -406,7 +406,7 @@ impl Evaluator {
         Evaluation {
             report,
             ids,
-            sinks: plan.sinks.clone(),
+            output_nodes: graph.output_nodes(),
             outputs,
             domain: opts.domain,
         }
@@ -1244,7 +1244,9 @@ pub struct Evaluation {
     /// What happened.
     pub report: EvalReport,
     ids: Vec<String>,
-    sinks: Vec<bool>,
+    /// The nodes whose outputs make the graph's output, in order
+    /// ([`ProcGraph::output_nodes`]).
+    output_nodes: Vec<usize>,
     outputs: Vec<Option<Output>>,
     domain: Option<Domain>,
 }
@@ -1261,11 +1263,13 @@ impl Evaluation {
         self.outputs[i].as_ref()
     }
 
-    /// The graph's output: the fragments of every node no edge leaves (a mesh
-    /// becomes one entity `<node>/mesh`; in a streamed window it sits at the
-    /// window's corner, and an empty one adds nothing), in document order,
-    /// with the derived assets they reference. Fails with the first error of
-    /// the evaluation, or `RE4013` when two entities share a key.
+    /// The graph's output: the fragments of every node no edge leaves, in
+    /// document order, or of the nodes that feed its declared outputs, in
+    /// declaration order ([`ProcGraph::output_nodes`]); a mesh becomes one
+    /// entity `<node>/mesh` (in a streamed window it sits at the window's
+    /// corner, and an empty one adds nothing). With the derived assets they
+    /// reference. Fails with the first error of the evaluation, or `RE4013`
+    /// when two entities share a key.
     pub fn fragment(&self) -> Result<Fragment, Diagnostic> {
         if let Some(d) = self.report.first_error() {
             return Err(d.clone());
@@ -1273,10 +1277,8 @@ impl Evaluation {
         let mut out = Fragment::default();
         let mut keys: HashSet<String> = HashSet::new();
         let mut assets: HashSet<String> = HashSet::new();
-        for (i, id) in self.ids.iter().enumerate() {
-            if !self.sinks[i] {
-                continue;
-            }
+        for &i in &self.output_nodes {
+            let id = &self.ids[i];
             let Some(f) = self.outputs[i]
                 .as_ref()
                 .and_then(|o| sink_fragment_in(id, o, self.domain.as_ref()))
@@ -1426,15 +1428,17 @@ impl<'a> Plan<'a> {
     fn new(graph: &'a ProcGraph, registry: &'a NodeRegistry) -> Plan<'a> {
         let n = graph.nodes.len();
         let mut inputs: Vec<Vec<(&str, usize)>> = vec![Vec::new(); n];
-        let mut sinks = vec![true; n];
         for e in &graph.edges {
             if let (Some(from), Some(to)) = (
                 graph.nodes.get_index_of(&e.from.0),
                 graph.nodes.get_index_of(&e.to.0),
             ) {
                 inputs[to].push((e.to.1.as_str(), from));
-                sinks[from] = false;
             }
+        }
+        let mut sinks = vec![false; n];
+        for i in graph.output_nodes() {
+            sinks[i] = true;
         }
         let nodes = graph
             .nodes

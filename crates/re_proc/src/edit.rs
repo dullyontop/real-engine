@@ -1,17 +1,19 @@
 //! The graph-editing commands (ADR-0044): `graph.add_node`,
 //! `graph.remove_node`, `graph.connect`, `graph.disconnect`,
-//! `graph.move_nodes` and `graph.set_default`. Each opens the graph file as
-//! a document in the World (when it is not open yet) and changes it with one
-//! transaction of `set_doc` operations, so the editor's canvas, `real do` and
-//! agents share them, and each edit is one undo step. The file itself is
-//! written by the project save (`scene.save`).
+//! `graph.move_nodes` and `graph.set_default` (the graph param commands use
+//! the same machinery, [`crate::params::commands`]). Each opens the graph
+//! file as a document in the World (when it is not open yet) and changes it
+//! with one transaction of `set_doc` operations, so the editor's canvas,
+//! `real do` and agents share them, and each edit is one undo step. The file
+//! itself is written by the project save (`scene.save`).
 //!
 //! The checks here are the ones an edit can break: node kinds and
 //! parameters, node ids (letters, digits, `_` and `-`, since a generated
-//! entity's key is `<node>/<key>`), ports and their types, and cycles. A
-//! required input left unconnected is allowed while editing (generation
-//! reports it, `RE4006`). A dry run, a refused edit or one that changes
-//! nothing leaves the file closed if it was not open before.
+//! entity's key is `<node>/<key>`), ports and their types, cycles, and graph
+//! params and their bindings (ADR-0061). A required input left unconnected
+//! is allowed while editing (generation reports it, `RE4006`). A dry run, a
+//! refused edit or one that changes nothing leaves the file closed if it was
+//! not open before.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -19,14 +21,14 @@ use re_command::{Call, EditTarget, Op};
 use re_core::{Diagnostic, Location};
 use re_reflect::{Doc, Value};
 use re_scene::World;
-use re_types::graph::{EdgeDoc, GraphDoc, NodeDoc};
+use re_types::graph::{EdgeDoc, GraphDoc, NodeDoc, PortDoc};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Map, Value as Json, json};
 
-use crate::NodeRegistry;
 use crate::codes;
 use crate::store::{GraphStore, parse_graph};
+use crate::{NodeRegistry, PortType};
 
 /// Arguments of `graph.add_node`.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -69,9 +71,11 @@ pub struct ConnectArgs {
     /// The graph file, relative to the project.
     #[schemars(extend("x-real-path" = "write"))]
     pub graph: String,
-    /// The output: `[node, port]` (the port is the output type's name, or `out`).
+    /// The output: `[node, port]` (the port is the output type's name, or
+    /// `out`), or `["$in", <input>]` for a node kind's declared input.
     pub from: (String, String),
-    /// The input: `[node, port]`.
+    /// The input: `[node, port]`, or `["$out", <output>]` for one of the
+    /// graph's declared outputs (ADR-0061 §4).
     pub to: (String, String),
 }
 
@@ -103,12 +107,45 @@ pub struct SetDefaultArgs {
 }
 
 /// One token of a JSON pointer (RFC 6901 escaping).
-fn token(s: &str) -> String {
+pub(crate) fn token(s: &str) -> String {
     s.replace('~', "~0").replace('/', "~1")
 }
 
-fn invalid(path: &str, message: impl Into<String>) -> Diagnostic {
+pub(crate) fn invalid(path: &str, message: impl Into<String>) -> Diagnostic {
     Diagnostic::error(codes::INVALID_GRAPH, message).at(Location::file(path.to_string()))
+}
+
+/// The text of the graph file `path`, read as the [`GraphStore`] reads
+/// files: from its project files, else under its root folder.
+fn file_text(world: &World, path: &str) -> Result<String, Diagnostic> {
+    let store = world.ecs.get_resource::<GraphStore>();
+    match (
+        store.and_then(GraphStore::files),
+        store.and_then(GraphStore::root),
+    ) {
+        (Some(files), _) => files.read_str(path).map_err(|e| e.to_string()),
+        (None, Some(root)) => std::fs::read_to_string(root.join(path)).map_err(|e| e.to_string()),
+        (None, None) => Err("the project folder is unknown".to_string()),
+    }
+    .map_err(|e| {
+        Diagnostic::error(codes::NO_GRAPH, format!("{path} cannot be read: {e}"))
+            .at(Location::file(path.to_string()))
+    })
+}
+
+/// The graph file `graph` as it stands, with its normalised path: the open
+/// document when the World holds it, else the file. Nothing is opened.
+pub(crate) fn read_graph(world: &World, graph: &str) -> Result<(String, GraphDoc), Diagnostic> {
+    let path = re_scene::doc_path(graph).map_err(|e| invalid(graph, e.to_string()))?;
+    let doc = match world.doc(&path) {
+        Some(open) => parse_graph(&open.value),
+        None => {
+            let text = file_text(world, &path)?;
+            GraphDoc::from_json(&text).map_err(|e| e.to_string())
+        }
+    }
+    .map_err(|e| invalid(&path, format!("{path} is not a valid graph: {e}")))?;
+    Ok((path, doc))
 }
 
 /// Opens the graph file `graph` as a document (when it is not open) and
@@ -132,21 +169,7 @@ fn open_graph(world: &mut World, graph: &str) -> Result<(String, GraphDoc, bool)
     }
     let opened = world.doc(&path).is_none();
     if opened {
-        let store = world.ecs.get_resource::<GraphStore>();
-        let text = match (
-            store.and_then(GraphStore::files),
-            store.and_then(GraphStore::root),
-        ) {
-            (Some(files), _) => files.read_str(&path).map_err(|e| e.to_string()),
-            (None, Some(root)) => {
-                std::fs::read_to_string(root.join(&path)).map_err(|e| e.to_string())
-            }
-            (None, None) => Err("the project folder is unknown".to_string()),
-        }
-        .map_err(|e| {
-            Diagnostic::error(codes::NO_GRAPH, format!("{path} cannot be read: {e}"))
-                .at(Location::file(path.clone()))
-        })?;
+        let text = file_text(world, &path)?;
         let value: Json = serde_json::from_str(&text)
             .map_err(|e| invalid(&path, format!("{path} is not JSON: {e}")))?;
         world
@@ -174,17 +197,17 @@ fn open_graph(world: &mut World, graph: &str) -> Result<(String, GraphDoc, bool)
 
 /// What an edit does: one transaction (none when `ops` is empty), and the
 /// command's result data.
-struct Edit {
-    label: String,
-    ops: Vec<Op>,
-    data: Json,
+pub(crate) struct Edit {
+    pub(crate) label: String,
+    pub(crate) ops: Vec<Op>,
+    pub(crate) data: Json,
 }
 
 /// Runs an edit of the graph file `graph`: `f` checks the graph and says
 /// what to change. A graph file this call opened is closed again unless the
 /// edit was made, so a dry run, a refused edit or one that changes nothing
 /// leaves the World's documents as they were.
-fn edit<C: EditTarget>(
+pub(crate) fn edit<C: EditTarget>(
     target: &mut C,
     call: &mut Call,
     graph: &str,
@@ -216,7 +239,7 @@ fn valid_node_id(id: &str) -> bool {
 }
 
 /// The procedural sources whose `GraphSource.graph` is `path`, as `(id, entity)`.
-fn sources_of(world: &World, path: &str) -> Vec<(String, re_scene::Entity)> {
+pub(crate) fn sources_of(world: &World, path: &str) -> Vec<(String, re_scene::Entity)> {
     let mut out: Vec<(String, re_scene::Entity)> = world
         .ids()
         .iter()
@@ -230,7 +253,7 @@ fn sources_of(world: &World, path: &str) -> Vec<(String, re_scene::Entity)> {
     out
 }
 
-fn registry(world: &World) -> std::sync::Arc<crate::Evaluator> {
+pub(crate) fn registry(world: &World) -> std::sync::Arc<crate::Evaluator> {
     world
         .ecs
         .get_resource::<GraphStore>()
@@ -517,6 +540,9 @@ pub(crate) fn connect<C: EditTarget>(
     edit(target, call, &graph, |world, path, doc| {
         let evaluator = registry(world);
         let registry = evaluator.registry();
+        if a.from.0 == GraphDoc::INPUTS || a.to.0 == GraphDoc::OUTPUTS {
+            return connect_port(doc, path, registry, &a);
+        }
         let from = &doc.nodes[node_index(doc, path, &a.from.0)?];
         let to = &doc.nodes[node_index(doc, path, &a.to.0)?];
         let at = || Location::file(path.to_string());
@@ -625,6 +651,158 @@ pub(crate) fn connect<C: EditTarget>(
     })
 }
 
+/// [`connect`] for an edge from a graph's declared input
+/// (`["$in", <input>]`) or into its declared output (`["$out", <output>]`),
+/// ADR-0061 §4: the port is declared (`RE4206`), the types match (`RE4206`
+/// into an output, `RE4003` into a node input), and an output, like a node
+/// input, takes one edge, so one already into it is replaced.
+fn connect_port(
+    doc: &GraphDoc,
+    path: &str,
+    registry: &NodeRegistry,
+    a: &ConnectArgs,
+) -> Result<Edit, Diagnostic> {
+    let at = || Location::file(path.to_string());
+    let declared = |ports: &[PortDoc], name: &str, side: &str| {
+        let Some(p) = ports.iter().find(|p| p.name == name) else {
+            let mut message = format!("{path} declares no {side} `{name}`");
+            if let Some(s) = re_reflect::suggest(name, ports.iter().map(|p| p.name.as_str())) {
+                message.push_str(&format!(" (did you mean `{s}`?)"));
+            }
+            return Err(Diagnostic::error(codes::GRAPH_PORT_WIRING, message)
+                .at(at())
+                .with_hint("declare it in the graph's `inputs` or `outputs` first"));
+        };
+        PortType::from_name(&p.ty).ok_or_else(|| {
+            Diagnostic::error(
+                codes::INVALID_GRAPH_PORT,
+                format!(
+                    "{side} `{name}` has type `{}`, which is not a port type",
+                    p.ty
+                ),
+            )
+            .at(at())
+        })
+    };
+    let kind_of = |node: &NodeDoc| {
+        registry.get(&node.kind).ok_or_else(|| {
+            Diagnostic::error(
+                codes::UNKNOWN_NODE_KIND,
+                format!("node `{}`: unknown node kind `{}`", node.id, node.kind),
+            )
+            .at(at())
+        })
+    };
+    // What the edge carries, and where it starts.
+    let (carried, from) = if a.from.0 == GraphDoc::INPUTS {
+        (declared(&doc.inputs, &a.from.1, "input")?, a.from.clone())
+    } else {
+        let node = &doc.nodes[node_index(doc, path, &a.from.0)?];
+        let def = kind_of(node)?;
+        if a.from.1 != def.output_port() && a.from.1 != crate::OUT_ALIAS {
+            return Err(Diagnostic::error(
+                codes::UNKNOWN_PORT,
+                format!(
+                    "node `{}` ({}) has no output `{}` (its output is `{}`)",
+                    node.id,
+                    node.kind,
+                    a.from.1,
+                    def.output_port()
+                ),
+            )
+            .at(at()));
+        }
+        (def.output, (node.id.clone(), def.output_port().to_string()))
+    };
+    let (to, one_edge) = if a.to.0 == GraphDoc::OUTPUTS {
+        let want = declared(&doc.outputs, &a.to.1, "output")?;
+        if want != carried {
+            return Err(Diagnostic::error(
+                codes::GRAPH_PORT_WIRING,
+                format!(
+                    "output `{}` is declared `{}`, but `{}` brings a `{}`",
+                    a.to.1,
+                    want.port_name(),
+                    from.0,
+                    carried.port_name()
+                ),
+            )
+            .at(at()));
+        }
+        (a.to.clone(), true)
+    } else {
+        let node = &doc.nodes[node_index(doc, path, &a.to.0)?];
+        let def = kind_of(node)?;
+        let Some(port) = def.input(&a.to.1) else {
+            return Err(Diagnostic::error(
+                codes::UNKNOWN_PORT,
+                format!(
+                    "node `{}` ({}) has no input `{}`",
+                    node.id, node.kind, a.to.1
+                ),
+            )
+            .at(at()));
+        };
+        if !port.accepts.contains(&carried) {
+            return Err(Diagnostic::error(
+                codes::PORT_TYPE_MISMATCH,
+                format!(
+                    "input `{}` brings a `{}`, but input `{}` of `{}` ({}) takes {}",
+                    from.1,
+                    carried.port_name(),
+                    a.to.1,
+                    node.id,
+                    node.kind,
+                    port.accepts
+                        .iter()
+                        .map(|t| t.port_name())
+                        .collect::<Vec<_>>()
+                        .join(" or ")
+                ),
+            )
+            .at(at()));
+        }
+        ((node.id.clone(), a.to.1.clone()), def.variadic.is_none())
+    };
+    let edge = EdgeDoc { from, to };
+    if doc
+        .edges
+        .iter()
+        .any(|e| e.from == edge.from && e.to == edge.to)
+    {
+        return Ok(Edit {
+            label: String::new(),
+            ops: Vec::new(),
+            data: json!({ "graph": path, "edge": edge_json(&edge), "replaced": [], "unchanged": true }),
+        });
+    }
+    let replaced: Vec<usize> = if one_edge {
+        doc.edges
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.to == edge.to)
+            .map(|(i, _)| i)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let replaced_json: Vec<Json> = replaced.iter().map(|&i| edge_json(&doc.edges[i])).collect();
+    let mut ops = remove_edges(path, replaced);
+    ops.push(Op::SetDoc {
+        doc: path.to_string(),
+        pointer: "/edges/-".into(),
+        value: Some(edge_json(&edge)),
+    });
+    Ok(Edit {
+        label: format!(
+            "graph.connect {}.{} -> {}.{}",
+            edge.from.0, edge.from.1, edge.to.0, edge.to.1
+        ),
+        ops,
+        data: json!({ "graph": path, "edge": edge_json(&edge), "replaced": replaced_json }),
+    })
+}
+
 pub(crate) fn disconnect<C: EditTarget>(
     target: &mut C,
     a: ConnectArgs,
@@ -726,13 +904,28 @@ pub(crate) fn set_default<C: EditTarget>(
             .at(Location::file(path.to_string()))
             .with_hint("run `real migrate-graph` to upgrade the node first"));
         }
-        let mut params = node.params.clone();
+        let mut written = node.params.clone();
         if a.value.is_null() {
-            params.remove(&a.param);
+            written.remove(&a.param);
         } else {
-            params.insert(a.param.clone(), a.value.clone());
+            written.insert(a.param.clone(), a.value.clone());
         }
-        check_params(registry, path, &node.id, &node.kind, node.version, &params)?;
+        // `{"$param": name}` binds the param to a graph param (ADR-0061 §2),
+        // which the whole-graph check below covers. A value is checked with
+        // the node's other bound params at their graph params' values.
+        if GraphDoc::param_ref(&a.value).is_none() {
+            let mut params = crate::params::bound_params(doc, node);
+            if a.value.is_null() {
+                params.remove(&a.param);
+            } else {
+                params.insert(a.param.clone(), a.value.clone());
+            }
+            check_params(registry, path, &node.id, &node.kind, node.version, &params)?;
+        }
+        let mut after = doc.clone();
+        after.nodes[index].params = written.clone();
+        after.raise_version();
+        crate::params::commands::check_edit(path, doc, &after, registry)?;
         let data = json!({ "graph": path, "node": a.node, "param": a.param, "value": a.value });
         let pointer = format!("/nodes/{index}/params/{}", token(&a.param));
         let op = if a.value.is_null() {
@@ -753,7 +946,7 @@ pub(crate) fn set_default<C: EditTarget>(
             Op::SetDoc {
                 doc: path.to_string(),
                 pointer: format!("/nodes/{index}/params"),
-                value: Some(Json::Object(params)),
+                value: Some(Json::Object(written)),
             }
         } else {
             Op::SetDoc {
@@ -762,9 +955,21 @@ pub(crate) fn set_default<C: EditTarget>(
                 value: Some(a.value.clone()),
             }
         };
+        let mut ops = vec![op];
+        // The first reference makes a version 1 file version 2.
+        if after.version != doc.version {
+            ops.insert(
+                0,
+                Op::SetDoc {
+                    doc: path.to_string(),
+                    pointer: "/version".into(),
+                    value: Some(json!(after.version)),
+                },
+            );
+        }
         Ok(Edit {
             label: format!("graph.set_default {}.{}", a.node, a.param),
-            ops: vec![op],
+            ops,
             data,
         })
     })

@@ -82,6 +82,15 @@ impl Source {
     }
 }
 
+/// The first of `problems` (not empty), with the others as related.
+fn combined(mut problems: Vec<Diagnostic>) -> Diagnostic {
+    let mut first = problems.remove(0);
+    for d in problems {
+        first = first.with_related(d);
+    }
+    first
+}
+
 fn located(d: Diagnostic, id: &str) -> Diagnostic {
     if d.location.is_some() {
         d
@@ -207,6 +216,9 @@ fn prepare(
     let id = id.to_string();
     let registry = store.evaluator().registry();
     let (doc, mut warnings) = overridden(doc, params, registry, &id);
+    // Graph params are bound first, so the checks and the split below see
+    // each bound node param's value (ADR-0061 §2).
+    let doc = crate::params::resolve(&doc, registry).map_err(|p| located(combined(p), &id))?;
     for node in &doc.nodes {
         if let Some(def) = registry.get(&node.kind)
             && def.streaming == Streaming::Whole
@@ -232,13 +244,7 @@ fn prepare(
         ));
     }
     let build = |doc: &GraphDoc| {
-        ProcGraph::from_doc(doc, registry).map_err(|mut problems| {
-            let mut first = problems.remove(0);
-            for d in problems {
-                first = first.with_related(d);
-            }
-            located(first, &id)
-        })
+        ProcGraph::from_doc(doc, registry).map_err(|problems| located(combined(problems), &id))
     };
     // The graph cells evaluate: without the terrain branch, which streaming
     // evaluates per chunk instead.
@@ -343,18 +349,30 @@ fn split_terrain(
             .filter(|e| keep.contains(e.to.0.as_str()))
             .cloned()
             .collect(),
+        // Its output is the field node's, not the graph's declared outputs.
+        outputs: Vec::new(),
         ..doc.clone()
     };
     // The cells' graph: without the chunks node and its edges (a node it
     // feeds, such as a `fragment.merge`, gets the rest, as streaming draws
     // the terrain), then without every field, points, shapes or path node
     // whose output nothing uses any more (a mesh or fragment left unused is
-    // output, so it stays).
+    // output, so it stays, unless the graph declares its outputs: then only
+    // what reaches one is output, ADR-0061 §4).
+    let declared = !doc.outputs.is_empty();
     let mut cells = doc.clone();
     cells.nodes.retain(|n| n.id != chunk.id);
     cells
         .edges
         .retain(|e| e.to.0 != chunk.id && e.from.0 != chunk.id);
+    // A declared output the chunks node fed goes with it (ADR-0061 §4).
+    let fed: BTreeSet<String> = cells
+        .edges
+        .iter()
+        .filter(|e| e.to.0 == GraphDoc::OUTPUTS)
+        .map(|e| e.to.1.clone())
+        .collect();
+    cells.outputs.retain(|o| fed.contains(&o.name));
     loop {
         let used: BTreeSet<&str> = cells.edges.iter().map(|e| e.from.0.as_str()).collect();
         let dead: BTreeSet<String> = cells
@@ -362,12 +380,16 @@ fn split_terrain(
             .iter()
             .filter(|n| {
                 !used.contains(n.id.as_str())
-                    && registry.get(&n.kind).is_some_and(|d| {
-                        matches!(
-                            d.output,
-                            PortType::Field | PortType::Points | PortType::Shapes | PortType::Path
-                        )
-                    })
+                    && (declared
+                        || registry.get(&n.kind).is_some_and(|d| {
+                            matches!(
+                                d.output,
+                                PortType::Field
+                                    | PortType::Points
+                                    | PortType::Shapes
+                                    | PortType::Path
+                            )
+                        }))
             })
             .map(|n| n.id.clone())
             .collect();

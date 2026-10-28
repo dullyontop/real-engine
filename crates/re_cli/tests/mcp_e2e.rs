@@ -336,8 +336,9 @@ fn an_agent_edits_checks_and_restores_the_island(t: Transport) {
     // graph.add_node, graph.remove_node, graph.connect, graph.disconnect,
     // graph.move_nodes and graph.set_default (ADR-0044), plus WP21's
     // animgraph.create, animgraph.edit, animgraph.validate and
-    // anim.set_param (ADR-0039).
-    assert_eq!(names.len(), 53, "{names:?}");
+    // anim.set_param (ADR-0039), plus WP40's graph.params,
+    // graph.declare_param and graph.remove_param (ADR-0061).
+    assert_eq!(names.len(), 56, "{names:?}");
     for tool in [
         "entity_spawn",
         "graph_set_param",

@@ -1,6 +1,6 @@
 {
   "format": "real-engine/graph",
-  "version": 1,
+  "version": 2,
   "name": "island",
   "seed": 1234,
   "nodes": [

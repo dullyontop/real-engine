@@ -202,7 +202,8 @@ enum Command {
     #[command(subcommand)]
     Graph(graph::GraphCommand),
     /// Upgrade every procedural graph's nodes to their kinds' current
-    /// versions, after reporting what changes (all or nothing).
+    /// versions, and graph files to the current format, after reporting what
+    /// changes (all or nothing).
     MigrateGraph(graph::MigrateArgs),
     /// Write every JSON Schema the engine defines.
     Schema {
