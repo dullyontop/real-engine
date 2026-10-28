@@ -20,6 +20,7 @@ use crate::layout::PanelId;
 use crate::selection::Selection;
 
 pub(crate) use palette::palette_action;
+pub use procedural::ProceduralSpot;
 
 /// Draws every panel into the root `ui`.
 pub(crate) fn draw(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Vec<Action>) {

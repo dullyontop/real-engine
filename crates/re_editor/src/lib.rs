@@ -86,6 +86,7 @@ pub use canvas::CanvasSpot;
 pub use editor::{ConsoleLine, Editor, LineKind, Panel, PanelRects};
 pub use headless::HeadlessEditor;
 pub use overlay::ViewSettings;
+pub use panels::ProceduralSpot;
 pub use selection::Selection;
 pub use socket::EditorSocket;
 pub use view::GameView;
@@ -178,6 +179,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::LAYOUT_UNREADABLE,
         title: "The editor layout could not be read",
         page: include_str!("../explain/RE8804.md"),
+    },
+    DiagInfo {
+        code: codes::PARAM_VALUE,
+        title: "A parameter's value does not fit its schema",
+        page: include_str!("../explain/RE8850.md"),
     },
 ];
 

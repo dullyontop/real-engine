@@ -11,6 +11,8 @@ use re_scene::World;
 use crate::codes;
 use crate::editor::{Action, Pending};
 
+pub(crate) mod schema;
+
 /// The field an inspector widget edits.
 pub(crate) struct FieldTarget<'a> {
     pub(crate) id: &'a str,

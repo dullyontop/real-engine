@@ -12,29 +12,42 @@
 //! showing the file as it is. Which nodes are collapsed is view state, saved
 //! with the editor layout. Nodes without a position in the file's `layout`
 //! are placed by their depth in the graph.
+//!
+//! A node's body shows every parameter of its kind, in its schema's order,
+//! with the widget its schema gives it (`widgets::schema`); one the node does
+//! not set shows the kind's default, dimmed. Each finished edit is one
+//! `graph.set_default`, so one undo step, and × removes what the node sets.
+//! While a value is dragged, the value under the pointer is sent at most
+//! every 200 ms under one coalesce key, when `graph.set_default` takes one,
+//! so the drag is still one undo step. A parameter the shown source
+//! overrides (`GraphSource.params`) is marked, and its menu removes the
+//! override.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use egui::{Color32, RichText};
+use egui::{Color32, Id, RichText, UiBuilder};
 use egui_snarl::ui::{PinInfo, PinWireInfo, SnarlPin, SnarlStyle, SnarlViewer, SnarlWidget};
 use egui_snarl::{InPin, InPinId, NodeId, OutPin, OutPinId, Snarl};
 use re_app::App;
-use re_proc::{GraphStore, NodeRegistry, PortType};
+use re_core::Location;
+use re_proc::{GraphStore, NodeDef, NodeRegistry, PortType};
 use re_reflect::Value;
 use re_scene::World;
-use re_types::graph::{EdgeDoc, GraphDoc};
-use serde_json::{Value as Json, json};
+use re_types::graph::{EdgeDoc, GraphDoc, NodeDoc};
+use serde_json::{Map, Value as Json, json};
 
 use crate::editor::{Action, Editor, command};
 use crate::layout::Collapsed;
+use crate::widgets::schema::{self, Change, Env, Shape};
 
-/// The distance between the columns of nodes placed by depth, in points.
-const COLUMN: f32 = 220.0;
-/// The distance between the rows of nodes placed by depth, in points.
-const ROW: f32 = 120.0;
+/// The space between the columns, and between the nodes of a column, of
+/// nodes placed by depth, in points.
+const GAP: egui::Vec2 = egui::vec2(60.0, 30.0);
 /// The most commands [`Editor::canvas_commands`] keeps; older ones are dropped.
 const LOG: usize = 256;
+/// The colour of the marker on a parameter the shown source overrides.
+const OVERRIDDEN: Color32 = Color32::from_rgb(0xe0, 0x9a, 0x3c);
 
 /// A place on the node canvas, in egui points, as drawn in the last frame:
 /// for tests and tools that drive the canvas with the pointer.
@@ -50,8 +63,16 @@ pub enum CanvasSpot<'a> {
     /// A node's output pin.
     Output(&'a str),
     /// An item of the open menu, by its text: a node kind or kind group in
-    /// the canvas menu, "Remove node" in a node's menu.
+    /// the canvas menu, "Remove node" in a node's menu, "Remove override"
+    /// and "Reset to default" in a parameter's menu.
     MenuItem(&'a str),
+    /// A part of a node's parameter row: `(node, parameter, part)`, where the
+    /// part is `"name"` (right-click it for the parameter's menu), `"×"` (the
+    /// button that removes what the node sets), or a part of the parameter's
+    /// widget: `""` the widget itself, `"0"`, `"1"`… a vector's components,
+    /// `"set"` a nullable value's checkbox, `"=<value>"` an item of a choice's
+    /// list.
+    Param(&'a str, &'a str, &'a str),
 }
 
 impl CanvasSpot<'_> {
@@ -62,6 +83,7 @@ impl CanvasSpot<'_> {
             CanvasSpot::Input(n, p) => format!("in\u{1f}{n}\u{1f}{p}"),
             CanvasSpot::Output(n) => format!("out\u{1f}{n}"),
             CanvasSpot::MenuItem(m) => format!("menu\u{1f}{m}"),
+            CanvasSpot::Param(n, p, part) => format!("param\u{1f}{n}\u{1f}{p}\u{1f}{part}"),
         }
     }
 }
@@ -89,6 +111,9 @@ pub(crate) struct Canvas {
     spots: Spots,
     /// The last [`LOG`] commands the canvas sent, oldest first.
     log: Vec<(String, Json)>,
+    /// The values already reported as not fitting their parameter
+    /// (`RE8850`), so each is reported once.
+    misfits: HashSet<String>,
 }
 
 impl Canvas {
@@ -127,7 +152,87 @@ struct NodeView {
     /// any number of inputs one free port.
     inputs: Vec<(String, Option<PortType>)>,
     output: (String, Option<PortType>),
-    params: Vec<String>,
+    params: Vec<ParamRow>,
+    /// Why the node's parameters cannot be edited here (a kind this build
+    /// does not know, or a node written for another version of its kind).
+    locked: Option<String>,
+}
+
+/// One parameter of a node as the canvas shows it.
+struct ParamRow {
+    name: String,
+    /// The property's description.
+    doc: String,
+    shape: Shape,
+    /// What the node sets, or `None` when the kind's default applies.
+    value: Option<Json>,
+    /// The kind's default (`null` when its schema gives none).
+    default: Json,
+    /// Set by the node but not a parameter of its kind: it can only be
+    /// removed.
+    unknown: bool,
+    /// What the node sets is not of the parameter's type, so it is shown as
+    /// JSON text (`RE8850`).
+    misfit: bool,
+}
+
+/// The rows of a node of kind `def` that sets `set`: the kind's parameters
+/// in its schema's order, then any the node sets that the kind lacks.
+fn param_rows(def: &NodeDef, set: &Map<String, Json>) -> Vec<ParamRow> {
+    let root = &def.params_schema;
+    let props = root.get("properties").and_then(Json::as_object);
+    let mut rows: Vec<ParamRow> = props
+        .into_iter()
+        .flatten()
+        .map(|(name, prop)| {
+            let shape = Shape::of(prop, root);
+            let value = set.get(name).cloned();
+            let misfit = value.as_ref().is_some_and(|v| !shape.fits(v));
+            ParamRow {
+                name: name.clone(),
+                doc: schema::doc(prop, root),
+                shape: if misfit { shape.as_raw() } else { shape },
+                value,
+                default: schema::default(prop, root).unwrap_or(Json::Null),
+                unknown: false,
+                misfit,
+            }
+        })
+        .collect();
+    for (name, value) in set {
+        if !props.is_some_and(|p| p.contains_key(name)) {
+            rows.push(unknown_row(name, value));
+        }
+    }
+    rows
+}
+
+fn unknown_row(name: &str, value: &Json) -> ParamRow {
+    ParamRow {
+        name: name.to_string(),
+        doc: String::new(),
+        shape: Shape::Raw { types: Vec::new() },
+        value: Some(value.clone()),
+        default: Json::Null,
+        unknown: true,
+        misfit: false,
+    }
+}
+
+/// The id of a parameter's widget, the same in every view of the graph.
+fn param_id(path: &str, node: &str, param: &str) -> Id {
+    Id::new(("re_editor.canvas.param", path, node, param))
+}
+
+/// The parameter overrides of source `id` (`GraphSource.params`), by node.
+fn overrides(world: &World, id: &str) -> Map<String, Json> {
+    match world.get(id, "GraphSource", "params") {
+        Ok(Value::Str(s)) if !s.trim().is_empty() => match serde_json::from_str(&s) {
+            Ok(Json::Object(m)) => m,
+            _ => Map::new(),
+        },
+        _ => Map::new(),
+    }
 }
 
 /// What the viewer was asked to do while snarl drew.
@@ -248,13 +353,20 @@ pub(crate) fn ui(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Ve
         v.source != source || v.path != path || v.doc != *doc || (v.stale && !down)
     });
     if rebuild {
-        canvas.view = Some(build(
-            &source,
-            &path,
-            &doc,
-            registry,
-            canvas.collapsed.get(&path),
-        ));
+        let view = build(&source, &path, &doc, registry, canvas.collapsed.get(&path));
+        for node in view.snarl.nodes() {
+            for row in node.params.iter().filter(|r| r.misfit) {
+                let value = row.value.as_ref().unwrap_or(&Json::Null);
+                let key = format!("{path}\u{1f}{}\u{1f}{}\u{1f}{value}", node.id, row.name);
+                if canvas.misfits.insert(key) {
+                    let what = format!("parameter `{}` of node `{}`", row.name, node.id);
+                    actions.push(Action::Report(
+                        schema::misfit(&what, value, &row.shape).at(Location::file(path.clone())),
+                    ));
+                }
+            }
+        }
+        canvas.view = Some(view);
     }
     let view = canvas.view.as_mut().expect("built above");
     if down && view.at_press.is_none() {
@@ -266,11 +378,18 @@ pub(crate) fn ui(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Ve
         );
     }
 
+    let files = app.files().clone();
+    let assets = move |kind: &str| schema::project_assets(&files, kind);
+    let overrides = overrides(world, &source);
     let mut viewer = Viewer {
         path: &path,
+        source: &source,
         registry,
         spots: canvas.spots.clone(),
+        overrides: &overrides,
+        assets: &assets,
         queued: Vec::new(),
+        edits: Vec::new(),
     };
     let mut style = SnarlStyle::new();
     // The header draws its own collapse button, so a test can find it.
@@ -279,7 +398,7 @@ pub(crate) fn ui(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Ve
         .id_salt(("re_editor.canvas", &path))
         .style(style)
         .show(&mut view.snarl, &mut viewer, ui);
-    let queued = viewer.queued;
+    let (queued, edits) = (viewer.queued, viewer.edits);
 
     // Collapsed nodes, by id.
     let collapsed: BTreeSet<String> = view
@@ -333,6 +452,28 @@ pub(crate) fn ui(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Ve
                 }
             }
             Queued::Command(name, args) => rest.push((name, args)),
+        }
+    }
+    // Parameter edits: each finished one, and a drag's live ones under its
+    // coalesce key when the command takes one.
+    let live = schema::takes_coalesce(app.commands().spec("graph.set_default"));
+    for edit in edits {
+        let what = format!("parameter `{}` of node `{}`", edit.param, edit.node);
+        if let Change::Invalid(why) = &edit.change {
+            actions.push(Action::Report(
+                schema::invalid_text(why, &what).at(Location::file(path.clone())),
+            ));
+            continue;
+        }
+        let id = param_id(&path, &edit.node, &edit.param);
+        if let Some((value, key)) = schema::to_send(ui, id, edit.change, &edit.shown, live) {
+            let mut args = json!({
+                "graph": path, "node": edit.node, "param": edit.param, "value": value,
+            });
+            if let Some(key) = key {
+                args["coalesce"] = Json::String(key);
+            }
+            rest.push(("graph.set_default".into(), args));
         }
     }
     let mut sent: Vec<(String, Json)> = Vec::new();
@@ -412,56 +553,23 @@ fn build(
     registry: &NodeRegistry,
     collapsed: Option<&BTreeSet<String>>,
 ) -> View {
-    let auto = auto_layout(doc);
+    let views: Vec<NodeView> = doc
+        .nodes
+        .iter()
+        .map(|n| node_view(doc, n, registry))
+        .collect();
+    let sizes: HashMap<&str, egui::Vec2> =
+        views.iter().map(|v| (v.id.as_str(), v.size())).collect();
+    let auto = auto_layout(doc, |id| sizes.get(id).copied().unwrap_or_default());
     let mut snarl = Snarl::new();
     let mut ids = HashMap::new();
-    for n in &doc.nodes {
-        let def = registry.get(&n.kind);
-        let mut inputs: Vec<(String, Option<PortType>)> = def
-            .map(|d| {
-                d.inputs
-                    .iter()
-                    .map(|p| (p.name.to_string(), p.accepts.first().copied()))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let variadic = def.and_then(|d| d.variadic);
-        let any = variadic.and_then(|v| v.first().copied());
-        for e in doc.edges.iter().filter(|e| e.to.0 == n.id) {
-            if !inputs.iter().any(|(p, _)| *p == e.to.1) {
-                inputs.push((e.to.1.clone(), any));
-            }
-        }
-        if variadic.is_some() {
-            let free = (1..)
-                .map(|i| format!("in{i}"))
-                .find(|p| !inputs.iter().any(|(q, _)| q == p))
-                .expect("a free port name");
-            inputs.push((free, any));
-        }
-        let output = match def {
-            Some(d) => (d.output_port().to_string(), Some(d.output)),
-            None => ("out".to_string(), None),
-        };
-        let params = n
-            .params
-            .iter()
-            .map(|(k, v)| format!("{k} = {}", short(v)))
-            .collect();
+    for (n, node) in doc.nodes.iter().zip(views) {
         let pos = doc
             .layout
             .get(&n.id)
             .map(|p| egui::pos2(p[0], p[1]))
             .or_else(|| auto.get(&n.id).copied())
             .unwrap_or_default();
-        let node = NodeView {
-            id: n.id.clone(),
-            kind: n.kind.clone(),
-            doc: def.map(|d| d.doc),
-            inputs,
-            output,
-            params,
-        };
         let id = if collapsed.is_some_and(|c| c.contains(&n.id)) {
             snarl.insert_node_collapsed(pos, node)
         } else {
@@ -499,9 +607,92 @@ fn build(
     }
 }
 
+/// Node `n` of `doc` as the canvas shows it.
+fn node_view(doc: &GraphDoc, n: &NodeDoc, registry: &NodeRegistry) -> NodeView {
+    let def = registry.get(&n.kind);
+    let mut inputs: Vec<(String, Option<PortType>)> = def
+        .map(|d| {
+            d.inputs
+                .iter()
+                .map(|p| (p.name.to_string(), p.accepts.first().copied()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let variadic = def.and_then(|d| d.variadic);
+    let any = variadic.and_then(|v| v.first().copied());
+    for e in doc.edges.iter().filter(|e| e.to.0 == n.id) {
+        if !inputs.iter().any(|(p, _)| *p == e.to.1) {
+            inputs.push((e.to.1.clone(), any));
+        }
+    }
+    if variadic.is_some() {
+        let free = (1..)
+            .map(|i| format!("in{i}"))
+            .find(|p| !inputs.iter().any(|(q, _)| q == p))
+            .expect("a free port name");
+        inputs.push((free, any));
+    }
+    let output = match def {
+        Some(d) => (d.output_port().to_string(), Some(d.output)),
+        None => ("out".to_string(), None),
+    };
+    let params = match def {
+        Some(d) => param_rows(d, &n.params),
+        None => n.params.iter().map(|(k, v)| unknown_row(k, v)).collect(),
+    };
+    let locked = match def {
+        None => Some(format!(
+            "`{}` is not a node kind this build knows, so its parameters cannot be edited",
+            n.kind
+        )),
+        Some(d) if n.version != d.version => Some(format!(
+            "this node is written for version {} of {}, and its parameters are edited at \
+             version {}: run `real migrate-graph` first",
+            n.version, n.kind, d.version
+        )),
+        Some(_) => None,
+    };
+    NodeView {
+        id: n.id.clone(),
+        kind: n.kind.clone(),
+        doc: def.map(|d| d.doc),
+        inputs,
+        output,
+        params,
+        locked,
+    }
+}
+
+impl NodeView {
+    /// About how big snarl draws the node, in points, for placing the nodes
+    /// the file does not place.
+    fn size(&self) -> egui::Vec2 {
+        let lines: usize = self
+            .params
+            .iter()
+            .map(|r| r.shape.lines(r.value.as_ref().unwrap_or(&r.default)))
+            .sum();
+        let name = self
+            .params
+            .iter()
+            .map(|r| r.name.chars().count())
+            .max()
+            .unwrap_or(0);
+        let widget = self
+            .params
+            .iter()
+            .map(|r| r.shape.width())
+            .fold(0.0, f32::max);
+        let body = (name as f32 * 6.5 + widget + 40.0).max(self.kind.chars().count() as f32 * 7.0);
+        let rows = (lines + 1).max(self.inputs.len());
+        egui::vec2(90.0 + body, 40.0 + 23.0 * rows as f32)
+    }
+}
+
 /// Positions for nodes the file does not place: a column per depth (the
-/// longest path from a node without inputs), in file order down each column.
-fn auto_layout(doc: &GraphDoc) -> HashMap<String, egui::Pos2> {
+/// longest path from a node without inputs), in file order down each column,
+/// each node `size` apart from the next.
+fn auto_layout(doc: &GraphDoc, size: impl Fn(&str) -> egui::Vec2) -> HashMap<String, egui::Pos2> {
     let mut depth: HashMap<&str, usize> = doc.nodes.iter().map(|n| (n.id.as_str(), 0)).collect();
     // A valid graph has no cycle, so this settles in at most one round per
     // node; the bound keeps an invalid one from looping.
@@ -521,14 +712,25 @@ fn auto_layout(doc: &GraphDoc) -> HashMap<String, egui::Pos2> {
             break;
         }
     }
-    let mut rows: HashMap<usize, usize> = HashMap::new();
+    // Each column as wide as its widest node.
+    let columns = depth.values().copied().max().map_or(0, |d| d + 1);
+    let mut widths = vec![0.0f32; columns];
+    for n in &doc.nodes {
+        let d = depth[n.id.as_str()];
+        widths[d] = widths[d].max(size(&n.id).x);
+    }
+    let mut xs = vec![0.0f32; columns];
+    for d in 1..columns {
+        xs[d] = xs[d - 1] + widths[d - 1] + GAP.x;
+    }
+    let mut ys: HashMap<usize, f32> = HashMap::new();
     doc.nodes
         .iter()
         .map(|n| {
             let d = depth[n.id.as_str()];
-            let row = rows.entry(d).or_default();
-            let pos = egui::pos2(d as f32 * COLUMN, *row as f32 * ROW);
-            *row += 1;
+            let y = ys.entry(d).or_default();
+            let pos = egui::pos2(xs[d], *y);
+            *y += size(&n.id).y + GAP.y;
             (n.id.clone(), pos)
         })
         .collect()
@@ -585,14 +787,172 @@ impl SnarlPin for Pin {
 
 struct Viewer<'a> {
     path: &'a str,
+    /// The procedural source the graph is shown for.
+    source: &'a str,
     registry: &'a NodeRegistry,
     spots: Spots,
+    /// The source's parameter overrides, by node.
+    overrides: &'a Map<String, Json>,
+    /// The project's files of an asset kind, for asset pickers.
+    assets: &'a dyn Fn(&str) -> Vec<String>,
     queued: Vec<Queued>,
+    edits: Vec<ParamEdit>,
+}
+
+/// What a parameter's widget did while snarl drew.
+struct ParamEdit {
+    node: String,
+    param: String,
+    /// The value the widget showed.
+    shown: Json,
+    change: Change,
 }
 
 impl Viewer<'_> {
     fn spot(&self, ui: &egui::Ui, spot: CanvasSpot<'_>, rect: egui::Rect) {
         record(&self.spots, ui.ctx(), ui.layer_id(), spot.key(), rect);
+    }
+
+    /// Records parts already in screen points (a widget's [`Env::parts`]).
+    fn screen_spot(&self, spot: CanvasSpot<'_>, rect: egui::Rect) {
+        self.spots
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(spot.key(), rect);
+    }
+
+    /// One parameter's row: its name (with a marker when the source
+    /// overrides it, and a menu), its widget, and × when the node sets it.
+    fn param_row(&mut self, ui: &mut egui::Ui, node: &NodeView, row: &ParamRow) {
+        let over = self.overrides.get(&node.id).and_then(|p| p.get(&row.name));
+        let name = ui
+            .horizontal(|ui| {
+                if over.is_some() {
+                    label(ui, RichText::new("●").small().color(OVERRIDDEN));
+                }
+                let text = RichText::new(&row.name).small();
+                label(
+                    ui,
+                    if row.unknown || row.misfit {
+                        text.color(Color32::RED)
+                    } else {
+                        text
+                    },
+                )
+            })
+            .inner;
+        let mut hover = if row.unknown {
+            format!(
+                "`{}` is not a parameter of {}; remove it",
+                row.name, node.kind
+            )
+        } else {
+            row.doc.clone()
+        };
+        if row.misfit {
+            hover.push_str(
+                "\n\nThe file's value is not of this parameter's type, so it is shown as JSON text.",
+            );
+        }
+        if let Some(v) = over {
+            let file = row
+                .value
+                .as_ref()
+                .map_or_else(|| format!("the default {}", short(&row.default)), short);
+            hover.push_str(&format!(
+                "\n\nOverridden on {}: {} (the file: {file}). The override wins for that \
+                 source; editing here changes the file.",
+                self.source,
+                short(v)
+            ));
+        }
+        let name = if hover.is_empty() {
+            name
+        } else {
+            name.on_hover_text(hover.trim_start())
+        };
+        self.spot(
+            ui,
+            CanvasSpot::Param(&node.id, &row.name, "name"),
+            name.rect,
+        );
+        let editable = node.locked.is_none();
+        if editable && (over.is_some() || row.value.is_some()) {
+            name.context_menu(|ui| {
+                if over.is_some() {
+                    let b = ui.button("Remove override");
+                    self.spot(ui, CanvasSpot::MenuItem("Remove override"), b.rect);
+                    if b.clicked() {
+                        self.queued.push(Queued::Command(
+                            "graph.set_param".into(),
+                            json!({
+                                "source": self.source, "node": node.id,
+                                "param": row.name, "value": null,
+                            }),
+                        ));
+                        ui.close();
+                    }
+                }
+                if row.value.is_some() {
+                    let b = ui.button("Reset to default");
+                    self.spot(ui, CanvasSpot::MenuItem("Reset to default"), b.rect);
+                    if b.clicked() {
+                        self.queued.push(self.unset(node, row));
+                        ui.close();
+                    }
+                }
+            });
+        }
+
+        // The widget, dimmed while it shows the kind's default.
+        let shown = row.value.clone().unwrap_or_else(|| row.default.clone());
+        let id = param_id(self.path, &node.id, &row.name);
+        let mut env = Env::new(self.assets);
+        let change = ui
+            .scope_builder(UiBuilder::new().id(id.with("row")), |ui| {
+                if row.value.is_none() {
+                    ui.multiply_opacity(0.5);
+                }
+                let r = ui.add_enabled_ui(editable && !row.unknown, |ui| {
+                    schema::edit(ui, id, &row.shape, &shown, &mut env)
+                });
+                if let Some(why) = &node.locked {
+                    r.response.on_disabled_hover_text(why);
+                }
+                r.inner
+            })
+            .inner;
+        for (part, rect) in &env.parts {
+            self.screen_spot(CanvasSpot::Param(&node.id, &row.name, part), *rect);
+        }
+        if let Some(change) = change {
+            self.edits.push(ParamEdit {
+                node: node.id.clone(),
+                param: row.name.clone(),
+                shown,
+                change,
+            });
+        }
+
+        if row.value.is_some() {
+            let x = ui
+                .add_enabled(editable, egui::Button::new("×").small())
+                .on_hover_text("Remove it from the node: the kind's default applies");
+            self.spot(ui, CanvasSpot::Param(&node.id, &row.name, "×"), x.rect);
+            if x.clicked() {
+                self.queued.push(self.unset(node, row));
+            }
+        } else {
+            label(ui, "");
+        }
+    }
+
+    /// The `graph.set_default` that removes what `node` sets for `row`.
+    fn unset(&self, node: &NodeView, row: &ParamRow) -> Queued {
+        Queued::Command(
+            "graph.set_default".into(),
+            json!({ "graph": self.path, "node": node.id, "param": row.name, "value": null }),
+        )
     }
 
     fn pin(&self, spot: CanvasSpot<'_>, ty: Option<PortType>) -> Pin {
@@ -686,9 +1046,17 @@ impl SnarlViewer<NodeView> for Viewer<'_> {
                     RichText::new(format!("{} (unknown kind)", n.kind)).color(Color32::RED),
                 ),
             };
-            for p in &n.params {
-                label(ui, RichText::new(p).small().monospace());
+            if n.params.is_empty() {
+                return;
             }
+            egui::Grid::new(("re_editor.canvas.params", self.path, &n.id))
+                .num_columns(3)
+                .show(ui, |ui| {
+                    for row in &n.params {
+                        self.param_row(ui, n, row);
+                        ui.end_row();
+                    }
+                });
         });
     }
 
@@ -781,7 +1149,6 @@ impl SnarlViewer<NodeView> for Viewer<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use re_types::graph::NodeDoc;
 
     #[test]
     fn unplaced_nodes_are_laid_out_by_depth() {
@@ -805,10 +1172,12 @@ mod tests {
             ],
             ..GraphDoc::new("t", 1)
         };
-        let at = auto_layout(&doc);
+        // Every node 200 wide and 100 high but `a`, which is 300 wide.
+        let size = |id: &str| egui::vec2(if id == "a" { 300.0 } else { 200.0 }, 100.0);
+        let at = auto_layout(&doc, size);
         assert_eq!(at["a"], egui::pos2(0.0, 0.0));
-        assert_eq!(at["d"], egui::pos2(0.0, ROW));
-        assert_eq!(at["b"], egui::pos2(COLUMN, 0.0));
-        assert_eq!(at["c"], egui::pos2(2.0 * COLUMN, 0.0));
+        assert_eq!(at["d"], egui::pos2(0.0, 100.0 + GAP.y));
+        assert_eq!(at["b"], egui::pos2(300.0 + GAP.x, 0.0));
+        assert_eq!(at["c"], egui::pos2(500.0 + 2.0 * GAP.x, 0.0));
     }
 }

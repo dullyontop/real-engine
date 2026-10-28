@@ -465,3 +465,179 @@ fn collapsed_nodes_are_saved_with_the_layout_not_the_graph() {
     let saved: Json = serde_json::from_str(&text).unwrap();
     assert!(saved.get("collapsed").is_none(), "{text}");
 }
+
+/// The parameters node `id` sets in the open document.
+fn params(app: &App, id: &str) -> serde_json::Map<String, Json> {
+    open_doc(app).node(id).expect("the node").params.clone()
+}
+
+fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    }
+}
+
+/// Clicks the box at `at`, types `text` over what it shows, a key a frame,
+/// and presses Enter.
+fn type_into(ed: &mut HeadlessEditor, app: &mut App, at: egui::Pos2, text: &str) {
+    click(ed, app, at);
+    let none = egui::Modifiers::NONE;
+    frame(
+        ed,
+        app,
+        vec![key(egui::Key::A, egui::Modifiers::COMMAND)],
+        none,
+    );
+    for ch in text.chars() {
+        frame(ed, app, vec![egui::Event::Text(ch.to_string())], none);
+    }
+    frame(ed, app, vec![key(egui::Key::Enter, none)], none);
+    for _ in 0..2 {
+        idle(ed, app);
+    }
+}
+
+#[test]
+fn parameters_are_edited_with_their_widgets() {
+    let dir = project();
+    let mut app = open(dir.path());
+    let mut ed = editor(&mut app);
+    assert!(
+        ed.editor.canvas_commands().is_empty(),
+        "drawing sends nothing"
+    );
+
+    // Dragging a number sends one `graph.set_default`, when it is released.
+    let height = spot(&ed, CanvasSpot::Param("h", "height", ""));
+    drag(
+        &mut ed,
+        &mut app,
+        height,
+        height + egui::vec2(60.0, 0.0),
+        egui::Modifiers::NONE,
+    );
+    assert_eq!(
+        sent(&ed, 0),
+        ["graph.set_default"],
+        "{:?}",
+        ed.editor.console()
+    );
+    let h = params(&app, "h");
+    assert!(h["height"].as_f64().unwrap() > 2.0, "{h:?}");
+    assert_eq!(app.history().log().len(), 1);
+
+    // A choice is one click to open the list and one to pick.
+    let noise = spot(&ed, CanvasSpot::Param("h", "noise", ""));
+    click(&mut ed, &mut app, noise);
+    let ridged = spot(&ed, CanvasSpot::Param("h", "noise", "=ridged"));
+    click(&mut ed, &mut app, ridged);
+    assert_eq!(
+        sent(&ed, 1),
+        ["graph.set_default"],
+        "{:?}",
+        ed.editor.console()
+    );
+    assert_eq!(params(&app, "h")["noise"], "ridged");
+
+    // × removes what the node sets, so the kind's default shows again.
+    let cell = spot(&ed, CanvasSpot::Param("h", "cell", "×"));
+    click(&mut ed, &mut app, cell);
+    assert_eq!(sent(&ed, 2), ["graph.set_default"]);
+    assert!(!params(&app, "h").contains_key("cell"));
+    assert!(
+        ed.editor
+            .canvas_spot(CanvasSpot::Param("h", "cell", "×"))
+            .is_none()
+    );
+
+    // Typing into a parameter the node does not set sets it, on Enter.
+    let octaves = spot(&ed, CanvasSpot::Param("h", "octaves", ""));
+    type_into(&mut ed, &mut app, octaves, "7");
+    assert_eq!(
+        sent(&ed, 3),
+        ["graph.set_default"],
+        "{:?}",
+        ed.editor.console()
+    );
+    assert_eq!(params(&app, "h")["octaves"], 7);
+
+    // A value the kind refuses changes nothing, and says why.
+    let size = spot(&ed, CanvasSpot::Param("mask", "size", ""));
+    type_into(&mut ed, &mut app, size, "1");
+    assert_eq!(sent(&ed, 4), ["graph.set_default"]);
+    assert_eq!(params(&app, "mask")["size"], 9);
+    assert_eq!(app.history().log().len(), 4);
+    assert!(
+        ed.editor.console().iter().any(|l| l.text.contains("size")),
+        "{:?}",
+        ed.editor.console()
+    );
+
+    replayed(dir.path(), &ed, &app);
+    // Each edit is one undo step.
+    for _ in 0..4 {
+        assert!(ed.editor.undo(&mut app, &AllowAll).ok);
+    }
+    assert_eq!(serde_json::to_value(open_doc(&app)).unwrap(), graph());
+}
+
+/// A value of another type than its parameter's is shown as JSON text, with
+/// one `RE8850` warning, and typing a value of the type puts the widget back.
+#[test]
+fn a_value_of_another_type_is_shown_as_json_text() {
+    let dir = project();
+    let mut doc = graph();
+    doc["nodes"][0]["params"]["height"] = json!("tall");
+    std::fs::write(
+        dir.path().join(PATH),
+        serde_json::to_string_pretty(&doc).unwrap(),
+    )
+    .unwrap();
+    let mut app = open(dir.path());
+    let mut ed = editor(&mut app);
+    let warnings = |ed: &HeadlessEditor| {
+        ed.editor
+            .console()
+            .iter()
+            .filter(|l| l.text.contains("RE8850"))
+            .count()
+    };
+    assert_eq!(warnings(&ed), 1, "{:?}", ed.editor.console());
+    for _ in 0..3 {
+        idle(&mut ed, &mut app);
+    }
+    assert_eq!(warnings(&ed), 1, "reported once");
+
+    let height = spot(&ed, CanvasSpot::Param("h", "height", ""));
+    type_into(&mut ed, &mut app, height, "\"short\"");
+    assert_eq!(sent(&ed, 0), Vec::<&str>::new(), "a string is not a number");
+    assert_eq!(warnings(&ed), 2, "{:?}", ed.editor.console());
+    type_into(&mut ed, &mut app, height, "3.5");
+    assert_eq!(
+        sent(&ed, 0),
+        ["graph.set_default"],
+        "{:?}",
+        ed.editor.console()
+    );
+    assert_eq!(params(&app, "h")["height"], 3.5);
+    // The widget is a number again.
+    let height = spot(&ed, CanvasSpot::Param("h", "height", ""));
+    drag(
+        &mut ed,
+        &mut app,
+        height,
+        height + egui::vec2(30.0, 0.0),
+        egui::Modifiers::NONE,
+    );
+    assert_eq!(
+        sent(&ed, 1),
+        ["graph.set_default"],
+        "{:?}",
+        ed.editor.console()
+    );
+    assert!(params(&app, "h")["height"].as_f64().unwrap() > 3.5);
+}

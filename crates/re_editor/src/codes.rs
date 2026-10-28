@@ -21,3 +21,9 @@ pub const INVALID_FIELD_TEXT: Code = Code::new("RE8803");
 /// does not parse, names a panel this editor does not know, or has another
 /// version. The default layout is used.
 pub const LAYOUT_UNREADABLE: Code = Code::new("RE8804");
+
+/// A node parameter's value (on the canvas, or an override in the Procedural
+/// panel) does not fit its schema: text typed into its JSON box does not
+/// parse or is not of its type, so nothing was changed; or the value in the
+/// file is not of its type, so it is shown as JSON text.
+pub const PARAM_VALUE: Code = Code::new("RE8850");
