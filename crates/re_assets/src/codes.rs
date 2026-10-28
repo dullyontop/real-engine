@@ -64,3 +64,8 @@ pub const SKIN_DUPLICATE_JOINT_NAME: Code = Code::new("RE7062");
 
 /// A mesh on a skinned node has no skin weights and is drawn unskinned (a warning).
 pub const SKIN_UNWEIGHTED_MESH: Code = Code::new("RE7063");
+
+/// An audio file the engine does not play: not WAV or Ogg Vorbis, a WAV file
+/// it cannot read, several streams in one Ogg file, or more than two channels
+/// (ADR-0066 §6).
+pub const UNSUPPORTED_AUDIO: Code = Code::new("RE7070");

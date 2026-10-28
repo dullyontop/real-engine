@@ -76,8 +76,8 @@ impl App {
 
     /// Applies file changes (from a watcher, or made by a command): re-imports
     /// what changed, uploads it again and forgets collider shapes built from
-    /// it, and rebuilds the shaders of changed shader files
-    /// ([`crate::shaders`]). Returns the problems re-imports and rebuilds
+    /// it, forgets the mixer's copy of changed sound files, and rebuilds the
+    /// shaders of changed shader files ([`crate::shaders`]). Returns the problems re-imports and rebuilds
     /// reported (the last good version of each stays loaded); they are also in
     /// the app's diagnostics.
     pub fn apply_file_changes(&mut self, changes: &[re_assets::AssetChange]) -> Vec<Diagnostic> {
@@ -87,6 +87,10 @@ impl App {
             self.shapes.remove(key);
         }
         self.diagnostics.extend(report.problems);
+        // A changed sound plays its new file from its next start (ADR-0066 §6).
+        for path in &report.audio {
+            self.audio.remove_clip(path);
+        }
         self.reload_compat(&report.scripts);
         for path in report.scripts {
             self.reload_script(&path);

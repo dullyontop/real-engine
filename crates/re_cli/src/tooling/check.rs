@@ -244,11 +244,26 @@ pub fn run(args: CheckArgs, project: &Path) -> anyhow::Result<ExitCode> {
     if config.as_ref().is_some_and(|c| c.compat.is_some()) {
         report.scan.gap.drop_children(&service_children(project));
     }
-    let diags = diagnostics(&report);
+    let mut diags = diagnostics(&report);
+    // A project's audio files: the headers only, so the check stays fast
+    // (`real build` also decodes each Ogg file).
+    let audio = match &config {
+        Some(c) => {
+            let files = re_app::package::dev_files(project);
+            let paths =
+                crate::build::pack::audio_paths(&files, &c.package.clone().unwrap_or_default());
+            diags.extend(crate::build::pack::check_audio(&files, &paths, false));
+            Some(paths.len())
+        }
+        None => None,
+    };
     let errors = diags.iter().filter(|d| d.is_error()).count();
     if args.json {
         let mut value = serde_json::to_value(&report)?;
         value["ok"] = json!(errors == 0);
+        if let Some(files) = audio {
+            value["audio"] = json!({ "files": files });
+        }
         if !args.corpus {
             value["diagnostics"] = serde_json::to_value(&diags)?;
         }
@@ -267,8 +282,12 @@ pub fn run(args: CheckArgs, project: &Path) -> anyhow::Result<ExitCode> {
             ),
             None => String::new(),
         };
+        let audio = match audio {
+            Some(n) if n > 0 => format!(", {n} audio file{}", if n == 1 { "" } else { "s" }),
+            _ => String::new(),
+        };
         println!(
-            "check: {} file{}, {} compiled, {} API name{} missing{types}: {}",
+            "check: {} file{}, {} compiled, {} API name{} missing{types}{audio}: {}",
             report.files,
             if report.files == 1 { "" } else { "s" },
             report.compile.ok,

@@ -12,7 +12,10 @@ const RATE: u32 = 48_000;
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
 fn audio() -> Audio {
-    let mut a = Audio::headless_with(CaptureSettings { sample_rate: RATE });
+    let mut a = Audio::headless_with(CaptureSettings {
+        sample_rate: RATE,
+        ..Default::default()
+    });
     a.insert_clip("tone", sine(440.0, 2.0, RATE, 0.5));
     a
 }

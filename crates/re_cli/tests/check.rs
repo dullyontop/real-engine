@@ -64,6 +64,31 @@ fn check_passes_good_scripts_and_fails_on_a_compile_error() {
 }
 
 #[test]
+fn check_refuses_an_audio_file_the_engine_does_not_play() {
+    let dir = project(&[("scripts/ok.luau", "print(\"hi\")\n")]);
+    let game = dir.path().join("game");
+    // `re_audio/tests/ogg.rs` says how these files were made.
+    let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../re_audio/tests/data");
+    std::fs::create_dir_all(game.join("assets/sfx")).unwrap();
+    std::fs::copy(data.join("stereo1.ogg"), game.join("assets/sfx/door.ogg")).unwrap();
+    let o = real(&["check", "--json"], &game);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    let report: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(report["audio"]["files"], 1);
+
+    // Three channels.
+    std::fs::copy(data.join("three.ogg"), game.join("assets/sfx/choir.ogg")).unwrap();
+    let o = real(&["check"], &game);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    let t = text(&o);
+    assert!(
+        t.contains("RE7070") && t.contains("assets/sfx/choir.ogg"),
+        "{t}"
+    );
+    assert!(t.contains("2 audio files"), "{t}");
+}
+
+#[test]
 fn a_name_the_engine_does_not_provide_is_a_warning() {
     let dir = project(&[(
         "scripts/roblox.luau",

@@ -12,7 +12,10 @@ const RATE: u32 = 48_000;
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
 fn audio() -> Audio {
-    let a = Audio::headless_with(CaptureSettings { sample_rate: RATE });
+    let a = Audio::headless_with(CaptureSettings {
+        sample_rate: RATE,
+        ..Default::default()
+    });
     assert!(a.is_headless());
     a
 }

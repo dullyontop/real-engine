@@ -13,13 +13,18 @@ use kira::backend::{Backend, Renderer};
 pub struct CaptureSettings {
     /// Frames per second of the rendered audio.
     pub sample_rate: u32,
+    /// Decodes streamed sounds on a stream thread, as on a desktop device,
+    /// rather than while rendering (ADR-0066 §4). The output then depends on
+    /// the thread's timing; tests of the thread set it.
+    pub stream_thread: bool,
 }
 
 impl Default for CaptureSettings {
-    /// 48 kHz.
+    /// 48 kHz, streams decoded while rendering.
     fn default() -> Self {
         CaptureSettings {
             sample_rate: 48_000,
+            stream_thread: false,
         }
     }
 }

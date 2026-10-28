@@ -275,6 +275,54 @@ pub fn icon_image(files: &ProjectFiles, icon: &str) -> Result<TextureData, Diagn
     })
 }
 
+/// The audio files a build packs (`.wav`, `.ogg`).
+pub fn audio_paths(files: &ProjectFiles, pc: &PackageConfig) -> Vec<String> {
+    collect(files, pc)
+        .into_iter()
+        .filter(|p| re_assets::is_audio(p))
+        .collect()
+}
+
+/// Checks audio files before a game ships them (ADR-0066 §6): each file's
+/// headers (`RE7070` for one the engine does not play), and with `decode`,
+/// each Ogg file decoded once (`RE7402` for one damaged past its headers), the
+/// files in parallel on the worker pool. The problems come in path order.
+pub fn check_audio(files: &ProjectFiles, paths: &[String], decode: bool) -> Vec<Diagnostic> {
+    let found = std::sync::Mutex::new(Vec::new());
+    re_core::task::TaskPool::global().scope(|s| {
+        for path in paths {
+            let found = &found;
+            s.spawn(move |_| {
+                let checked = files
+                    .read_source(path)
+                    .map_err(|e| {
+                        Diagnostic::error(
+                            re_assets::codes::READ_FAILED,
+                            format!("cannot read `{path}`: {e}"),
+                        )
+                        .at(Location::file(path.clone()))
+                    })
+                    .and_then(|bytes| {
+                        let info = re_assets::audio_info(path, &bytes)?;
+                        match info.format {
+                            re_assets::AudioFormat::OggVorbis if decode => {
+                                re_audio::check_ogg(path, &bytes).map(|_| ())
+                            }
+                            _ => Ok(()),
+                        }
+                    });
+                if let Err(d) = checked {
+                    let mut found = found.lock().unwrap_or_else(|e| e.into_inner());
+                    found.push((path.clone(), d));
+                }
+            });
+        }
+    });
+    let mut found = found.into_inner().unwrap_or_else(|e| e.into_inner());
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    found.into_iter().map(|(_, d)| d).collect()
+}
+
 /// The project paths to pack, sorted.
 fn collect(files: &ProjectFiles, pc: &PackageConfig) -> BTreeSet<String> {
     let mut paths = BTreeSet::new();
@@ -331,6 +379,12 @@ pub fn pack(project: &Path, config: &AppConfig) -> (PackageWriter, PackReport) {
     }
     let named = named_files(&files, &paths);
     report.diagnostics.extend(unpacked_names(&named, &paths));
+    let audio: Vec<String> = paths
+        .iter()
+        .filter(|p| re_assets::is_audio(p))
+        .cloned()
+        .collect();
+    report.diagnostics.extend(check_audio(&files, &audio, true));
 
     // Two paths that differ only by case cannot both be found ignoring case.
     let mut folded: BTreeMap<String, &str> = BTreeMap::new();

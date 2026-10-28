@@ -145,9 +145,9 @@ Dashed edges exist only when `re_cli` is built with the default-on `tooling` fea
 | `re_proc` | ProcGraph IR, nodes, evaluation, cache, the `graph` generator for procedural sources, `graph.*` commands | `ProcGraph`, `NodeRegistry`, `NodeDef`, `Evaluator`, `EvalReport`, `GraphStore`, `register_generator`, `register_commands` | wgpu, oxijolt, mlua |
 | `re_render` | The GPU renderer, GPU resources, headless capture and egui painting | `Gpu`, `Renderer`, `Renderer::render(&Device, &Queue, &TextureView, &RenderSnapshot)`, `Renderer::paint_ui(&Device, &Queue, &TextureView, &UiFrame)`, `upload_*` / `create_material` / `release_*`, `stats`, `RendererSettings`, `Capture`, `imgdiff` | `re_scene` |
 | `re_physics` | Jolt through oxijolt | `Physics::new(PhysicsConfig, &'static TaskPool)`, `apply(&mut Vec<PhysicsCmd>)`, `step(dt)`, `poses_into(&mut Vec<BodyPose>)`, `velocity(id)`, `character(id)`, `events()`, `raycast` / `shape_cast` / `overlap_sphere` with a `QueryFilter`, `LayerTable`, `save_state` / `restore_state`, `motion_state` / `apply_motion_state` (`JoltRayonJobs` is internal) | `re_scene` |
-| `re_audio` | kira playback, with a headless capture fallback | `Audio::new_or_headless`, `apply(&[AudioCmd])`, `advance(Duration)`, `set_user_volume`, `CaptureBackend` | `re_scene` |
+| `re_audio` | kira playback, with a headless capture fallback; WAV and Ogg Vorbis clips, long Ogg clips streamed from their files (ADR-0066) | `Audio::new_or_headless`, `apply(&[AudioCmd])`, `advance(Duration)`, `set_user_volume`, `remove_clip`, `check_ogg`, `CaptureBackend` | `re_scene` |
 | `re_input` | Raw input, the action map and replay | `RawInput`, `InputConfig`, `ActionMap`, `Replay`, `ReplayRecorder` | `re_scene` |
-| `re_assets` | Import, material files, cache and hot reload | `AssetId`, `AssetServer`, `import_gltf`, `load_material`, `ProcessedCache`, `AssetWatcher` | `re_scene` |
+| `re_assets` | Import, material files, cache and hot reload | `AssetId`, `AssetServer`, `import_gltf`, `load_material`, `ProcessedCache`, `AssetWatcher`, `audio_info` | `re_scene` |
 | `re_ui` | The UI core (M4, ADR-0058): plain node trees laid out by the compat GUI's rules (scale-plus-offset sizes, anchors, padding, lists and grids, size and aspect limits, automatic size, scale, rotation, clipping, scrolling), text over the bundled fonts (ADR-0035, in its `assets/fonts/`) and painting as egui shapes, for the compat GUI and native UI | `UiTree`, `Node`, `Layout`, `Root`, `Item`, `Visit`, `Painter`, `Looks`, `TextStyle`, `fonts::install` | every engine crate (it uses only egui, glam and libm) |
 | `re_anim` | glTF node clips, skeletal poses for skins, animation graphs, keyframe tracks, IK and tweens | `Sampler`, `Tween`, `graph::{validate, BoundGraph, GraphPlayer}` | `re_scene` |
 | `re_net` | Connections over UDP with our own reliability, and over WebSockets for players in a browser; a transport seam with in-memory and conditioned links (M3, WP30, ADR-0050) | `Endpoint`, `Transport`, `UdpTransport`, `ServerTransport`, `WsTransport`, `MemoryNet`, `Conditioned` | every engine crate but `re_core` |
@@ -198,6 +198,7 @@ The patched copies in `third_party/` go when mlua and oxijolt-sys releases carry
 | Main | The winit event loop (or the headless driver), input, Luau (one VM per script context), sync, rendering submission, egui, and answering engine requests |
 | rayon pool (N = cores − 1, at least 1) | ProcGraph node evaluation, Jolt jobs (through `JoltRayonJobs`, which implements `oxijolt::JobSystem`), asset processing. bevy_ecs gets no pool of its own: `re_scene`'s schedules run single-threaded on the main thread (ADR-0005, ADR-0007). |
 | Asset watcher | notify's own thread; it posts `AssetChange` into a channel the main thread drains |
+| Audio streams (`re_audio streams`, desktop with a device, M4) | One per `Audio`, started with the first streamed sound and joined when the `Audio` drops: it opens long Ogg clips, decodes them into each stream's ring of frames and carries out seeks, parking at most 10 ms between rounds (ADR-0066 §4). In the browser and in headless runs, `Audio::advance` does this on the main thread once a frame, so headless output does not depend on thread timing. kira's own mixing runs on the output device's callback thread. |
 | tokio (only inside `real mcp`) | The MCP transport (stdio, or streamable HTTP with `--http`). Commands reach the main thread through `re_command::remote::EngineHandle`, a std channel. |
 
 There is no render thread in M1. The seam for one is that `RenderSnapshot` is `Send` and owns its data (ADR-0007).
@@ -695,7 +696,7 @@ my-game/
   scripts/generators/**.luau Luau node kinds (`project.*`, ADR-0043)
   shaders/*.wgsl             WGSL files that replace or add to the engine's shader files (ADR-0038); packed by `real build`
   data/seed/**               saved data that verify runs, replays and new saves start from (ADR-0048); packed by `real build`
-  assets/**                  .gltf/.glb, .png/.jpg, .wav, each with a .meta.json (uuid, import settings)
+  assets/**                  .gltf/.glb and .png/.jpg, each with a .meta.json (uuid, import settings); .wav and .ogg sounds
   tests/replays/*.replay.json
   tests/goldens/<backend>/*.png
   .real/agent-policy.toml    committed
@@ -706,6 +707,8 @@ my-game/
 ```
 
 `.real/types/engine.d.luau` is written by `real check --types` (inside a project; the type checker then uses that file) and by `real agent init`, both from the running engine's binding registry. If the file cannot be written, `agent init` reports it under `kept` and carries on.
+
+Sounds are WAV (PCM or float) or Ogg Vorbis files, mono or stereo. An Ogg sound longer than 10 seconds streams from its file while it plays, in well under a megabyte; a shorter one, and every WAV file, is decoded at its first play and kept (ADR-0066). `real check` reads every packed sound's headers and `real build` also decodes each Ogg file once, so a game never ships a sound it cannot play (`RE7070`, `RE7402`).
 
 ### `real.toml`
 
@@ -936,6 +939,7 @@ Every runtime read of a project file goes through `re_core::files::ProjectFiles`
 - A development run (`real run`, `real verify`, the editor, MCP): the engine layer (`.real/defaults/**`), then the project directory. The writable folders are `.real/cache`, `.real/data`, `.real/crash` and `.real/out`.
 - A packaged game: the engine layer, then `game.rpak`, then the folder that holds it (source files only). The writable folders are per user, under `[package] identifier`: the cache in `$XDG_CACHE_HOME` (default `~/.cache`), `~/Library/Caches` or `%LOCALAPPDATA%`; data, crash reports and captures in `$XDG_DATA_HOME` (default `~/.local/share`), `~/Library/Application Support` or `%APPDATA%`. `--data-dir DIR` overrides both. Headless packaged runs do not save data, except a dedicated server's (`--server`); lockstep runs (`--lockstep`, for checks) never do.
 - A browser build: the same layers over the archive in memory; the writable folders are memory, with data and crash reports mirrored to IndexedDB (below).
+- `ProjectFiles::open` (M4, ADR-0066 §5) opens a file to be read in pieces, for streamed sounds: a project or folder file as a file, and an archive entry stored uncompressed by byte range, once a pass over it in 64 KiB pieces has checked its hash (in the browser, from the archive's bytes in memory). A compressed entry is read whole first.
 
 ### Packaged games
 
@@ -949,7 +953,7 @@ Every runtime read of a project file goes through `re_core::files::ProjectFiles`
 - the entries' bytes, back to back, in index order; an entry is zstd-compressed (level 9) only when that saves at least 10%;
 - the index: postcard, zstd-compressed, sorted by path: the engine, Luau, bytecode and compiler versions (`COMPILER_ID`, ADR-0036), the `[package]` name, identifier and version, and per entry its path, form (`Source`, `Bytecode` or `Processed`), offset, sizes, compression and the blake3 of its bytes.
 
-The default content is `real.toml`, `.luaurc`, `scenes/`, `prefabs/`, `materials/`, `graphs/`, `anims/`, `scripts/`, `shaders/`, `assets/` and `data/seed/`; `tests/`, `.real/`, `.git/`, `AGENTS.md` and `CLAUDE.md` are never packed. Animation graphs (`*.animgraph.json`) go in `anims/`; elsewhere one is packed when it lies in another default folder or matches `[package] include`, and a packed scene that names a file the archive leaves out fails the build (`RE0957`). Scripts are stored as Luau bytecode. Every read checks the entry's hash, and an archive from another engine, Luau or compiler version is refused (`RE0602`). `[package]` in `real.toml` sets the identifier, display name, version, icon, the scripts and assets forms, `exclude`, `include` and `notices`. `real verify --package DIR` runs the packaged game as a child process (a boot and every replay) and compares its `state_hash`es with the project's.
+The default content is `real.toml`, `.luaurc`, `scenes/`, `prefabs/`, `materials/`, `graphs/`, `anims/`, `scripts/`, `shaders/`, `assets/` and `data/seed/`; `tests/`, `.real/`, `.git/`, `AGENTS.md` and `CLAUDE.md` are never packed. Animation graphs (`*.animgraph.json`) go in `anims/`; elsewhere one is packed when it lies in another default folder or matches `[package] include`, and a packed scene that names a file the archive leaves out fails the build (`RE0957`). Scripts are stored as Luau bytecode. Every read checks the entry's hash (an entry opened to be read in pieces, a streamed sound, is checked once, when it is opened), and an archive from another engine, Luau or compiler version is refused (`RE0602`). `[package]` in `real.toml` sets the identifier, display name, version, icon, the scripts and assets forms, `exclude`, `include` and `notices`. `real verify --package DIR` runs the packaged game as a child process (a boot and every replay) and compares its `state_hash`es with the project's.
 
 ### Web builds
 

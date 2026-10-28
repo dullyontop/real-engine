@@ -10,6 +10,12 @@
 //! * Clips are named by project asset path (`assets/sfx/pickup.wav`). They are
 //!   loaded from the asset root on first use, or registered up front with
 //!   [`Audio::insert_clip`] (generated sounds such as [`sine`] need no file).
+//! * WAV files and Ogg Vorbis files of 10 s or less are decoded whole and
+//!   kept; a longer Ogg file streams from its file through a ring of frames
+//!   (ADR-0066), decoded on one stream thread on the desktop and in
+//!   [`Audio::advance`] in the browser and headless runs, so a 3-minute track
+//!   takes well under a megabyte while it plays. Seeks land on the exact
+//!   frame, and a looping stream repeats without a gap.
 //! * Sounds play on named buses (ADR-0041): a tree of kira sub-tracks with
 //!   kira's built-in effects, plus send tracks, built from an
 //!   [`AudioGraphDesc`] (the `[audio]` section of `real.toml`) by
@@ -41,6 +47,8 @@ mod graph;
 mod meter;
 mod mixer;
 mod spatial;
+mod stream;
+mod vorbis;
 mod wav;
 
 pub use capture::{CaptureBackend, CaptureSettings};
@@ -48,6 +56,7 @@ pub use graph::{DEFAULT_SNAPSHOT, MAX_SENDS};
 pub use kira::sound::static_sound::StaticSoundData;
 pub use mixer::{Audio, MAX_FADE, MAX_RATE, linear_to_decibels, rms, sine};
 pub use re_types::audio::{AudioCmd, AudioGraphDesc, BusLevel, Rolloff, SoundOp, Spatial};
+pub use stream::check_ogg;
 
 use re_core::DiagInfo;
 
@@ -97,6 +106,16 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::UNKNOWN_BUS,
         title: "Unknown audio bus or snapshot",
         page: include_str!("../explain/RE7408.md"),
+    },
+    DiagInfo {
+        code: codes::UNSUPPORTED_AUDIO,
+        title: "Unsupported audio file",
+        page: include_str!("../explain/RE7409.md"),
+    },
+    DiagInfo {
+        code: codes::STREAM_FAILED,
+        title: "Audio stream failed",
+        page: include_str!("../explain/RE7410.md"),
     },
     DiagInfo {
         code: codes::INVALID_SOUND_CONTROL,

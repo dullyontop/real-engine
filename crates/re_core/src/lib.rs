@@ -34,7 +34,9 @@ pub use diag::{
     validate_catalog,
 };
 pub use events::{EventCursor, Events};
-pub use files::{FileData, FileError, Form, ProjectFiles, ProjectPath, Writable, WritableDir};
+pub use files::{
+    FileData, FileError, FileReader, Form, ProjectFiles, ProjectPath, Writable, WritableDir,
+};
 pub use log::{LogConfig, init_logging};
 pub use phase::Phase;
 pub use task::TaskPool;

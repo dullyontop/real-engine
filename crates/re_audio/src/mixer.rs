@@ -2,6 +2,7 @@
 //! started by commands.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::io::BufReader;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,6 +25,8 @@ use crate::capture::{CaptureBackend, CaptureSettings};
 use crate::codes;
 use crate::graph::{BUS_CAPACITY, Graph, tween};
 use crate::spatial::{AttenuationBuilder, Curve, Motion, doppler};
+use crate::stream::{self, Event, MAX_STREAMS, Pump, StreamData, StreamHandle, Streams};
+use crate::vorbis::VorbisReader;
 
 /// Changes take effect at once (no fade).
 const NOW: Tween = Tween {
@@ -45,9 +48,80 @@ pub const MAX_FADE: f32 = 3600.0;
 /// The longest glide of a doppler change: a frame's step, up to this.
 const MAX_GLIDE: Duration = Duration::from_millis(100);
 
+/// A playing sound: decoded whole, or streamed (ADR-0066).
+enum VoiceSound {
+    Static(StaticSoundHandle),
+    Stream(StreamHandle),
+}
+
+impl VoiceSound {
+    fn state(&self) -> PlaybackState {
+        match self {
+            VoiceSound::Static(h) => h.state(),
+            VoiceSound::Stream(h) => h.state(),
+        }
+    }
+
+    fn stop(&mut self, fade: Tween) {
+        match self {
+            VoiceSound::Static(h) => h.stop(fade),
+            VoiceSound::Stream(h) => h.stop(fade),
+        }
+    }
+
+    fn pause(&mut self, fade: Tween) {
+        match self {
+            VoiceSound::Static(h) => h.pause(fade),
+            VoiceSound::Stream(h) => h.pause(fade),
+        }
+    }
+
+    fn resume(&mut self, fade: Tween) {
+        match self {
+            VoiceSound::Static(h) => h.resume(fade),
+            VoiceSound::Stream(h) => h.resume(fade),
+        }
+    }
+
+    fn seek_to(&mut self, seconds: f64) {
+        match self {
+            VoiceSound::Static(h) => h.seek_to(seconds),
+            VoiceSound::Stream(h) => h.seek_to(seconds),
+        }
+    }
+
+    fn set_volume(&mut self, volume: Decibels, fade: Tween) {
+        match self {
+            VoiceSound::Static(h) => h.set_volume(volume, fade),
+            VoiceSound::Stream(h) => h.set_volume(volume, fade),
+        }
+    }
+
+    fn set_playback_rate(&mut self, rate: f64, fade: Tween) {
+        match self {
+            VoiceSound::Static(h) => h.set_playback_rate(rate, fade),
+            VoiceSound::Stream(h) => h.set_playback_rate(rate, fade),
+        }
+    }
+
+    /// A stream's underruns; 0 for a decoded sound.
+    fn underruns(&self) -> u64 {
+        match self {
+            VoiceSound::Static(_) => 0,
+            VoiceSound::Stream(h) => h.underruns(),
+        }
+    }
+}
+
+/// What [`Mixer::play`] plays.
+enum SoundSource {
+    Static(Box<StaticSoundData>),
+    Stream(StreamData),
+}
+
 /// A playing sound.
 struct Voice {
-    sound: StaticSoundHandle,
+    sound: VoiceSound,
     /// A spatial sound's track and how it falls with distance; `None` for a
     /// sound that does not pan.
     spatial: Option<Placed>,
@@ -226,6 +300,8 @@ struct Mixer<B: Backend> {
     /// Entities' distance curves and doppler (`SetSourceSpatial`).
     spatial: HashMap<EntityId, Spatial>,
     graph: Graph,
+    /// The underruns of streams that have ended.
+    underruns: u64,
 }
 
 impl<B: Backend> Mixer<B> {
@@ -246,7 +322,21 @@ impl<B: Backend> Mixer<B> {
             buses: HashMap::new(),
             spatial: HashMap::new(),
             graph,
+            underruns: 0,
         })
+    }
+
+    fn voices(&self) -> impl Iterator<Item = &Voice> {
+        self.sources
+            .values()
+            .chain(self.one_shots.iter().map(|s| &s.voice))
+    }
+
+    /// The streams that play.
+    fn streams(&self) -> usize {
+        self.voices()
+            .filter(|v| matches!(v.sound, VoiceSound::Stream(_)) && !v.finished())
+            .count()
     }
 
     /// Plays `data` on `bus` (the default bus when empty or unknown; the
@@ -254,7 +344,7 @@ impl<B: Backend> Mixer<B> {
     /// with `spatial`'s curve, or without one when `attenuate` is false.
     fn play(
         &mut self,
-        data: StaticSoundData,
+        data: SoundSource,
         position: Option<[f32; 3]>,
         spatial: &Spatial,
         attenuate: bool,
@@ -273,7 +363,14 @@ impl<B: Backend> Mixer<B> {
                 let mut track = track
                     .add_spatial_sub_track(listener, p, builder)
                     .map_err(|e| limit(&e.to_string()))?;
-                let sound = track.play(data).map_err(|e| limit(&e.to_string()))?;
+                let sound = match data {
+                    SoundSource::Static(d) => {
+                        VoiceSound::Static(track.play(*d).map_err(|e| limit(&e.to_string()))?)
+                    }
+                    SoundSource::Stream(d) => {
+                        VoiceSound::Stream(track.play(d).map_err(|e| limit(&e.to_string()))?)
+                    }
+                };
                 let placed = Placed {
                     track,
                     curve,
@@ -283,7 +380,17 @@ impl<B: Backend> Mixer<B> {
                 };
                 (sound, Some(placed))
             }
-            None => (track.play(data).map_err(|e| limit(&e.to_string()))?, None),
+            None => {
+                let sound = match data {
+                    SoundSource::Static(d) => {
+                        VoiceSound::Static(track.play(*d).map_err(|e| limit(&e.to_string()))?)
+                    }
+                    SoundSource::Stream(d) => {
+                        VoiceSound::Stream(track.play(d).map_err(|e| limit(&e.to_string()))?)
+                    }
+                };
+                (sound, None)
+            }
         };
         Ok(Voice {
             sound,
@@ -331,8 +438,51 @@ impl<B: Backend> Mixer<B> {
     }
 
     fn prune(&mut self) {
-        self.one_shots.retain(|s| !s.voice.finished());
-        self.sources.retain(|_, v| !v.finished());
+        let mut underruns = 0;
+        self.one_shots.retain(|s| {
+            let done = s.voice.finished();
+            if done {
+                underruns += s.voice.sound.underruns();
+            }
+            !done
+        });
+        self.sources.retain(|_, v| {
+            let done = v.finished();
+            if done {
+                underruns += v.sound.underruns();
+            }
+            !done
+        });
+        self.underruns += underruns;
+    }
+}
+
+/// True for a clip name ending in `.ogg` (any case): an Ogg Vorbis file.
+fn is_ogg(name: &str) -> bool {
+    name.rsplit_once('.')
+        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("ogg"))
+}
+
+fn not_found(name: &str, why: &str) -> Diagnostic {
+    Diagnostic::error(
+        codes::CLIP_NOT_FOUND,
+        format!("audio clip `{name}` not found: {why}"),
+    )
+    .at(Location::file(name))
+    .with_hint("clip names are project-relative paths such as `assets/sfx/pickup.wav`")
+}
+
+/// The diagnostic for a clip file that cannot be read: RE7401 when there is
+/// none, RE7402 otherwise.
+pub(crate) fn read_error(name: &str, e: FileError) -> Diagnostic {
+    match e {
+        e if e.is_not_found() => not_found(name, "no such file"),
+        e @ FileError::InvalidPath { .. } => not_found(name, &e.to_string()),
+        e => Diagnostic::error(
+            codes::CLIP_DECODE_FAILED,
+            format!("cannot read audio clip `{name}`: {e}"),
+        )
+        .at(Location::file(name)),
     }
 }
 
@@ -365,7 +515,17 @@ pub struct Audio {
     output: Output,
     sample_rate: u32,
     files: Option<ProjectFiles>,
+    /// Clips decoded whole: WAV files, short Ogg files and registered sounds.
     clips: HashMap<String, StaticSoundData>,
+    /// Ogg clips known to be long enough to stream, with their lengths in
+    /// seconds.
+    streamed: HashMap<String, f64>,
+    /// Goes up when a clip is forgotten, so a stream opened before does not
+    /// cache the old file's frames.
+    epoch: u64,
+    streams: Streams,
+    /// Clips whose streams panic when they decode: tests of the panic path.
+    panics: HashSet<String>,
     /// The time [`Audio::advance`] has been given, the clock that rate fades
     /// and doppler run on; on the headless backend, also the time rendered and
     /// the frames that came to: counting whole frames of the total keeps steps
@@ -388,7 +548,8 @@ impl Audio {
     pub fn new_or_headless() -> Audio {
         match AudioManager::<DefaultBackend>::new(manager_settings(Default::default())) {
             Ok(m) => match Mixer::new(m) {
-                Ok(mixer) => Audio::with_output(Output::Device(mixer), 0),
+                // In the browser the pumps run each frame (ADR-0066 §4).
+                Ok(mixer) => Audio::with_output(Output::Device(mixer), 0, true),
                 Err(d) => {
                     tracing::warn!(code = %d.code, "{}; continuing with silent headless audio", d.message);
                     Audio::headless()
@@ -416,15 +577,23 @@ impl Audio {
             .unwrap_or_else(|never| match never {});
         // A fresh manager has room for its first listener.
         let mixer = Mixer::new(manager).expect("a new audio manager accepts one listener");
-        Audio::with_output(Output::Headless(mixer), settings.sample_rate)
+        Audio::with_output(
+            Output::Headless(mixer),
+            settings.sample_rate,
+            settings.stream_thread,
+        )
     }
 
-    fn with_output(output: Output, sample_rate: u32) -> Audio {
+    fn with_output(output: Output, sample_rate: u32, stream_thread: bool) -> Audio {
         Audio {
             output,
             sample_rate,
             files: None,
             clips: HashMap::new(),
+            streamed: HashMap::new(),
+            epoch: 0,
+            streams: Streams::new(stream_thread),
+            panics: HashSet::new(),
             advanced: Duration::ZERO,
             advanced_frames: 0,
             last_step: Duration::ZERO,
@@ -522,36 +691,81 @@ impl Audio {
     }
 
     /// Renders `frames` stereo frames on the headless backend and returns them
-    /// interleaved. `None` on a device (it renders by itself).
+    /// interleaved. `None` on a device (it renders by itself). Streams are
+    /// pumped before each quarter of a second, so they never run dry.
     pub fn render_headless(&mut self, frames: usize) -> Option<Vec<f32>> {
+        if !self.is_headless() {
+            return None;
+        }
+        let piece = self.piece();
+        let mut out = Vec::with_capacity(frames.saturating_mul(2));
+        let mut left = frames;
+        loop {
+            let n = left.min(piece);
+            out.extend(self.render_piece(n));
+            left -= n;
+            if left == 0 {
+                return Some(out);
+            }
+        }
+    }
+
+    /// A quarter of a second of frames: how much the headless backend renders
+    /// at a time, so buffers stay small and streams are pumped in between.
+    fn piece(&self) -> usize {
+        (self.sample_rate as usize / 4).max(1)
+    }
+
+    /// Pumps the streams, then renders `frames` on the headless backend.
+    fn render_piece(&mut self, frames: usize) -> Vec<f32> {
+        self.streams.pump();
         match &mut self.output {
-            Output::Headless(m) => Some(m.manager.backend_mut().render(frames)),
-            Output::Device(_) => None,
+            Output::Headless(m) => m.manager.backend_mut().render(frames),
+            Output::Device(_) => Vec::new(),
         }
     }
 
     /// Moves the audio clock on by `dt`, once a frame: rate fades and doppler
     /// follow it. On the headless backend it also renders `dt` of audio and
     /// drops it, so sounds play on and end, their voices are freed and the
-    /// meters read what plays, as on a device, which renders by itself.
+    /// meters read what plays, as on a device, which renders by itself. Where
+    /// no stream thread runs (the browser, headless runs), it pumps the
+    /// streams (ADR-0066 §4).
     pub fn advance(&mut self, dt: Duration) {
         self.advanced = self.advanced.saturating_add(dt);
         self.last_step = dt;
         if !self.is_headless() {
+            self.streams.pump();
             return;
         }
         let due = self.advanced.as_nanos() * u128::from(self.sample_rate) / 1_000_000_000;
         let due = u64::try_from(due).unwrap_or(u64::MAX);
         let mut frames = due.saturating_sub(self.advanced_frames);
         self.advanced_frames = due;
-        // A long `dt` renders a quarter of a second at a time, so the buffer
-        // stays small.
-        let piece = u64::from(self.sample_rate / 4).max(1);
+        if frames == 0 {
+            self.streams.pump();
+        }
+        let piece = self.piece() as u64;
         while frames > 0 {
             let n = frames.min(piece);
-            self.render_headless(n as usize);
+            self.render_piece(n as usize);
             frames -= n;
         }
+    }
+
+    /// Frames streams have needed while their rings were empty, since this
+    /// audio started: 0 unless decoding fell behind (ADR-0066 §3).
+    pub fn stream_underruns(&mut self) -> u64 {
+        with_mixer!(self, m => {
+            m.underruns + m.voices().map(|v| v.sound.underruns()).sum::<u64>()
+        })
+    }
+
+    /// Makes the streams of `clip` started from now on panic when they decode,
+    /// to test that a panic stops only its own stream. Not for games.
+    #[doc(hidden)]
+    pub fn panic_streams_of(&mut self, clip: &str) {
+        self.panics.insert(clip.to_owned());
     }
 
     /// Sets the directory clip paths are relative to (the project root). Without
@@ -572,66 +786,31 @@ impl Audio {
         self.clips.insert(name.into(), data);
     }
 
-    /// Forgets a clip, so the next use reloads it from its file.
+    /// Forgets a clip, so the next use reloads it from its file (a changed
+    /// file). A stream of it that is opening does not cache the old file.
     pub fn remove_clip(&mut self, name: &str) {
         self.clips.remove(name);
+        self.streamed.remove(name);
+        self.epoch += 1;
     }
 
-    /// True when a clip of this name is loaded.
+    /// True when a clip of this name is decoded and held: a WAV file, an Ogg
+    /// file of 10 s or less, or a registered sound.
     pub fn has_clip(&self, name: &str) -> bool {
         self.clips.contains_key(name)
     }
 
-    /// Loads a clip from `<asset root>/<name>` (a WAV file) if it is not loaded yet.
+    /// Loads a clip if it is not loaded yet: a WAV file, or an Ogg Vorbis file
+    /// of 10 s or less, is decoded and held; a longer Ogg file streams when it
+    /// plays, so it is only opened (ADR-0066).
     ///
     /// # Errors
     ///
     /// [`codes::CLIP_NOT_FOUND`] when there is no such file (or no asset root),
-    /// [`codes::CLIP_DECODE_FAILED`] when it cannot be decoded.
+    /// [`codes::CLIP_DECODE_FAILED`] when it cannot be decoded, and
+    /// [`codes::UNSUPPORTED_AUDIO`] for an Ogg file the engine does not play.
     pub fn load_clip(&mut self, name: &str) -> Result<(), Diagnostic> {
-        self.clip(name).map(|_| ())
-    }
-
-    fn clip(&mut self, name: &str) -> Result<StaticSoundData, Diagnostic> {
-        if let Some(data) = self.clips.get(name) {
-            return Ok(data.clone());
-        }
-        let not_found = |why: &str| {
-            Diagnostic::error(
-                codes::CLIP_NOT_FOUND,
-                format!("audio clip `{name}` not found: {why}"),
-            )
-            .at(Location::file(name))
-        };
-        let Some(files) = &self.files else {
-            return Err(not_found("it is not registered and no asset root is set"));
-        };
-        let hint = "clip names are project-relative paths such as `assets/sfx/pickup.wav`";
-        let file = match files.read_source(name) {
-            Ok(bytes) => bytes,
-            Err(e) if e.is_not_found() => return Err(not_found("no such file").with_hint(hint)),
-            Err(e @ FileError::InvalidPath { .. }) => {
-                return Err(not_found(&e.to_string()).with_hint(hint));
-            }
-            Err(e) => {
-                return Err(Diagnostic::error(
-                    codes::CLIP_DECODE_FAILED,
-                    format!("cannot read audio clip `{name}`: {e}"),
-                )
-                .at(Location::file(name)));
-            }
-        };
-        let decode_failed = |why: String| {
-            Diagnostic::error(
-                codes::CLIP_DECODE_FAILED,
-                format!("cannot decode audio clip `{name}`: {why}"),
-            )
-            .at(Location::file(name))
-            .with_hint("M1 plays WAV files (PCM or float, mono or stereo)")
-        };
-        let data = crate::wav::decode(&file).map_err(|e| decode_failed(e.to_string()))?;
-        self.clips.insert(name.to_owned(), data.clone());
-        Ok(data)
+        self.clip_seconds(name).map(|_| ())
     }
 
     /// The length of a clip in seconds, loading it first if needed (see
@@ -641,7 +820,131 @@ impl Audio {
     ///
     /// As [`Audio::load_clip`].
     pub fn clip_seconds(&mut self, name: &str) -> Result<f64, Diagnostic> {
+        if let Some(data) = self.clips.get(name) {
+            return Ok(data.duration().as_secs_f64());
+        }
+        if let Some(&seconds) = self.streamed.get(name) {
+            return Ok(seconds);
+        }
+        if is_ogg(name) {
+            return self.classify(name);
+        }
         Ok(self.clip(name)?.duration().as_secs_f64())
+    }
+
+    /// The project's files, to read `name` from.
+    fn files_for(&self, name: &str) -> Result<ProjectFiles, Diagnostic> {
+        self.files
+            .clone()
+            .ok_or_else(|| not_found(name, "it is not registered and no asset root is set"))
+    }
+
+    /// Opens an Ogg clip here and now: decodes it whole when it is short, or
+    /// records that it streams. Its length in seconds.
+    fn classify(&mut self, name: &str) -> Result<f64, Diagnostic> {
+        let file = self
+            .files_for(name)?
+            .open(name)
+            .map_err(|e| read_error(name, e))?;
+        let mut reader =
+            VorbisReader::open(BufReader::new(file)).map_err(|e| stream::decode_error(name, e))?;
+        let info = reader.info();
+        if stream::streams(&info) {
+            self.streamed.insert(name.to_owned(), info.seconds());
+        } else {
+            let frames = reader
+                .read_all()
+                .map_err(|e| stream::decode_error(name, e))?;
+            let data = stream::static_data(info.sample_rate, frames.into());
+            self.clips.insert(name.to_owned(), data);
+        }
+        Ok(info.seconds())
+    }
+
+    /// A clip decoded whole, from memory or from its WAV file.
+    fn clip(&mut self, name: &str) -> Result<StaticSoundData, Diagnostic> {
+        if let Some(data) = self.clips.get(name) {
+            return Ok(data.clone());
+        }
+        let file = self
+            .files_for(name)?
+            .read_source(name)
+            .map_err(|e| read_error(name, e))?;
+        let data = crate::wav::decode(&file).map_err(|e| {
+            Diagnostic::error(
+                codes::CLIP_DECODE_FAILED,
+                format!("cannot decode audio clip `{name}`: {e}"),
+            )
+            .at(Location::file(name))
+            .with_hint(
+                "the engine plays WAV files (PCM or float) and Ogg Vorbis files, mono or stereo",
+            )
+        })?;
+        self.clips.insert(name.to_owned(), data.clone());
+        Ok(data)
+    }
+
+    /// What plays for `name`: a decoded clip, or a stream of an Ogg clip that
+    /// is not held decoded, with its pump.
+    fn playable(
+        &mut self,
+        name: &str,
+        looping: bool,
+        volume: Decibels,
+    ) -> Result<(SoundSource, Option<Pump>), Diagnostic> {
+        if !self.clips.contains_key(name) && is_ogg(name) {
+            let files = self.files_for(name)?;
+            if let Err(reason) = re_core::files::ProjectPath::new(name) {
+                return Err(not_found(name, &reason.to_string()));
+            }
+            if !files.is_file(name) {
+                return Err(not_found(name, "no such file"));
+            }
+            if with_mixer!(self, m => m.streams()) >= MAX_STREAMS {
+                return Err(limit(&format!("{MAX_STREAMS} streams play already")));
+            }
+            let panic = self.panics.contains(name);
+            let (pump, data) = stream::open(
+                name,
+                files,
+                looping,
+                volume,
+                &mut self.streams,
+                self.epoch,
+                panic,
+            );
+            return Ok((SoundSource::Stream(data), Some(pump)));
+        }
+        let mut data = self.clip(name)?.volume(volume);
+        if looping {
+            data = data.loop_region(..);
+        }
+        Ok((SoundSource::Static(Box::new(data)), None))
+    }
+
+    /// Takes in what the streams' pumps have found: clips to hold decoded or
+    /// to stream, and failures.
+    fn take_stream_events(&mut self, problems: &mut Vec<Diagnostic>) {
+        for event in self.streams.take_events() {
+            match event {
+                Event::Classified {
+                    clip,
+                    epoch,
+                    seconds,
+                    data,
+                } if epoch == self.epoch => match data {
+                    Some(data) => {
+                        self.clips.insert(clip, *data);
+                    }
+                    None => {
+                        self.streamed.insert(clip, seconds);
+                    }
+                },
+                // The clip changed since the stream opened it.
+                Event::Classified { .. } => {}
+                Event::Problem(d) => problems.push(d),
+            }
+        }
     }
 
     /// The number of sounds started by commands that are still playing.
@@ -662,8 +965,9 @@ impl Audio {
     /// A command that fails does not stop the others; its diagnostic is returned.
     /// Finished sounds are cleaned up first.
     pub fn apply(&mut self, cmds: &[AudioCmd]) -> Vec<Diagnostic> {
-        with_mixer!(self, m => m.prune());
         let mut problems = Vec::new();
+        self.take_stream_events(&mut problems);
+        with_mixer!(self, m => m.prune());
         for cmd in cmds {
             if let Err(d) = self.apply_one(cmd, &mut problems) {
                 problems.push(d);
@@ -674,6 +978,9 @@ impl Audio {
             tween(self.last_step.min(MAX_GLIDE).as_secs_f32()),
         );
         with_mixer!(self, m => m.follow(now, glide));
+        // Without a stream thread, a stream that failed to open just now says
+        // so in this frame.
+        self.take_stream_events(&mut problems);
         problems
     }
 
@@ -723,12 +1030,8 @@ impl Audio {
                 spatial,
                 position,
             } => {
-                let mut data = self
-                    .clip(clip)?
-                    .volume(linear_to_decibels(check_volume(*volume)?));
-                if *looping {
-                    data = data.loop_region(..);
-                }
+                let volume = linear_to_decibels(check_volume(*volume)?);
+                let (data, pump) = self.playable(clip, *looping, volume)?;
                 let position = spatial.then(|| position.to_array());
                 with_mixer!(self, m => {
                     if let Some(old) = m.sources.remove(entity) {
@@ -740,6 +1043,9 @@ impl Audio {
                     let voice = m.play(data, position, &spatial, attenuate, &bus, problems)?;
                     m.sources.insert(*entity, voice);
                 });
+                if let Some(pump) = pump {
+                    self.streams.start(pump);
+                }
             }
             AudioCmd::SetSourceBus { entity, bus } => with_mixer!(self, m => {
                 m.buses.insert(*entity, bus.clone());
@@ -879,13 +1185,15 @@ impl Audio {
         id: Option<u64>,
         problems: &mut Vec<Diagnostic>,
     ) -> Result<(), Diagnostic> {
-        let data = self
-            .clip(clip)?
-            .volume(linear_to_decibels(check_volume(volume)?));
+        let volume = linear_to_decibels(check_volume(volume)?);
+        let (data, pump) = self.playable(clip, false, volume)?;
         with_mixer!(self, m => {
             let voice = m.play(data, position, &Spatial::default(), true, bus, problems)?;
             m.one_shots.push(OneShot { id, voice });
         });
+        if let Some(pump) = pump {
+            self.streams.start(pump);
+        }
         Ok(())
     }
 }

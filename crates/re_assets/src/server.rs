@@ -254,6 +254,11 @@ pub struct ReloadReport {
     pub changed_ids: Vec<AssetId>,
     /// Changed Luau scripts under `scripts/`, for script hot reload.
     pub scripts: Vec<String>,
+    /// Changed audio files (`.wav`, `.ogg`): created, modified or removed,
+    /// and both paths of a rename. Drop the audio's cached clip of each
+    /// (`re_audio`'s `Audio::remove_clip`), so it plays new at its next start
+    /// (ADR-0066 §6).
+    pub audio: Vec<String>,
     /// Loaded assets whose file was deleted. Their last version stays loaded.
     pub removed: Vec<String>,
     /// Re-imports that failed (warnings, RE7050); the last good version stays loaded.
@@ -621,6 +626,15 @@ impl AssetServer {
             if change.is_script() && !report.scripts.iter().any(|s| s == change.path()) {
                 report.scripts.push(change.path().to_owned());
             }
+            let from = match change {
+                AssetChange::Renamed { from, .. } => Some(from.as_str()),
+                _ => None,
+            };
+            for p in from.into_iter().chain([change.path()]) {
+                if crate::is_audio(p) && !report.audio.iter().any(|a| a == p) {
+                    report.audio.push(p.to_owned());
+                }
+            }
             match change {
                 AssetChange::Created(p) | AssetChange::Modified(p) => {
                     // A sidecar change re-imports its file (new settings).
@@ -889,6 +903,18 @@ impl AssetServer {
                 .map(|data| texture::process(data, role, &config))
         })?;
         Ok((data, id))
+    }
+
+    /// The format, channels, rate and length of the audio file at `path`
+    /// (`.wav` or `.ogg`), from its headers (ADR-0066 §6).
+    ///
+    /// # Errors
+    ///
+    /// [`codes::READ_FAILED`] when it cannot be read, and
+    /// [`codes::UNSUPPORTED_AUDIO`] for a file the engine does not play.
+    pub fn audio_info(&self, path: &str) -> Result<crate::AudioInfo, Diagnostic> {
+        let data = self.read_asset(path)?;
+        crate::audio_info(path, &data.bytes)
     }
 
     /// The file at `rel` in whatever form it is stored, as
