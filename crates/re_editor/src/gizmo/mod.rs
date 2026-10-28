@@ -14,7 +14,7 @@
 
 pub(crate) mod math;
 
-use egui::{Color32, Pos2, Sense, Stroke};
+use egui::{Color32, Pos2, Stroke};
 use glam::{Affine3A, Quat, Vec2, Vec3};
 use re_app::App;
 use re_scene::hierarchy::parent;
@@ -24,6 +24,7 @@ use serde_json::{Value as Json, json};
 pub use math::{Delta, GizmoMode, GizmoSettings, Handle, Orientation};
 use math::{Drag, Frame, Screen};
 
+use crate::camera::View;
 use crate::editor::{Action, command};
 
 /// The shortest time between two live edits of one drag, in seconds; every
@@ -88,24 +89,6 @@ fn transforms(world: &World, id: &str) -> Option<(Affine3A, Affine3A, (Vec3, Qua
     Some((own, parent, local))
 }
 
-/// The screen of the viewport at `rect`, from the camera the game view was
-/// last drawn with.
-fn screen(app: &App, rect: egui::Rect) -> Option<Screen> {
-    let cam = app.snapshot().camera;
-    // The snapshot is relative to the render origin; the gizmo works in the
-    // world.
-    let mut world = cam.world;
-    world.w_axis += app.render_origin().extend(0.0);
-    Screen::new(
-        world,
-        cam.fov_y_radians,
-        cam.near,
-        cam.far,
-        Vec2::new(rect.min.x, rect.min.y),
-        Vec2::new(rect.width(), rect.height()),
-    )
-}
-
 fn pos(v: Vec2) -> Pos2 {
     Pos2::new(v.x, v.y)
 }
@@ -115,23 +98,23 @@ fn vec(p: Pos2) -> Vec2 {
 }
 
 impl Gizmo {
-    /// Draws the gizmo for the entity `selected` over the viewport at `rect`
-    /// and handles its drags, pushing the edits that move the entity.
+    /// Draws the gizmo for the entity `selected` over the viewport `view`
+    /// and handles its drags (`response` is the viewport's), pushing the
+    /// edits that move the entity. While `navigating` (the pointer moves the
+    /// camera), no drag starts and no handle is lit.
+    #[allow(clippy::too_many_arguments)]
     pub fn ui(
         &mut self,
         ui: &mut egui::Ui,
-        rect: egui::Rect,
+        response: &egui::Response,
+        view: &View,
         app: &App,
         selected: Option<&str>,
+        navigating: bool,
         actions: &mut Vec<Action>,
     ) {
-        let response = ui.interact(
-            rect,
-            ui.id().with("re_editor.gizmo"),
-            Sense::click_and_drag(),
-        );
         self.hovered = None;
-        let (Some(id), Some(screen)) = (selected, screen(app, rect)) else {
+        let (Some(id), Some(screen)) = (selected, view.screen) else {
             self.drag = None;
             return;
         };
@@ -163,7 +146,7 @@ impl Gizmo {
             {
                 actions.extend(edit(active, now));
             }
-        } else if let Some(c) = cursor {
+        } else if let Some(c) = cursor.filter(|_| !navigating) {
             let frame = Frame::new(
                 &screen,
                 &world,
@@ -210,21 +193,22 @@ impl Gizmo {
         };
         let frame = Frame::new(&screen, &shown, orientation, mode);
         let lit = active.or(self.hovered);
-        draw(ui.painter_at(rect), &screen, &frame, mode, lit);
+        draw(ui.painter_at(view.rect), &screen, &frame, mode, lit);
     }
 }
 
-/// A point over the viewport at `rect` where the gizmo on entity `id` picks
+/// A point over the viewport `view` where the gizmo on entity `id` picks
 /// `handle`, in egui points, or `None` when that handle is not shown (no
 /// such entity, behind the camera, or not a handle of this mode).
 pub(crate) fn handle_point(
     app: &App,
-    rect: egui::Rect,
+    view: &View,
     settings: &GizmoSettings,
     id: &str,
     handle: Handle,
 ) -> Option<Pos2> {
-    let screen = screen(app, rect)?;
+    let screen = view.screen?;
+    let rect = view.rect;
     let (world, _, _) = transforms(app.world(), id)?;
     let frame = Frame::new(&screen, &world, settings.orientation, settings.mode);
     let mut candidates = vec![frame.origin];

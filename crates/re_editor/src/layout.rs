@@ -1,10 +1,13 @@
-//! The docked panel layout and the gizmo settings, saved per project in
-//! `.real/editor/layout.json` (ADR-0044).
+//! The editor's state saved per project in `.real/editor/layout.json`
+//! (ADR-0044 and its amendment for WP42, §1): the docked panel layout, the
+//! gizmo settings, the editor camera, the view's toggles, the selection and
+//! each panel's own view state.
 //!
-//! The layout is UI state, not project content: it is not a command, not in
-//! the undo history, and `.real/` is not under version control. A missing
+//! The layout is editor state, not project content: it is not a command, not
+//! in the undo history, and `.real/` is not under version control. A missing
 //! file gives the default layout; a file that cannot be read gives the
-//! default layout and an `RE8804` warning in the console.
+//! default layout and an `RE8804` warning in the console. The editor reads
+//! version 1 and 2 files and writes version 2.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -12,9 +15,12 @@ use std::path::{Path, PathBuf};
 use egui_dock::DockState;
 use re_core::Diagnostic;
 use serde::{Deserialize, Serialize};
+use serde_json::Value as Json;
 
+use crate::camera::EditorCamera;
 use crate::codes;
 use crate::gizmo::GizmoSettings;
+use crate::overlay::ViewSettings;
 
 /// A dockable panel. Each appears once in the layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -61,11 +67,35 @@ impl PanelId {
     }
 }
 
-/// The version of the layout file this editor writes.
-pub const LAYOUT_VERSION: u32 = 1;
+/// The version of the layout file this editor writes; it also reads
+/// version 1 (no camera, view, selection or panel state).
+pub const LAYOUT_VERSION: u32 = 2;
 
 /// The node canvas's collapsed nodes: node ids by graph file path.
 pub type Collapsed = BTreeMap<String, BTreeSet<String>>;
+
+/// Each panel's own view state, by panel id: the panel reads its entry with
+/// its own types and takes its defaults when the entry is missing or does
+/// not parse. Entries this editor does not know are kept.
+pub type PanelStates = BTreeMap<String, Json>;
+
+/// The selection as saved: restored when the project is opened again, minus
+/// the entities that no longer exist.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Selection {
+    /// The selected entities' ids, in the order they were selected.
+    pub ids: Vec<String>,
+    /// The active entity, the one selected last (one of `ids`).
+    pub active: Option<String>,
+}
+
+impl Selection {
+    /// Nothing selected.
+    pub fn is_empty(&self) -> bool {
+        self.ids.is_empty() && self.active.is_none()
+    }
+}
 
 /// A project's saved editor layout.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -79,6 +109,56 @@ pub struct Layout {
     /// graph file.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub collapsed: Collapsed,
+    /// The editor camera; `None` until the editor has had one, which then
+    /// starts where the game's camera is. A camera that is not finite is
+    /// not written.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "finite_camera"
+    )]
+    pub camera: Option<EditorCamera>,
+    /// What the view shows: the overlays, and whether it looks through the
+    /// game's camera.
+    #[serde(default)]
+    pub view: ViewSettings,
+    /// The selection.
+    #[serde(default, skip_serializing_if = "Selection::is_empty")]
+    pub selection: Selection,
+    /// Each panel's own view state.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub panels: PanelStates,
+}
+
+impl Layout {
+    /// The default layout ([`default_dock`]), with default settings and
+    /// nothing selected.
+    pub fn new() -> Layout {
+        Layout {
+            dock: default_dock(),
+            gizmo: GizmoSettings::default(),
+            collapsed: Collapsed::new(),
+            camera: None,
+            view: ViewSettings::default(),
+            selection: Selection::default(),
+            panels: PanelStates::new(),
+        }
+    }
+}
+
+impl Default for Layout {
+    fn default() -> Self {
+        Layout::new()
+    }
+}
+
+/// Writes `camera` when it is finite, else `null` (read back as none):
+/// JSON has no NaN.
+fn finite_camera<S: serde::Serializer>(
+    camera: &Option<EditorCamera>,
+    s: S,
+) -> Result<S::Ok, S::Error> {
+    camera.filter(EditorCamera::is_finite).serialize(s)
 }
 
 /// The file's contents.
@@ -135,11 +215,11 @@ pub fn load(root: &Path) -> Result<Option<Layout>, Diagnostic> {
     };
     let file: LayoutFile =
         serde_json::from_str(&text).map_err(|e| bad_layout(&path, &e.to_string()))?;
-    if file.version != LAYOUT_VERSION {
+    if !(1..=LAYOUT_VERSION).contains(&file.version) {
         return Err(bad_layout(
             &path,
             &format!(
-                "layout version {} (this editor reads {LAYOUT_VERSION})",
+                "layout version {} (this editor reads 1 to {LAYOUT_VERSION})",
                 file.version
             ),
         ));
@@ -150,21 +230,19 @@ pub fn load(root: &Path) -> Result<Option<Layout>, Diagnostic> {
 }
 
 /// The JSON written for a layout.
-pub fn to_json(dock: &DockState<PanelId>, gizmo: &GizmoSettings, collapsed: &Collapsed) -> String {
+pub fn to_json(layout: &Layout) -> String {
     #[derive(Serialize)]
     struct Out<'a> {
         version: u32,
-        dock: &'a DockState<PanelId>,
-        gizmo: &'a GizmoSettings,
-        #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-        collapsed: &'a Collapsed,
+        #[serde(flatten)]
+        layout: &'a Layout,
     }
     // Node rectangles are recomputed every frame from the split fractions;
     // they are written as zero, so resizing the window is not a change, and
     // because a node never drawn has an infinite rectangle, which JSON
     // cannot hold.
-    let mut dock = dock.clone();
-    for (_, node) in dock.iter_all_nodes_mut() {
+    let mut layout = layout.clone();
+    for (_, node) in layout.dock.iter_all_nodes_mut() {
         node.set_rect(egui::Rect::ZERO);
         if let egui_dock::Node::Leaf(leaf) = node {
             leaf.viewport = egui::Rect::ZERO;
@@ -172,9 +250,7 @@ pub fn to_json(dock: &DockState<PanelId>, gizmo: &GizmoSettings, collapsed: &Col
     }
     let mut text = serde_json::to_string_pretty(&Out {
         version: LAYOUT_VERSION,
-        dock: &dock,
-        gizmo,
-        collapsed,
+        layout: &layout,
     })
     .expect("a layout always serializes");
     text.push('\n');
@@ -228,16 +304,49 @@ mod tests {
             snap: true,
             ..GizmoSettings::default()
         };
-        let mut dock = default_dock();
-        dock.main_surface_mut().push_to_first_leaf(PanelId::Console); // a duplicate
-        let collapsed = Collapsed::from([(
-            "graphs/a.graph.json".to_string(),
-            BTreeSet::from(["h".to_string()]),
-        )]);
-        save(dir.path(), &to_json(&dock, &gizmo, &collapsed)).unwrap();
+        let mut layout = Layout {
+            gizmo,
+            collapsed: Collapsed::from([(
+                "graphs/a.graph.json".to_string(),
+                BTreeSet::from(["h".to_string()]),
+            )]),
+            camera: Some(EditorCamera {
+                pivot: glam::Vec3::new(1.5, -2.0, 1e5),
+                yaw: 0.1,
+                pitch: -0.7,
+                distance: 3.25,
+                fov_y_deg: 50.0,
+                speed: 0.3,
+            }),
+            view: ViewSettings {
+                game_camera: true,
+                grid: false,
+                ..ViewSettings::default()
+            },
+            selection: Selection {
+                ids: vec!["a".to_string(), "b".to_string()],
+                active: Some("b".to_string()),
+            },
+            panels: PanelStates::from([(
+                "Assets".to_string(),
+                serde_json::json!({ "folder": "models" }),
+            )]),
+            ..Layout::new()
+        };
+        layout
+            .dock
+            .main_surface_mut()
+            .push_to_first_leaf(PanelId::Console); // a duplicate
+        let text = to_json(&layout);
+        assert!(text.contains("\"version\": 2"), "{text}");
+        save(dir.path(), &text).unwrap();
         let back = load(dir.path()).unwrap().unwrap();
-        assert_eq!(back.gizmo, gizmo);
-        assert_eq!(back.collapsed, collapsed);
+        assert_eq!(back.gizmo, layout.gizmo);
+        assert_eq!(back.collapsed, layout.collapsed);
+        assert_eq!(back.camera, layout.camera);
+        assert_eq!(back.view, layout.view);
+        assert_eq!(back.selection, layout.selection);
+        assert_eq!(back.panels, layout.panels);
         assert_eq!(
             back.dock
                 .iter_all_tabs()
@@ -245,6 +354,9 @@ mod tests {
                 .count(),
             1
         );
+        // Written again, it is the same text: the file changes only when
+        // the layout does.
+        assert_eq!(to_json(&back), to_json(&load(dir.path()).unwrap().unwrap()));
 
         std::fs::write(
             layout_path(dir.path()),
@@ -254,12 +366,10 @@ mod tests {
         let e = load(dir.path()).err().unwrap();
         assert_eq!(e.code, codes::LAYOUT_UNREADABLE);
         // An unknown panel name (a newer editor's layout) is refused, not guessed.
-        let text = to_json(&default_dock(), &gizmo, &Collapsed::new())
-            .replace("\"Console\"", "\"Profiler\"");
+        let text = to_json(&Layout::new()).replace("\"Console\"", "\"Profiler\"");
         std::fs::write(layout_path(dir.path()), text).unwrap();
         assert!(load(dir.path()).is_err());
-        let text = to_json(&default_dock(), &gizmo, &Collapsed::new())
-            .replace("\"version\": 1", "\"version\": 9");
+        let text = to_json(&Layout::new()).replace("\"version\": 2", "\"version\": 9");
         std::fs::write(layout_path(dir.path()), text).unwrap();
         assert!(
             load(dir.path())
@@ -268,5 +378,38 @@ mod tests {
                 .message
                 .contains("version 9")
         );
+    }
+
+    /// A version 1 file (before the editor camera) is read, with the
+    /// defaults for what it does not hold.
+    #[test]
+    fn a_version_1_layout_is_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let gizmo = GizmoSettings {
+            snap: true,
+            ..GizmoSettings::default()
+        };
+        let v2 = to_json(&Layout {
+            gizmo,
+            ..Layout::new()
+        });
+        let v1 = v2.replace("\"version\": 2", "\"version\": 1");
+        // Version 1 had only the dock, the gizmo and the collapsed nodes.
+        let mut json: serde_json::Value = serde_json::from_str(&v1).unwrap();
+        let fields: BTreeSet<&str> = json
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(fields, BTreeSet::from(["dock", "gizmo", "version", "view"]));
+        json.as_object_mut().unwrap().remove("view");
+        save(dir.path(), &json.to_string()).unwrap();
+        let back = load(dir.path()).unwrap().unwrap();
+        assert_eq!(back.gizmo, gizmo);
+        assert_eq!(back.camera, None);
+        assert_eq!(back.view, ViewSettings::default());
+        assert!(back.selection.is_empty() && back.panels.is_empty());
+        assert!(to_json(&back).contains("\"version\": 2"));
     }
 }

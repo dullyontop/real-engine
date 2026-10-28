@@ -1,32 +1,39 @@
 //! The forward renderer: GPU resources behind generation-checked handles, the
-//! scene pass, the shadow pass, debug lines and egui painting.
+//! frame's passes and egui painting.
+//!
+//! A frame is prepared (`prepare`: items resolved, culled and batched, the
+//! shadow cascades fitted, the frame's buffers written), then recorded: the
+//! shadow cascades (`shadow`), the scene pass (`scene`), and the post chain,
+//! highlights and on-top world quads (`post`).
 
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::mem::size_of;
 use std::num::NonZeroU64;
 use std::time::Duration;
 
-use glam::{Mat4, Vec2, Vec3, Vec4};
+use glam::{Mat4, Vec3};
 use re_core::Diagnostic;
 use re_core::time::Instant;
 use re_types::mesh::{Aabb, MeshData, SkinWeights};
 use re_types::render::{
-    AlphaMode, DrawFlags, MaterialDesc, MaterialHandle, MeshHandle, QuadDepth, RenderSnapshot,
-    TextureData, TextureFormat, TextureHandle, TextureRef,
+    AlphaMode, MaterialDesc, MaterialHandle, MeshHandle, RenderSnapshot, TextureData,
+    TextureFormat, TextureHandle, TextureRef,
 };
 
-use crate::extras::{self, EffectVertex, MAX_HIGHLIGHTS, SceneExtras};
-use crate::frame::{
-    self, FrameUniform, InstanceRaw, LineVertex, MaterialUniform, PointLightRaw, SpotLightRaw,
-};
+use crate::extras::{EffectVertex, MAX_HIGHLIGHTS, SceneExtras};
+use crate::frame::{self, FrameUniform, InstanceRaw, LineVertex, MaterialUniform};
 use crate::gpu::Gpu;
-use crate::post::{DEPTH_FORMAT, HDR_FORMAT, PostChain, PostFrame};
+use crate::post::{DEPTH_COMPARE, DEPTH_COMPARE_EQUAL, DEPTH_FORMAT, HDR_FORMAT, PostChain};
 use crate::slots::Slots;
 use crate::ui::{UiFrame, UiPainter};
 use crate::{capture, codes, shader};
 
+mod post;
+mod prepare;
 mod reload;
+mod scene;
+mod shadow;
 
 pub use reload::ShaderReload;
 
@@ -297,9 +304,11 @@ struct Skinning {
     shadow_layout: wgpu::PipelineLayout,
     /// frame, palette: kept to rebuild `mask_pipelines`.
     mask_layout: wgpu::PipelineLayout,
+    /// The palette's bind group, for the buffer and the size it binds.
+    palette_group: Option<(wgpu::Buffer, u64, wgpu::BindGroup)>,
 }
 
-/// The bit of [`Batch::variant`] that marks a skinned batch.
+/// The bit of [`prepare::Batch::variant`] that marks a skinned batch.
 const SKINNED: usize = 4;
 
 /// The largest joint palette: palette indices travel in an instance's f32
@@ -354,32 +363,6 @@ struct Defaults {
     flat_normal: wgpu::TextureView,
 }
 
-/// A resource slot: `(index, generation)`.
-type Slot = (u32, u32);
-
-/// One batch of the scene pass: consecutive instances of one mesh and material.
-struct Batch {
-    /// The forward pipeline (`double_sided | blend << 1 | SKINNED`); the shadow
-    /// and mask batches use only `SKINNED`.
-    variant: usize,
-    material: Slot,
-    mesh: Slot,
-    first_instance: u32,
-    instances: u32,
-}
-
-/// A draw item or a skinned draw item, as the frame resolves them.
-#[derive(Clone, Copy)]
-struct Draw {
-    entity: u64,
-    mesh: MeshHandle,
-    material: MaterialHandle,
-    world: Mat4,
-    flags: DrawFlags,
-    /// A skinned item's palette start, joint count and world bounds.
-    skinned: Option<(u32, u32, Aabb)>,
-}
-
 /// The sun's shadow at one point, from [`Renderer::probe_sun_shadow`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ShadowProbe {
@@ -425,6 +408,8 @@ pub struct Renderer {
     highlight_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
     mask_targets: Option<MaskTargets>,
     highlight_buffer: wgpu::Buffer,
+    /// The frame uniform for the highlight mask's vertex stage.
+    mask_frame_group: wgpu::BindGroup,
     pipelines: HashMap<u32, ScenePipelines>,
     /// On-top world quads, by output format.
     top_quad_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
@@ -442,7 +427,13 @@ pub struct Renderer {
     lines: GrowBuffer,
     effect_vertices: GrowBuffer,
     effect_indices: GrowBuffer,
+    /// The quads whose indices `effect_indices` holds.
+    effect_index_quads: usize,
     quad_uniforms: GrowBuffer,
+    /// The frame being drawn, its lists kept between frames.
+    frame: prepare::PreparedFrame,
+    /// Bind groups kept by their inputs.
+    bind_groups: prepare::BindGroups,
     defaults: Defaults,
     meshes: Slots<GpuMesh>,
     textures: Slots<GpuTexture>,
@@ -511,7 +502,7 @@ fn mask_pipelines(
         Some(skin_layout()),
     ];
     let buffers = if skinned { &buffers[..] } else { &buffers[..2] };
-    [None, Some(wgpu::CompareFunction::LessEqual)]
+    [DEPTH_COMPARE, DEPTH_COMPARE_EQUAL]
         .into_iter()
         .enumerate()
         .map(|(i, compare)| {
@@ -532,7 +523,7 @@ fn mask_pipelines(
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: DEPTH_FORMAT,
                     depth_write_enabled: Some(true),
-                    depth_compare: Some(compare.unwrap_or(wgpu::CompareFunction::Less)),
+                    depth_compare: Some(compare),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
@@ -1140,6 +1131,7 @@ impl Renderer {
                 forward_layout,
                 shadow_layout,
                 mask_layout,
+                palette_group: None,
             }
         });
         let mask_pipelines = mask_pipelines(&device, &layouts.mask, &mask_shader, false);
@@ -1149,6 +1141,14 @@ impl Renderer {
             size: size_of::<FrameUniform>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
+        });
+        let mask_frame_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("re_render mask frame"),
+            layout: &layouts.shadow_frame,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: frame_buffer.as_entire_binding(),
+            }],
         });
         let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("re_render shadow"),
@@ -1217,7 +1217,10 @@ impl Renderer {
                 "re_render effect indices",
                 wgpu::BufferUsages::INDEX,
             ),
+            effect_index_quads: 0,
             quad_uniforms: GrowBuffer::new(&device, "re_render quads", wgpu::BufferUsages::UNIFORM),
+            frame: prepare::PreparedFrame::default(),
+            bind_groups: prepare::BindGroups::default(),
             cascade_uniforms: GrowBuffer::new(
                 &device,
                 "re_render cascades",
@@ -1241,6 +1244,7 @@ impl Renderer {
             highlight_pipelines: HashMap::new(),
             mask_targets: None,
             highlight_buffer,
+            mask_frame_group,
             ui: UiPainter::new(&device),
             draw_time: DrawTime::default(),
             adapter: gpu.adapter.clone(),
@@ -1425,7 +1429,7 @@ impl Renderer {
                     depth_stencil: Some(wgpu::DepthStencilState {
                         format: DEPTH_FORMAT,
                         depth_write_enabled: Some(!blend),
-                        depth_compare: Some(wgpu::CompareFunction::Less),
+                        depth_compare: Some(DEPTH_COMPARE),
                         stencil: wgpu::StencilState::default(),
                         bias: wgpu::DepthBiasState::default(),
                     }),
@@ -1469,7 +1473,7 @@ impl Renderer {
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: DEPTH_FORMAT,
                     depth_write_enabled: Some(false),
-                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                    depth_compare: Some(DEPTH_COMPARE_EQUAL),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
@@ -1502,7 +1506,7 @@ impl Renderer {
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: DEPTH_FORMAT,
                     depth_write_enabled: Some(false),
-                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    depth_compare: Some(DEPTH_COMPARE),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
@@ -1590,7 +1594,7 @@ impl Renderer {
                 depth_stencil: tested.then_some(wgpu::DepthStencilState {
                     format: DEPTH_FORMAT,
                     depth_write_enabled: Some(false),
-                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    depth_compare: Some(DEPTH_COMPARE),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
@@ -2131,7 +2135,7 @@ impl Renderer {
     pub fn release_texture(&mut self, handle: TextureHandle) -> Result<(), Diagnostic> {
         self.textures
             .remove(handle.index, handle.generation)
-            .map(drop)
+            .map(|_| self.bind_groups.forget_texture(handle.index))
             .ok_or_else(|| {
                 stale(
                     codes::STALE_TEXTURE,
@@ -2241,1019 +2245,45 @@ impl Renderer {
         extras: &SceneExtras,
     ) -> Result<FrameReport, Diagnostic> {
         let texture = target.texture();
-        let (width, height, format) = (texture.width(), texture.height(), texture.format());
         self.check_target(texture)?;
-        let aspect = width as f32 / height as f32;
-        let projection = frame::projection(&snapshot.camera, aspect)?;
-        let view_proj = projection * snapshot.camera.view();
-        let camera_pos = snapshot.camera.position();
-
-        let shadows = frame::sanitize_shadows(&snapshot.shadows);
-        let layers = u32::from(shadows.cascades);
-        let map_size = self
-            .settings
-            .shadow_map_size
-            .clamp(1, device.limits().max_texture_dimension_2d);
-        if self.shadow.size != map_size || self.shadow.layers != layers {
-            self.shadow = Self::create_shadow_map(
-                device,
-                &self.layouts,
-                &self.frame_buffer,
-                &self.shadow_sampler,
-                map_size,
-                layers,
-            );
-        }
-        let frustum = frame::Frustum::new(&view_proj);
-        let samples = self.sample_count();
+        let size = (texture.width(), texture.height());
+        let view = prepare::View::new(snapshot, size)?;
         let mut report = FrameReport::default();
-        report.stats.samples = samples;
-
-        // Each highlighted entity's highlight number (1-based; the first wins).
-        let mut highlight_of: HashMap<u64, u8> = HashMap::new();
-        if extras.highlights.len() > MAX_HIGHLIGHTS {
-            report.warnings.push(
-                Diagnostic::warning(
-                    codes::TOO_MANY_HIGHLIGHTS,
-                    format!(
-                        "{} highlights in the frame; only the first {MAX_HIGHLIGHTS} are drawn",
-                        extras.highlights.len()
-                    ),
-                )
-                .with_hint("remove highlights that are not needed, or group objects under one"),
-            );
-        }
-        let drawn_highlights = &extras.highlights[..extras.highlights.len().min(MAX_HIGHLIGHTS)];
-        for (n, h) in drawn_highlights.iter().enumerate() {
-            for e in &h.entities {
-                highlight_of.entry(e.0).or_insert(n as u8 + 1);
-            }
-        }
-        let mut highlighted: Vec<(bool, u8, usize, u32, usize)> = Vec::new();
-
-        // Resolve every item; skip (and report once) the ones with stale handles.
-        let mut reported = HashSet::new();
-        let mut opaque = Vec::new();
-        let mut blended = Vec::new();
-        // Shadow casters and their world bounds (`None`: cast into every cascade).
-        let mut casters: Vec<(usize, u32, usize, Option<Aabb>)> = Vec::new();
-        let draws: Vec<Draw> = snapshot
-            .items
-            .iter()
-            .map(|item| Draw {
-                entity: item.entity.0,
-                mesh: item.mesh,
-                material: item.material,
-                world: item.world,
-                flags: item.flags,
-                skinned: None,
-            })
-            .chain(snapshot.skinned.iter().map(|item| Draw {
-                entity: item.entity.0,
-                mesh: item.mesh,
-                material: item.material,
-                world: item.world,
-                flags: item.flags,
-                skinned: Some((item.palette, item.joints, item.bounds)),
-            }))
-            .collect();
-        // The palette the skinned items index, when the renderer can skin.
-        let palette_limit = self.skinning.as_ref().map(|_| {
-            let binding = device.limits().max_storage_buffer_binding_size;
-            MAX_PALETTE.min((binding / size_of::<Mat4>() as u64) as usize)
-        });
-        let palette_len = snapshot.joint_palette.len();
-        // The instance's palette start, per draw; `None` draws unskinned.
-        let mut palettes: Vec<Option<u32>> = vec![None; draws.len()];
-        for (i, item) in draws.iter().enumerate() {
-            let mesh = self.meshes.get(item.mesh.index, item.mesh.generation);
-            let material = self
-                .materials
-                .get(item.material.index, item.material.generation);
-            let (Some(mesh), Some(material)) = (mesh, material) else {
-                report.stats.items_skipped += 1;
-                if mesh.is_none() && reported.insert((0, item.mesh.index, item.mesh.generation)) {
-                    report.warnings.push(stale_item(
-                        codes::STALE_MESH,
-                        "mesh",
-                        item.mesh.index,
-                        item.mesh.generation,
-                        item.entity,
-                    ));
-                }
-                if material.is_none()
-                    && reported.insert((1, item.material.index, item.material.generation))
-                {
-                    report.warnings.push(stale_item(
-                        codes::STALE_MATERIAL,
-                        "material",
-                        item.material.index,
-                        item.material.generation,
-                        item.entity,
-                    ));
-                }
-                continue;
-            };
-            let mut world_box = mesh.aabb.map(|b| frame::transform_aabb(&b, &item.world));
-            if let Some((first, joints, bounds)) = item.skinned {
-                match palette_limit {
-                    None if !self.warned_no_skinning => {
-                        self.warned_no_skinning = true;
-                        report.warnings.push(
-                            Diagnostic::warning(
-                                codes::SKINNING_UNSUPPORTED,
-                                "this adapter cannot read storage buffers in vertex shaders; \
-                                 skinned meshes are drawn in their bind pose",
-                            )
-                            .with_hint("use Vulkan, Metal, DirectX 12 or desktop GL 4.3+"),
-                        );
-                    }
-                    None => {}
-                    Some(limit) => {
-                        let end = u64::from(first) + u64::from(joints);
-                        let problem = match &mesh.skin {
-                            None => Some(
-                                "its mesh has no skin (upload it with upload_skinned_mesh)"
-                                    .to_string(),
-                            ),
-                            Some(_) if palette_len > limit => Some(format!(
-                                "the joint palette has {palette_len} matrices, more than \
-                                 the {limit} this renderer can bind"
-                            )),
-                            Some(_) if end > palette_len as u64 => Some(format!(
-                                "it uses palette {first}..{end}, but the joint palette has \
-                                 {palette_len} matrices"
-                            )),
-                            Some(skin) if joints < skin.joints_used => Some(format!(
-                                "it has {joints} joints, but its mesh's weights use {}",
-                                skin.joints_used
-                            )),
-                            Some(_) => None,
-                        };
-                        if let Some(problem) = problem {
-                            report.stats.items_skipped += 1;
-                            report.warnings.push(Diagnostic::warning(
-                                codes::BAD_SKINNED_ITEM,
-                                format!(
-                                    "skinned item of entity {} is not drawn: {problem}",
-                                    item.entity
-                                ),
-                            ));
-                            continue;
-                        }
-                        palettes[i] = Some(first);
-                        let finite = bounds.min.is_finite() && bounds.max.is_finite();
-                        world_box = finite.then_some(bounds);
-                    }
-                }
-                report.stats.skinned_items += u32::from(palettes[i].is_some());
-            }
-            let in_view = world_box.is_none_or(|b| frustum.intersects(&b));
-            if in_view {
-                report.stats.items_drawn += 1;
-            } else {
-                report.stats.items_culled += 1;
-            }
-            if mesh.index_count == 0 {
-                continue;
-            }
-            let skinned = if palettes[i].is_some() { SKINNED } else { 0 };
-            if item.flags.contains(DrawFlags::CAST_SHADOWS) {
-                casters.push((skinned, item.mesh.index, i, world_box));
-            }
-            if let Some(&n) = highlight_of.get(&item.entity) {
-                let on_top = drawn_highlights[usize::from(n - 1)].always_on_top;
-                highlighted.push((on_top, n, skinned, item.mesh.index, i));
-            }
-            let key = (
-                material.variant() | skinned,
-                item.material.index,
-                item.mesh.index,
-            );
-            if !in_view {
-                continue;
-            }
-            if material.blend {
-                let depth = world_box
-                    .map_or(item.world.w_axis.truncate(), |b| b.center())
-                    .distance_squared(camera_pos);
-                blended.push((depth, 0u8, i, key));
-            } else {
-                opaque.push((key, i));
-            }
-        }
-        // World quads: depth-tested ones are sorted with the blended items.
-        let mut quad_uniforms: Vec<QuadUniform> = Vec::new();
-        let mut quad_textures: Vec<wgpu::TextureView> = Vec::new();
-        let mut top_quads: Vec<usize> = Vec::new();
-        for q in &snapshot.quads {
-            let Some(texture) = self.textures.get(q.texture.index, q.texture.generation) else {
-                report.stats.items_skipped += 1;
-                if reported.insert((2, q.texture.index, q.texture.generation)) {
-                    report.warnings.push(stale_item(
-                        codes::STALE_TEXTURE,
-                        "texture",
-                        q.texture.index,
-                        q.texture.generation,
-                        q.entity.0,
-                    ));
-                }
-                continue;
-            };
-            let bias = match q.depth {
-                QuadDepth::Tested { bias } => Some(bias),
-                QuadDepth::OnTop => None,
-            };
-            let values = [q.light_influence, q.brightness, bias.unwrap_or(0.0)];
-            if !q.world.is_finite() || !q.size.is_finite() || values.iter().any(|v| !v.is_finite())
-            {
-                continue;
-            }
-            let center = q.world.w_axis.truncate();
-            let towards_camera = (camera_pos - center).normalize_or_zero() * bias.unwrap_or(0.0);
-            let world = Mat4::from_translation(towards_camera)
-                * q.world
-                * Mat4::from_scale(q.size.extend(1.0));
-            let n = quad_uniforms.len();
-            quad_uniforms.push(QuadUniform {
-                world: world.to_cols_array_2d(),
-                params: [
-                    q.light_influence,
-                    q.brightness,
-                    f32::from(u8::from(bias.is_some())),
-                    0.0,
-                ],
-            });
-            quad_textures.push(texture.view.clone());
-            if bias.is_some() {
-                let depth = (center + towards_camera).distance_squared(camera_pos);
-                blended.push((depth, 1u8, n, (0, 0, 0)));
-            } else {
-                top_quads.push(n);
-            }
-        }
-        report.stats.world_quads = quad_uniforms.len() as u32;
-
-        // Batch by pipeline, material and mesh; draw blended items back to front.
-        opaque.sort_by_key(|&(key, i)| (key, i));
-        blended.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
-        casters.sort_unstable_by_key(|&(skinned, mesh, i, _)| (skinned, mesh, i));
-
-        let mut instances: Vec<InstanceRaw> =
-            Vec::with_capacity(opaque.len() + blended.len() + casters.len());
-        let mut batches: Vec<Batch> = Vec::new();
-        let opaque_count = opaque.len();
-        let mut opaque_batches = 0;
-        // Depth-tested quads, each with the batch it is drawn before.
-        let mut tested_quads: Vec<(usize, usize)> = Vec::new();
-        let ordered = opaque
-            .iter()
-            .map(|&(key, i)| (0, key, i))
-            .chain(blended.iter().map(|&(_, kind, i, key)| (kind, key, i)));
-        let mut split = false;
-        for (n, (kind, key, i)) in ordered.enumerate() {
-            if n == opaque_count {
-                opaque_batches = batches.len();
-            }
-            if kind == 1 {
-                tested_quads.push((batches.len(), i));
-                split = true;
-                continue;
-            }
-            let item = &draws[i];
-            instances.push(
-                InstanceRaw::new(
-                    item.world,
-                    item.flags.contains(DrawFlags::RECEIVE_SHADOWS),
-                    item.flags.contains(DrawFlags::SELECTED),
-                )
-                .with_palette(palettes[i]),
-            );
-            let material = (item.material.index, item.material.generation);
-            let mesh = (item.mesh.index, item.mesh.generation);
-            match batches.last_mut() {
-                Some(b)
-                    if !split && b.variant == key.0 && b.material == material && b.mesh == mesh =>
-                {
-                    b.instances += 1
-                }
-                _ => batches.push(Batch {
-                    variant: key.0,
-                    material,
-                    mesh,
-                    first_instance: instances.len() as u32 - 1,
-                    instances: 1,
-                }),
-            }
-            split = false;
-        }
-        if opaque_count == instances.len() {
-            opaque_batches = batches.len();
-        }
-
-        // Highlighted items, the occluded ones first, batched by mesh.
-        highlighted.sort_unstable();
-        let mut highlight_batches: Vec<(bool, Batch)> = Vec::new();
-        for &(on_top, n, skinned, _, i) in &highlighted {
-            let item = &draws[i];
-            let mut raw = InstanceRaw::new(item.world, false, false).with_palette(palettes[i]);
-            raw.flags[2] = f32::from(n);
-            instances.push(raw);
-            let mesh = (item.mesh.index, item.mesh.generation);
-            match highlight_batches.last_mut() {
-                Some((top, b)) if *top == on_top && b.variant == skinned && b.mesh == mesh => {
-                    b.instances += 1
-                }
-                _ => highlight_batches.push((
-                    on_top,
-                    Batch {
-                        variant: skinned,
-                        material: (0, 0),
-                        mesh,
-                        first_instance: instances.len() as u32 - 1,
-                        instances: 1,
-                    },
-                )),
-            }
-        }
-
-        // Lights and the shadow fit.
-        let exposure = Some(snapshot.post.exposure)
-            .filter(|e| e.is_finite() && *e >= 0.0)
-            .unwrap_or(1.0);
-        let lights = frame::select_lights(&snapshot.lights, camera_pos, exposure);
-        report.warnings.extend(lights.warnings);
-        report.stats.point_lights = lights.points.len() as u32;
-        // The cascades: each one's light matrix, texel size and caster batches.
-        let mut cascades: Vec<(Mat4, f32, Vec<Batch>)> = Vec::new();
-        let shadow_far = shadows
-            .distance
-            .min(snapshot.camera.far)
-            .max(snapshot.camera.near * 2.0);
-        let splits = frame::cascade_splits(
-            snapshot.camera.near,
-            shadow_far,
-            usize::from(shadows.cascades),
-            shadows.split_lambda,
+        // The frame's lists are taken for the frame and put back after it.
+        let mut frame = std::mem::take(&mut self.frame);
+        self.prepare(
+            device,
+            queue,
+            &mut frame,
+            &view,
+            size,
+            snapshot,
+            extras,
+            &mut report,
         );
-        if let Some(sun) = lights.sun.filter(|s| s.shadows && !casters.is_empty()) {
-            let view = frame::light_view(sun.direction);
-            let light_boxes: Vec<Option<Aabb>> = casters
-                .iter()
-                .map(|c| c.3.map(|b| frame::transform_aabb(&b, &view)))
-                .collect();
-            let mut near = snapshot.camera.near;
-            for &far in &splits[..usize::from(shadows.cascades)] {
-                let fit = frame::fit_cascade(
-                    &view,
-                    &snapshot.camera,
-                    &projection,
-                    near,
-                    far,
-                    self.shadow.size,
-                );
-                near = far;
-                // The nearest depth along the light of the cascade's casters.
-                let mut caster_depth: Option<f32> = None;
-                let mut batches: Vec<Batch> = Vec::new();
-                for (&(skinned, _, i, _), light_box) in casters.iter().zip(&light_boxes) {
-                    if let Some(b) = light_box {
-                        if !fit.takes_caster(b) {
-                            continue;
-                        }
-                        caster_depth = Some(caster_depth.map_or(-b.max.z, |d| d.min(-b.max.z)));
-                    }
-                    let item = &draws[i];
-                    instances
-                        .push(InstanceRaw::new(item.world, false, false).with_palette(palettes[i]));
-                    let mesh = (item.mesh.index, item.mesh.generation);
-                    match batches.last_mut() {
-                        Some(b) if b.variant == skinned && b.mesh == mesh => b.instances += 1,
-                        _ => batches.push(Batch {
-                            variant: skinned,
-                            material: (0, 0),
-                            mesh,
-                            first_instance: instances.len() as u32 - 1,
-                            instances: 1,
-                        }),
-                    }
-                }
-                cascades.push((
-                    fit.light_view_proj(&view, caster_depth),
-                    fit.texel_world,
-                    batches,
-                ));
-            }
-        }
-        let shadowed = !cascades.is_empty();
-        report.stats.shadow_cascades = cascades.len() as u32;
-        let mut cascade_matrices = [Mat4::IDENTITY.to_cols_array_2d(); frame::MAX_CASCADES];
-        let mut cascade_offset = [0.0; 4];
-        for (n, (m, texel, _)) in cascades.iter().enumerate() {
-            cascade_matrices[n] = m.to_cols_array_2d();
-            cascade_offset[n] = texel * 1.5;
-        }
-        let mut points = [PointLightRaw::default(); frame::MAX_POINT_LIGHTS];
-        points[..lights.points.len()].copy_from_slice(&lights.points);
-        let spot_list = frame::select_spots(
-            &extras.spot_lights,
-            camera_pos,
-            exposure,
-            &mut report.warnings,
-        );
-        report.stats.spot_lights = spot_list.len() as u32;
-        let mut spots = [SpotLightRaw::default(); extras::MAX_SPOT_LIGHTS];
-        spots[..spot_list.len()].copy_from_slice(&spot_list);
-        let (ambient_sky, ambient_ground) = extras.ambient.map_or(
-            (self.settings.ambient_sky, self.settings.ambient_ground),
-            |a| (a.sky, a.ground),
-        );
-        let fog = extras.fog.filter(|f| {
-            f.start.is_finite() && f.end.is_finite() && f.color.iter().all(|c| c.is_finite())
-        });
-        let sky = extras.sky;
-        let sky_sun = sky.and_then(|s| s.sun).filter(|(d, c)| {
-            d.is_finite() && d.length_squared() > 1e-12 && c.iter().all(|v| v.is_finite())
-        });
-        let uniform = FrameUniform {
-            inv_view_proj: view_proj.inverse().to_cols_array_2d(),
-            fog_color: fog.map_or([0.0; 4], |f| frame::rgb_w(f.color, f.start)),
-            fog_params: [
-                fog.map_or(0.0, |f| f.end),
-                f32::from(u8::from(fog.is_some())),
-                spot_list.len() as f32,
-                0.0,
-            ],
-            sky_zenith: sky.map_or([0.0; 4], |s| frame::rgb_w(s.zenith, 1.0)),
-            sky_horizon: sky.map_or([0.0; 4], |s| frame::rgb_w(s.horizon, 0.0)),
-            sky_ground: sky.map_or([0.0; 4], |s| frame::rgb_w(s.ground, 0.0)),
-            sky_sun_dir: sky_sun.map_or([0.0; 4], |(d, _)| d.normalize().extend(1.0).to_array()),
-            sky_sun_color: sky_sun.map_or([0.0; 4], |(_, c)| frame::rgb_w(c, 0.0)),
-            spots,
-            view_proj: view_proj.to_cols_array_2d(),
-            cascades: cascade_matrices,
-            cascade_far: splits,
-            cascade_offset,
-            shadow_params: [cascades.len() as f32, shadows.blend, 0.0, 0.0],
-            camera_pos: camera_pos.extend(1.0).to_array(),
-            camera_forward: (-snapshot.camera.world.z_axis.truncate())
-                .normalize_or_zero()
-                .extend(0.0)
-                .to_array(),
-            sun_dir: lights
-                .sun
-                .map_or([0.0; 4], |s| (-s.direction).extend(1.0).to_array()),
-            sun_color: lights.sun.map_or([0.0; 4], |s| {
-                s.radiance.extend(f32::from(u8::from(shadowed))).to_array()
-            }),
-            ambient_sky: frame::rgb_w((Vec3::from_array(ambient_sky) * exposure).to_array(), 0.0),
-            ambient_ground: frame::rgb_w(
-                (Vec3::from_array(ambient_ground) * exposure).to_array(),
-                0.0,
-            ),
-            params: [
-                1.0 / self.shadow.size as f32,
-                0.0,
-                lights.points.len() as f32,
-                exposure,
-            ],
-            points,
-        };
-        queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&uniform));
-        self.instances
-            .write(device, queue, bytemuck::cast_slice(&instances));
-        let palette_group = match &mut self.skinning {
-            Some(skinning) if palettes.iter().any(Option::is_some) => {
-                skinning.palette.write(
-                    device,
-                    queue,
-                    bytemuck::cast_slice(&snapshot.joint_palette),
-                );
-                Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("re_render joint palette"),
-                    layout: &skinning.palette_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        // Only the frame's palette, so the binding stays within
-                        // the storage binding limit whatever the buffer grew to.
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &skinning.palette.buffer,
-                            offset: 0,
-                            size: NonZeroU64::new((palette_len.max(1) * size_of::<Mat4>()) as u64),
-                        }),
-                    }],
-                }))
-            }
-            _ => None,
-        };
-        let line_vertices: Vec<LineVertex> = snapshot
-            .debug_lines
-            .iter()
-            .flat_map(|l| {
-                [
-                    LineVertex {
-                        position: l.a.to_array(),
-                        color: l.color,
-                    },
-                    LineVertex {
-                        position: l.b.to_array(),
-                        color: l.color,
-                    },
-                ]
-            })
-            .collect();
-        self.lines
-            .write(device, queue, bytemuck::cast_slice(&line_vertices));
-        report.stats.debug_lines = snapshot.debug_lines.len() as u32;
-        let effect_vertices = extras::effect_quads(
-            &extras.sprites,
-            &extras.ribbons,
-            camera_pos,
-            snapshot.camera.world.x_axis.truncate().normalize_or_zero(),
-            snapshot.camera.world.y_axis.truncate().normalize_or_zero(),
-        );
-        let quads = effect_vertices.len() / 4;
-        report.stats.effect_quads = quads as u32;
-        if quads > 0 {
-            self.effect_vertices
-                .write(device, queue, bytemuck::cast_slice(&effect_vertices));
-            self.effect_indices.write(
-                device,
-                queue,
-                bytemuck::cast_slice(&extras::quad_indices(quads)),
-            );
-        }
-
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("re_render frame"),
         });
-        let instance_stride = size_of::<InstanceRaw>() as u64;
-        // One render pass per cascade, its matrix at a dynamic offset.
-        let cascade_slot = (size_of::<CascadeUniform>() as u64).next_multiple_of(u64::from(
-            device.limits().min_uniform_buffer_offset_alignment,
-        ));
-        if shadowed {
-            let mut bytes = vec![0u8; cascade_slot as usize * cascades.len()];
-            for (n, (m, _, _)) in cascades.iter().enumerate() {
-                let at = n * cascade_slot as usize;
-                bytes[at..at + size_of::<CascadeUniform>()].copy_from_slice(bytemuck::bytes_of(
-                    &CascadeUniform {
-                        light_view_proj: m.to_cols_array_2d(),
-                    },
-                ));
-            }
-            self.cascade_uniforms.write(device, queue, &bytes);
-            let cascade_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("re_render cascade"),
-                layout: &self.layouts.cascade,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.cascade_uniforms.buffer,
-                        offset: 0,
-                        size: NonZeroU64::new(size_of::<CascadeUniform>() as u64),
-                    }),
-                }],
-            });
-            for (n, (_, _, batches)) in cascades.iter().enumerate() {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("re_render shadow"),
-                    color_attachments: &[],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &self.shadow.layer_views[n],
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                pass.set_bind_group(0, &cascade_group, &[(n as u64 * cascade_slot) as u32]);
-                let mut current = None;
-                for batch in batches {
-                    let mesh = self
-                        .meshes
-                        .get(batch.mesh.0, batch.mesh.1)
-                        .expect("resolved above");
-                    if current != Some(batch.variant) {
-                        current = Some(batch.variant);
-                        match self.skinned_parts(batch.variant, palette_group.as_ref()) {
-                            Some((skinning, palette)) => {
-                                pass.set_pipeline(&skinning.shadow_pipeline);
-                                pass.set_bind_group(1, palette, &[]);
-                            }
-                            None => pass.set_pipeline(&self.shadow_pipeline),
-                        }
-                    }
-                    if let Some(skin) = mesh.skin.as_ref().filter(|_| batch.variant & SKINNED != 0)
-                    {
-                        pass.set_vertex_buffer(2, skin.buffer.slice(..));
-                    }
-                    pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-                    pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                    let start = u64::from(batch.first_instance) * instance_stride;
-                    pass.set_vertex_buffer(
-                        1,
-                        self.instances
-                            .buffer
-                            .slice(start..start + u64::from(batch.instances) * instance_stride),
-                    );
-                    pass.draw_indexed(0..mesh.index_count, 0, 0..batch.instances);
-                    report.stats.shadow_casters += batch.instances;
-                }
-            }
-        }
-
-        // One uniform slot and bind group per world quad.
-        let quad_slot = (size_of::<QuadUniform>() as u64).next_multiple_of(u64::from(
-            device.limits().min_uniform_buffer_offset_alignment,
-        ));
-        let mut quad_bytes = vec![0u8; quad_slot as usize * quad_uniforms.len()];
-        for (n, u) in quad_uniforms.iter().enumerate() {
-            let at = n * quad_slot as usize;
-            quad_bytes[at..at + size_of::<QuadUniform>()].copy_from_slice(bytemuck::bytes_of(u));
-        }
-        self.quad_uniforms.write(device, queue, &quad_bytes);
-        let quad_groups: Vec<wgpu::BindGroup> = quad_textures
-            .iter()
-            .map(|view| {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("re_render quad"),
-                    layout: &self.layouts.quad,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                                buffer: &self.quad_uniforms.buffer,
-                                offset: 0,
-                                size: NonZeroU64::new(size_of::<QuadUniform>() as u64),
-                            }),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::Sampler(&self.quad_sampler),
-                        },
-                    ],
-                })
-            })
-            .collect();
-        let quad_offset = |n: usize| [(n as u64 * quad_slot) as u32];
-
-        self.pipelines_for(samples);
-        let pipelines = &self.pipelines[&samples];
-        let targets = self.post.targets(device, (width, height), samples);
-        // The HDR target is cleared to transparent black; the post chain puts
-        // the clear colour behind it, where nothing covers it.
-        {
-            let (view, resolve_target) = match &targets.msaa {
-                Some(msaa) => (msaa, Some(&targets.scene)),
-                None => (&targets.scene, None),
-            };
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("re_render scene"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
-                    depth_slice: None,
-                    resolve_target,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: if resolve_target.is_some() {
-                            wgpu::StoreOp::Discard
-                        } else {
-                            wgpu::StoreOp::Store
-                        },
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &targets.depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            pass.set_bind_group(0, &self.shadow.frame_bind_group, &[]);
-            if sky.is_some() {
-                pass.set_pipeline(&pipelines.sky);
-                pass.draw(0..3, 0..1);
-            }
-            // The pipeline, material and mesh currently bound.
-            let mut current: (Option<usize>, Option<Slot>, Option<Slot>) = (None, None, None);
-            // Draws the depth-tested quads that come before batch `before`;
-            // true if it drew any.
-            let mut next_quad = 0;
-            let mut draw_quads = |pass: &mut wgpu::RenderPass<'_>, before: usize| {
-                let first = next_quad;
-                while let Some(&(_, n)) = tested_quads.get(next_quad).filter(|q| q.0 <= before) {
-                    pass.set_pipeline(&pipelines.quads);
-                    pass.set_bind_group(1, &quad_groups[n], &quad_offset(n));
-                    pass.draw(0..6, 0..1);
-                    next_quad += 1;
-                }
-                next_quad > first
-            };
-            for (b, batch) in batches.iter().enumerate() {
-                if draw_quads(&mut pass, b) {
-                    current = (None, None, None);
-                }
-                if current.0 != Some(batch.variant) {
-                    pass.set_pipeline(&pipelines.forward[batch.variant]);
-                    current.0 = Some(batch.variant);
-                    if let Some(palette) = palette_group
-                        .as_ref()
-                        .filter(|_| batch.variant & SKINNED != 0)
-                    {
-                        pass.set_bind_group(2, palette, &[]);
-                    }
-                }
-                if current.1 != Some(batch.material) {
-                    let material = self
-                        .materials
-                        .get(batch.material.0, batch.material.1)
-                        .expect("resolved above");
-                    pass.set_bind_group(1, &material.bind_group, &[]);
-                    current.1 = Some(batch.material);
-                }
-                let mesh = self
-                    .meshes
-                    .get(batch.mesh.0, batch.mesh.1)
-                    .expect("resolved above");
-                if current.2 != Some(batch.mesh) {
-                    pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-                    pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                    current.2 = Some(batch.mesh);
-                }
-                if let Some(skin) = mesh.skin.as_ref().filter(|_| batch.variant & SKINNED != 0) {
-                    pass.set_vertex_buffer(2, skin.buffer.slice(..));
-                }
-                let start = u64::from(batch.first_instance) * instance_stride;
-                pass.set_vertex_buffer(
-                    1,
-                    self.instances
-                        .buffer
-                        .slice(start..start + u64::from(batch.instances) * instance_stride),
-                );
-                pass.draw_indexed(0..mesh.index_count, 0, 0..batch.instances);
-                report.stats.draw_calls += 1;
-                report.stats.triangles +=
-                    u64::from(mesh.index_count / 3) * u64::from(batch.instances);
-            }
-            draw_quads(&mut pass, usize::MAX);
-            if quads > 0 {
-                pass.set_pipeline(&pipelines.effects);
-                pass.set_vertex_buffer(
-                    0,
-                    self.effect_vertices
-                        .buffer
-                        .slice(..(effect_vertices.len() * size_of::<EffectVertex>()) as u64),
-                );
-                pass.set_index_buffer(
-                    self.effect_indices.buffer.slice(..(quads * 6 * 4) as u64),
-                    wgpu::IndexFormat::Uint32,
-                );
-                pass.draw_indexed(0..(quads * 6) as u32, 0, 0..1);
-                report.stats.draw_calls += 1;
-            }
-            if !line_vertices.is_empty() {
-                pass.set_pipeline(&pipelines.lines);
-                pass.set_vertex_buffer(
-                    0,
-                    self.lines
-                        .buffer
-                        .slice(..(line_vertices.len() * size_of::<LineVertex>()) as u64),
-                );
-                pass.draw(0..line_vertices.len() as u32, 0..1);
-            }
-        }
-
-        // The sun's place on screen, for sun rays: the sky's sun disc, else the
-        // sun light.
-        let to_sun = sky_sun
-            .map(|(d, _)| d.normalize())
-            .or(lights.sun.map(|s| -s.direction));
-        let sun_uv = to_sun.and_then(|d| {
-            let clip = view_proj * Vec4::from((d, 0.0));
-            (clip.w > 1e-6).then(|| {
-                let ndc = clip.truncate().truncate() / clip.w;
-                Vec2::new(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5)
-            })
-        });
-        report.stats.post_passes = self.post.record(
+        self.record_shadows(&mut encoder, &frame, &mut report);
+        self.record_scene(&mut encoder, &frame, &mut report);
+        self.record_post(
             device,
             queue,
             &mut encoder,
-            &snapshot.post,
-            PostFrame {
-                sun_uv,
-                clear: sky.is_none().then_some(snapshot.clear),
-            },
+            &frame,
+            snapshot,
+            extras,
             target,
+            &mut report,
         );
-
-        if !highlight_batches.is_empty() {
-            report.stats.highlights = drawn_highlights.len() as u32;
-            self.draw_highlights(
-                device,
-                queue,
-                &mut encoder,
-                target,
-                (width, height),
-                &batches[..opaque_batches],
-                &highlight_batches,
-                drawn_highlights,
-                palette_group.as_ref(),
-            );
-        }
-        if !top_quads.is_empty() {
-            if !self.top_quad_pipelines.contains_key(&format) {
-                let pipeline = self.quad_pipeline(format, 1, false);
-                self.top_quad_pipelines.insert(format, pipeline);
-            }
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("re_render quads on top"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            pass.set_pipeline(&self.top_quad_pipelines[&format]);
-            pass.set_bind_group(0, &self.shadow.frame_bind_group, &[]);
-            for &n in &top_quads {
-                pass.set_bind_group(1, &quad_groups[n], &quad_offset(n));
-                pass.draw(0..6, 0..1);
-            }
-        }
         let commands = encoder.finish();
         let submitting = Instant::now();
         queue.submit([commands]);
         self.draw_time.submit += submitting.elapsed();
+        frame.clear();
+        self.frame = frame;
         self.last_frame = report.stats;
         Ok(report)
-    }
-
-    /// The highlight mask (a depth pass of the opaque scene, the occluded
-    /// highlights, then the on-top ones over a cleared depth) and its
-    /// composite over `target`.
-    #[allow(clippy::too_many_arguments)]
-    fn draw_highlights(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        target: &wgpu::TextureView,
-        size: (u32, u32),
-        opaque: &[Batch],
-        highlighted: &[(bool, Batch)],
-        highlights: &[extras::Highlight],
-        palette: Option<&wgpu::BindGroup>,
-    ) {
-        let mut uniform = HighlightUniform {
-            colors: [[0.0; 4]; 2 * MAX_HIGHLIGHTS],
-            params: [OUTLINE_PX, 0.0, 0.0, 0.0],
-        };
-        let clean = |c: [f32; 4]| {
-            c.map(|v| {
-                if v.is_finite() {
-                    v.clamp(0.0, 1.0)
-                } else {
-                    0.0
-                }
-            })
-        };
-        for (i, h) in highlights.iter().enumerate() {
-            uniform.colors[2 * i] = clean(h.fill);
-            uniform.colors[2 * i + 1] = clean(h.outline);
-        }
-        queue.write_buffer(&self.highlight_buffer, 0, bytemuck::bytes_of(&uniform));
-        self.highlight_pipeline(target.texture().format());
-        self.mask_targets(size.0, size.1);
-        let targets = self.mask_targets.as_ref().expect("created above");
-        let shadow_frame = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("re_render mask frame"),
-            layout: &self.layouts.shadow_frame,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: self.frame_buffer.as_entire_binding(),
-            }],
-        });
-        let stride = size_of::<InstanceRaw>() as u64;
-        // Draws a batch with mask pipeline `n` (0 depth only, 1 numbering).
-        let draw = |pass: &mut wgpu::RenderPass<'_>, n: usize, batch: &Batch| {
-            let mesh = self
-                .meshes
-                .get(batch.mesh.0, batch.mesh.1)
-                .expect("resolved above");
-            match self.skinned_parts(batch.variant, palette) {
-                Some((skinning, palette)) => {
-                    pass.set_pipeline(&skinning.mask_pipelines[n]);
-                    pass.set_bind_group(1, palette, &[]);
-                    if let Some(skin) = &mesh.skin {
-                        pass.set_vertex_buffer(2, skin.buffer.slice(..));
-                    }
-                }
-                None => pass.set_pipeline(&self.mask_pipelines[n]),
-            }
-            pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-            pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-            let start = u64::from(batch.first_instance) * stride;
-            pass.set_vertex_buffer(
-                1,
-                self.instances
-                    .buffer
-                    .slice(start..start + u64::from(batch.instances) * stride),
-            );
-            pass.draw_indexed(0..mesh.index_count, 0, 0..batch.instances);
-        };
-        for on_top in [false, true] {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("re_render highlight mask"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &targets.mask,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: if on_top {
-                            wgpu::LoadOp::Load
-                        } else {
-                            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
-                        },
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &targets.depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            pass.set_bind_group(0, &shadow_frame, &[]);
-            if !on_top {
-                for batch in opaque {
-                    draw(&mut pass, 0, batch);
-                }
-            }
-            for (_, batch) in highlighted.iter().filter(|(top, _)| *top == on_top) {
-                draw(&mut pass, 1, batch);
-            }
-        }
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("re_render highlight"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
-        pass.set_pipeline(&self.highlight_pipelines[&target.texture().format()]);
-        pass.set_bind_group(0, &targets.bind_group, &[]);
-        pass.draw(0..3, 0..1);
-    }
-
-    /// The skinning pipelines and the frame's palette bind group, for a skinned
-    /// batch `variant`.
-    fn skinned_parts<'a>(
-        &'a self,
-        variant: usize,
-        palette: Option<&'a wgpu::BindGroup>,
-    ) -> Option<(&'a Skinning, &'a wgpu::BindGroup)> {
-        if variant & SKINNED == 0 {
-            return None;
-        }
-        self.skinning.as_ref().zip(palette)
     }
 
     fn check_target(&self, texture: &wgpu::Texture) -> Result<(), Diagnostic> {

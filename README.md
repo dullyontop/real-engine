@@ -47,7 +47,7 @@ All crate versions are pinned exactly and checked against crates.io. See [DEPEND
 
 | Area | Crates |
 |---|---|
-| Toolchain | Rust stable; MSRV 1.95 (set by egui and bevy_ecs); edition 2024 |
+| Toolchain | Rust 1.99.1, pinned in `rust-toolchain.toml`; MSRV 1.95 (set by egui and bevy_ecs); edition 2024 |
 | Rendering | wgpu 30.0.1, winit 0.30.13, egui / egui-wgpu / egui-winit 0.36.2, glam 0.34.1 |
 | Entity core | bevy_ecs 0.20.0 (standalone, no bevy_reflect) with our own component registry |
 | Physics | oxijolt 1.1.0+jolt-5.6.0 (Jolt Physics 5.6.0), built from source |
@@ -75,7 +75,7 @@ All crate versions are pinned exactly and checked against crates.io. See [DEPEND
 
 ## Building the workspace
 
-You need the current stable Rust toolchain (`rust-toolchain.toml` selects it; the MSRV is 1.95).
+You need Rust 1.99.1, which `rust-toolchain.toml` pins and rustup installs on first use (the MSRV is 1.95). The pin moves by PR after each stable Rust release: the PR sets `channel` to the new release and fixes whatever the new compiler and clippy ask for. Its run starts every check, and main's push after it saves new cargo caches, so between bumps no cache key changes with Rust (ADR-0023's amendment for WP31 PR "toolchain").
 
 ```sh
 export CARGO_BUILD_JOBS=2

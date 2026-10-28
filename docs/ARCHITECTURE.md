@@ -163,7 +163,7 @@ Boundaries are enforced in CI. `cargo xtask check-graph` (in `tools/xtask`) read
 ```
 Cargo.toml              workspace (members: crates/*, tools/*), [workspace.dependencies] with exact versions
 Cargo.lock              committed
-rust-toolchain.toml     channel = "stable" (MSRV 1.95 is checked by a CI job)
+rust-toolchain.toml     channel = "1.99.1", the pinned stable release (MSRV 1.95 is checked by a CI job)
 deny.toml               licenses, bans, duplicate allow-list
 .github/workflows/ci.yml
 crates/re_*/            the crates above
