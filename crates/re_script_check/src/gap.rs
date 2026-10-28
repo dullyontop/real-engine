@@ -7,7 +7,8 @@
 //! [`Coverage::compat`] adds the compatibility layer's table,
 //! `crates/re_compat/coverage.json`: its `implemented` rows count as covered,
 //! its `partial` and `stub-error` rows are reported apart, and its `missing`
-//! rows stay gaps.
+//! rows stay gaps. Generator scripts (`scripts/generators/`) run with their
+//! own API and are compared with [`Coverage::generator`].
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -82,6 +83,17 @@ impl Coverage {
     /// The M1 table: Luau builtins and the engine-native API.
     pub fn native() -> Coverage {
         let mut c = Coverage::from_definitions(&re_script::definitions());
+        c.globals
+            .extend(BUILTIN_GLOBALS.iter().map(|s| s.to_string()));
+        c.globals.extend(BUILTIN_LIBS.iter().map(|s| s.to_string()));
+        c.whole.extend(BUILTIN_LIBS.iter().map(|s| s.to_string()));
+        c
+    }
+
+    /// The generator context's table, for scripts in `scripts/generators/`:
+    /// the Luau builtins and the generator API (`generator.d.luau`).
+    pub fn generator() -> Coverage {
+        let mut c = Coverage::from_definitions(&re_script::generator::definitions());
         c.globals
             .extend(BUILTIN_GLOBALS.iter().map(|s| s.to_string()));
         c.globals.extend(BUILTIN_LIBS.iter().map(|s| s.to_string()));
@@ -237,6 +249,21 @@ impl GapReport {
         r
     }
 
+    /// Adds the counts of `other`, the report of another body of scripts (the
+    /// generator scripts, compared with their own table).
+    pub fn merge(&mut self, other: GapReport) {
+        self.covered += other.covered;
+        for (to, from) in [
+            (&mut self.missing, other.missing),
+            (&mut self.partial, other.partial),
+            (&mut self.stub_error, other.stub_error),
+        ] {
+            for (name, n) in from {
+                *to.entry(name).or_default() += n;
+            }
+        }
+    }
+
     /// Drops the `Service.Child` names that are the project's own instances
     /// (`ReplicatedStorage.Shared` reads a child, not an API member), so the
     /// report lists only API the engine lacks. Returns how many were dropped.
@@ -278,6 +305,33 @@ mod tests {
             assert!(c.members.contains(m), "{m}");
         }
         assert!(!c.members.contains("world.GetChildren"));
+    }
+
+    #[test]
+    fn generator_coverage_reads_the_generator_definitions() {
+        let c = Coverage::generator();
+        for g in ["proc", "quat", "color", "print", "math", "vector"] {
+            assert!(c.globals.contains(g), "{g}");
+        }
+        for m in ["proc.node", "proc.param", "quat.from_euler", "color.new"] {
+            assert!(c.members.contains(m), "{m}");
+        }
+        for g in ["world", "time", "task", "physics"] {
+            assert!(!c.globals.contains(g), "{g}");
+        }
+    }
+
+    #[test]
+    fn merged_reports_add_their_counts() {
+        let game = scan_source("world.query('A')\nproc.node({})\nfoo()", "g.luau").unwrap();
+        let generator = scan_source("proc.node({})\nworld.query('A')\nfoo()", "n.luau").unwrap();
+        let mut g = GapReport::new(&game, &Coverage::native());
+        g.merge(GapReport::new(&generator, &Coverage::generator()));
+        // Each script's own API is covered; the other's is a gap.
+        assert_eq!(g.missing["proc.node"], 1);
+        assert_eq!(g.missing["world"], 1);
+        assert_eq!(g.missing["world.query"], 1);
+        assert_eq!(g.missing["foo"], 2);
     }
 
     #[test]

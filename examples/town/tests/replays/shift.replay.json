@@ -1,0 +1,18 @@
+{
+  "$schema": "../../../../schemas/replay.schema.json",
+  "version": 1,
+  "seed": 1,
+  "frames": 3720,
+  "input": [
+    { "frame": 30, "action": "start", "down": true },
+    { "frame": 32, "action": "start", "down": false }
+  ],
+  "commands": [
+    { "frame": 0, "name": "entity.set", "args": { "id": "game", "component": "Rules", "field": "autopilot", "value": true } },
+    { "frame": 0, "name": "entity.set", "args": { "id": "game", "component": "Rules", "field": "shift_seconds", "value": 60.0 } }
+  ],
+  "checks": [
+    { "frame": 2760, "screenshot": "tests/goldens/{backend}/shift_f2760.png" },
+    { "frame": 3719, "screenshot": "tests/goldens/{backend}/shift_f3719.png" }
+  ]
+}

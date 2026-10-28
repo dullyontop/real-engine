@@ -829,7 +829,7 @@
         "text": {
           "type": "string",
           "default": "",
-          "description": "The text."
+          "description": "The text. It breaks into lines only at its `\\n`s."
         },
         "anchor": {
           "enum": [
@@ -848,6 +848,21 @@
           "type": "number",
           "default": 18.0,
           "description": "Font size in logical pixels."
+        },
+        "color": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 4,
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear colour of the text; its alpha fades it."
         }
       },
       "additionalProperties": false

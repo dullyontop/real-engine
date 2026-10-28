@@ -128,6 +128,12 @@ pub struct App {
     mouse_behavior: Option<(re_types::input::MouseLock, bool)>,
     actions: ActionFrame,
     replay: Option<Replay>,
+    /// The run's seed: `[scripts] seed`, or the seed of the replay being
+    /// played. Native scripts' `math.random` starts from it.
+    seed: i64,
+    /// How fast simulation time runs against frame time (`time.set_scale`):
+    /// the frame time the clock advances by is multiplied by it.
+    time_scale: f64,
 
     physics: Physics,
     physics_sync: PhysicsSync,
@@ -334,6 +340,8 @@ impl App {
             mouse_behavior: None,
             actions: ActionFrame::default(),
             replay: None,
+            seed: config.scripts.seed,
+            time_scale: 1.0,
             physics,
             physics_sync: PhysicsSync::new(),
             shapes: ShapeLibrary::default(),
@@ -977,7 +985,10 @@ impl App {
     /// The PerfReport of the frames run so far.
     pub fn perf_report(&mut self) -> PerfReport {
         let counts = PerfCounts {
-            entities: self.world.ecs.entities().len() as u64,
+            // The game's entities, which all have stable ids: `Entities::len`
+            // counts every index ever allocated, so it only grows, and bevy
+            // keeps entities of its own (resources, observers).
+            entities: self.world.ids().len() as u64,
             draw_items: self.snapshot.items.len() as u64,
             bodies: u64::from(self.physics.body_count()),
             characters: self.physics.character_count() as u64,
@@ -999,6 +1010,7 @@ impl App {
             audio_graph: self.audio.graph(),
             pending: &mut self.pending,
             skins: &mut self.skin_sync,
+            time_scale: &mut self.time_scale,
         }
     }
 
@@ -1210,6 +1222,7 @@ impl App {
     /// `RE0507` when the replay does not match the project's actions (with the
     /// input crate's diagnostics as `related`).
     pub fn play_replay(&mut self, doc: ReplayDoc) -> Result<(), Diagnostic> {
+        let seed = doc.seed;
         let replay = Replay::new(doc, &self.action_map.layout()).map_err(|ds| {
             let mut d = Diagnostic::error(
                 codes::REPLAY_FAILED,
@@ -1221,6 +1234,14 @@ impl App {
             d
         })?;
         self.replay = Some(replay);
+        // The run starts from the replay's seed: scripts that already run
+        // start their `math.random` again from it.
+        self.seed = seed;
+        if let Some(scripts) = &mut self.scripts
+            && let Err(e) = scripts.reseed(seed)
+        {
+            self.diagnostics.push(e.to_diagnostic());
+        }
         Ok(())
     }
 
@@ -1410,8 +1431,14 @@ impl App {
         }
         self.perf.add(Phase::PreRender, t.elapsed());
 
-        // Fixed steps.
-        let steps = self.clock.advance(frame_time);
+        // Fixed steps: as many as the frame time, scaled by `time.set_scale`,
+        // holds.
+        let sim_time = if self.time_scale == 1.0 {
+            frame_time
+        } else {
+            frame_time.mul_f64(self.time_scale)
+        };
+        let steps = self.clock.advance(sim_time);
         self.alpha = steps.alpha;
         self.contacts.clear();
         for _ in 0..steps.count {
@@ -2256,10 +2283,12 @@ impl App {
             if self.scripts_failed {
                 return None;
             }
-            let config = RuntimeConfig::with_files(self.files.clone()).with_limits(
-                self.config.scripts.cpu_budget_ms.max(0.0).ceil() as u64,
-                self.config.scripts.memory_limit_mb as usize,
-            );
+            let config = RuntimeConfig::with_files(self.files.clone())
+                .with_limits(
+                    self.config.scripts.cpu_budget_ms.max(0.0).ceil() as u64,
+                    self.config.scripts.memory_limit_mb as usize,
+                )
+                .with_seed(self.seed);
             match ScriptRuntime::new(config) {
                 Ok(r) => {
                     self.scripts = Some(r);
@@ -2361,6 +2390,7 @@ impl App {
                 audio_graph: self.audio.graph(),
                 pending: &mut self.pending,
                 skins: &mut self.skin_sync,
+                time_scale: &mut self.time_scale,
             },
         };
         let out = f(scripts, &mut host);
@@ -2862,6 +2892,7 @@ impl App {
                 audio_graph: self.audio.graph(),
                 pending: &mut self.pending,
                 skins: &mut self.skin_sync,
+                time_scale: &mut self.time_scale,
             },
         };
         let diags = f(vm, &mut host);
@@ -3072,6 +3103,7 @@ impl App {
                 // The fresh game VM is attached in place of the old one.
                 self.attach_debugger();
                 self.clock.reset();
+                self.time_scale = 1.0;
                 self.stream_tick = 0;
                 self.edit_frame();
             }

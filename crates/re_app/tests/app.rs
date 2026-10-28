@@ -117,6 +117,8 @@ fn a_dynamic_box_falls_and_lands_on_static_ground() {
     assert_eq!(perf.frames, 120);
     assert_eq!(perf.physics_step.samples, 120);
     assert_eq!(perf.counts.characters, 1);
+    // The scene's seven entities.
+    assert_eq!(perf.counts.entities, 7);
 }
 
 #[test]
@@ -308,6 +310,60 @@ fn hud_text_and_impulses_apply_through_the_host() {
         app.world().get("hud", "HudText", "text").unwrap(),
         Value::Str("1 / 3".into())
     );
+}
+
+#[test]
+fn velocities_and_the_time_scale_apply_through_the_host() {
+    let dir = project();
+    let mut app = open(dir.path());
+    app.run_headless(Some(60), None).unwrap();
+    let b = id_of(&app, "box");
+    // Only a dynamic body takes a velocity, and only a finite one.
+    let hero = id_of(&app, "hero");
+    assert!(
+        app.host()
+            .set_body_velocity(hero, Vec3::X, Vec3::ZERO)
+            .is_err()
+    );
+    let nan = Vec3::new(f32::NAN, 0.0, 0.0);
+    assert!(app.host().set_body_velocity(b, nan, Vec3::ZERO).is_err());
+    app.host()
+        .set_body_velocity(b, Vec3::new(0.0, 6.0, 0.0), Vec3::ZERO)
+        .unwrap();
+    app.frame(app.step());
+    let (v, _) = app.host().body_velocity(b).unwrap();
+    assert!(v.y > 5.0, "velocity after set_velocity {v}");
+
+    // At a time scale of 0 no fixed step runs: the box hangs in the air.
+    for bad in [-1.0, 11.0, f64::NAN] {
+        assert!(app.host().set_time_scale(bad).is_err(), "{bad}");
+    }
+    app.host().set_time_scale(0.0).unwrap();
+    assert_eq!(app.host().time_scale(), 0.0);
+    let y = translation(&app, "box").y;
+    for _ in 0..10 {
+        app.frame(app.step());
+    }
+    assert_eq!(translation(&app, "box").y, y);
+    // A restart sets it back to 1.
+    app.host().request_restart();
+    app.frame(app.step());
+    assert_eq!(app.host().time_scale(), 1.0);
+}
+
+/// `HudText.color` reaches the HUD's lines, its channels kept within 0 to 1.
+#[test]
+fn hud_lines_have_their_text_colour() {
+    let dir = tempfile::tempdir().unwrap();
+    let scene = SCENE.replace(
+        r#""HudText": { "text": "0 / 3" }"#,
+        r#""HudText": { "text": "0 / 3", "color": [1.0, 0.5, 0.25, 2.0] }"#,
+    );
+    write_project(dir.path(), &scene);
+    let mut app = open(dir.path());
+    app.run_headless(Some(1), None).unwrap();
+    assert_eq!(app.hud_lines().len(), 1);
+    assert_eq!(app.hud_lines()[0].color, [1.0, 0.5, 0.25, 1.0]);
 }
 
 #[test]
