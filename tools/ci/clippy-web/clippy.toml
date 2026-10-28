@@ -5,7 +5,7 @@
 # The web-only entries panic on wasm32-unknown-unknown. They live only here: on desktop,
 # web-time re-exports std::time, so re_core::time::Instant::now is std's and a ban there
 # would flag every correct use; std::process::id has correct desktop users.
-# The rest is clippy.toml's libm list, sorted by path as there.
+# The rest is clippy.toml's list, sorted by path as there.
 disallowed-methods = [
     { path = "f32::acos", reason = "platform libm; use libm (ADR-0036)" },
     { path = "f32::acosh", reason = "platform libm; use libm (ADR-0036)" },
@@ -57,6 +57,8 @@ disallowed-methods = [
     { path = "f64::sinh", reason = "platform libm; use libm (ADR-0036)" },
     { path = "f64::tan", reason = "platform libm; use libm (ADR-0036)" },
     { path = "f64::tanh", reason = "platform libm; use libm (ADR-0036)" },
+    { path = "std::time::Duration::from_secs_f32", reason = "panics when negative, non-finite or too large; use Duration::try_from_secs_f32" },
+    { path = "std::time::Duration::from_secs_f64", reason = "panics when negative, non-finite or too large; use Duration::try_from_secs_f64" },
     { path = "std::time::Instant::now", reason = "panics on wasm32-unknown-unknown; use re_core::time (ADR-0049 §5)" },
     { path = "std::time::SystemTime::now", reason = "panics on wasm32-unknown-unknown; use re_core::time (ADR-0049 §5)" },
     { path = "std::process::id", reason = "panics on wasm32-unknown-unknown; use re_core::process_id (ADR-0049 §5)" },

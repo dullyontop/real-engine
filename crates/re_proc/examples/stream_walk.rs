@@ -290,7 +290,7 @@ fn walk(root: &Path, cache: &Path, pool: &Arc<TaskPool>, args: &Args) -> Json {
     let mut peak_cells = 0usize;
     let mut peak_view = (0usize, 0u64);
     let mut position = -END;
-    let step_time = std::time::Duration::from_secs_f64(1.0 / f64::from(HZ));
+    let step_time = std::time::Duration::from_secs(1) / HZ as u32;
     let mut next = Instant::now();
     for _ in 0..total {
         if !args.unpaced {
