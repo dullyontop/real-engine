@@ -66,6 +66,7 @@ mod glb;
 mod graph;
 pub mod migrate;
 pub mod nodes;
+pub mod params;
 mod store;
 pub mod stream;
 mod structure;
@@ -85,12 +86,16 @@ pub use generator::{
     GENERATOR, GENERATOR_VERSION, ParamOverrides, apply_overrides, overrides_text, parse_overrides,
     positional_ids, register_generator,
 };
-pub use graph::{Edge, GraphId, Node, NodeId, OUT_ALIAS, PortName, ProcGraph};
+pub use graph::{
+    Edge, GraphId, GraphOutput, InputEdge, Node, NodeId, OUT_ALIAS, PortName, ProcGraph,
+    fill_output_types,
+};
 pub use nodes::{
     CheckFn, CustomKind, CustomPort, Domain, EvalFn, InputCheckFn, InputValue, MAX_LOG_LINE,
     MAX_LOG_LINES, MigrateFn, Migration, NodeCtx, NodeDef, NodeError, NodeRegistry, NodeSpec,
     Params, PortDef, Streaming,
 };
+pub use params::commands::{DeclareParamArgs, ParamsArgs, RemoveParamArgs};
 pub use store::{Budget, CurrentGraph, GraphStore, register_doc_validators, validate_graph_json};
 pub use value::{
     DerivedAsset, Field, FragItem, Fragment, MeshValue, Output, Point, Points, PortType, PrefabUse,
@@ -255,6 +260,46 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::CREATE_SOURCE,
         title: "Cannot create a source from a node kind",
         page: include_str!("../explain/RE4104.md"),
+    },
+    DiagInfo {
+        code: codes::INVALID_GRAPH_PARAM,
+        title: "Invalid graph param declaration",
+        page: include_str!("../explain/RE4200.md"),
+    },
+    DiagInfo {
+        code: codes::UNKNOWN_GRAPH_PARAM,
+        title: "Unknown graph param",
+        page: include_str!("../explain/RE4201.md"),
+    },
+    DiagInfo {
+        code: codes::GRAPH_PARAM_VALUE,
+        title: "Graph param value refused",
+        page: include_str!("../explain/RE4202.md"),
+    },
+    DiagInfo {
+        code: codes::BOUND_PARAM_REFUSED,
+        title: "Bound node param refuses a graph param's value",
+        page: include_str!("../explain/RE4203.md"),
+    },
+    DiagInfo {
+        code: codes::MISPLACED_PARAM_REF,
+        title: "Misplaced graph param reference",
+        page: include_str!("../explain/RE4204.md"),
+    },
+    DiagInfo {
+        code: codes::INVALID_GRAPH_PORT,
+        title: "Invalid graph input or output declaration",
+        page: include_str!("../explain/RE4205.md"),
+    },
+    DiagInfo {
+        code: codes::GRAPH_PORT_WIRING,
+        title: "Graph output or input wired wrongly",
+        page: include_str!("../explain/RE4206.md"),
+    },
+    DiagInfo {
+        code: codes::BINDING_OVERRIDDEN,
+        title: "Override replaces a graph param binding",
+        page: include_str!("../explain/RE4212.md"),
     },
     DiagInfo {
         code: codes::STREAM_CONFIG,

@@ -188,12 +188,17 @@ fn load_where(
             continue;
         }
         match graph_of(world, project, &mut builders, &source) {
-            Ok(doc) => {
+            Ok(mut doc) => {
                 let (_, graph, builder) = &source;
                 if graph.is_empty() {
                     diags.extend(re_proc::positional_ids(&doc, builder));
                 }
                 if let Some(mut store) = world.ecs.get_resource_mut::<GraphStore>() {
+                    if graph.is_empty() {
+                        // A builder's `g:output` leaves each output's type to
+                        // what feeds it (ADR-0061 §10).
+                        re_proc::fill_output_types(&mut doc, store.evaluator().registry());
+                    }
                     store.insert(source.0.clone(), doc);
                 }
             }

@@ -1,5 +1,5 @@
 name = "terrain-shape"
-summary = "Reshape a terrain graph (like the `terrain` template's): set the hills' height and roughness, then regenerate it."
+summary = "Reshape a terrain graph whose params are `height` and `roughness` (as the `terrain` template's are): set them, then regenerate it."
 
 [[params]]
 name = "source"
@@ -25,11 +25,11 @@ doc = "The noise scale: small values give broad hills, large ones rough ground."
 
 [[steps]]
 command = "graph.set_param"
-args = { source = "{{source}}", node = "height", param = "height", value = "{{height}}" }
+args = { source = "{{source}}", param = "height", value = "{{height}}" }
 
 [[steps]]
 command = "graph.set_param"
-args = { source = "{{source}}", node = "height", param = "scale", value = "{{roughness}}" }
+args = { source = "{{source}}", param = "roughness", value = "{{roughness}}" }
 
 [[steps]]
 command = "graph.regenerate"

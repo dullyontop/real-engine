@@ -117,6 +117,41 @@ pub const LUAU_OUTPUT: Code = Code::new("RE4103");
 /// does not output a fragment, needs inputs, or the graph file exists.
 pub const CREATE_SOURCE: Code = Code::new("RE4104");
 
+/// A graph param declaration is invalid (its name, type fields, range or
+/// default), or a graph without a `kind` block has a param without a
+/// default (ADR-0061 §2).
+pub const INVALID_GRAPH_PARAM: Code = Code::new("RE4200");
+
+/// A reference, a source's value or `graph.set_param` names a graph param
+/// the graph does not declare (an error for a reference or a command; a
+/// warning for a stored value, which is ignored).
+pub const UNKNOWN_GRAPH_PARAM: Code = Code::new("RE4201");
+
+/// A graph param value has the wrong type or is out of range (refused by a
+/// command; a stored one is skipped with a warning and the default is
+/// used), or a bound param has no value.
+pub const GRAPH_PARAM_VALUE: Code = Code::new("RE4202");
+
+/// A node param bound to a graph param refuses a value the graph param
+/// allows (its `min`, `max`, an `enum` value or a boolean).
+pub const BOUND_PARAM_REFUSED: Code = Code::new("RE4203");
+
+/// `{"$param": …}` somewhere other than the whole value of a node param.
+pub const MISPLACED_PARAM_REF: Code = Code::new("RE4204");
+
+/// A graph's input or output declaration is invalid: its name, its type, a
+/// duplicate, a `fragment` input, or inputs without a `kind` block.
+pub const INVALID_GRAPH_PORT: Code = Code::new("RE4205");
+
+/// A declared output has no edge into `["$out", name]` or several, an edge
+/// into it carries another type, or a `$in` or `$out` edge names a port the
+/// graph does not declare.
+pub const GRAPH_PORT_WIRING: Code = Code::new("RE4206");
+
+/// A per-source override replaces a node param's binding to a graph param
+/// (warning; the override applies).
+pub const BINDING_OVERRIDDEN: Code = Code::new("RE4212");
+
 /// A value in the `[stream]` section of `real.toml` is out of range (an
 /// unknown key is refused when the file is parsed, as `RE0501`).
 pub const STREAM_CONFIG: Code = Code::new("RE4300");

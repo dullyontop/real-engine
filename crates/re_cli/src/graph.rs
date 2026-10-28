@@ -156,20 +156,28 @@ pub struct MigrateArgs {
     /// Print the JSON report.
     #[arg(long)]
     pub json: bool,
+    /// Upgrade the graph files' format alone (version 1 to 2; nothing else
+    /// in them changes), and no node.
+    #[arg(long)]
+    pub format_only: bool,
 }
 
 /// Runs `real migrate-graph`: opens the project, reports what upgrading each
 /// procedural source's nodes changes (`graph.migration_report`, plus graph
-/// files no open scene reads), and unless `--dry-run`, rewrites the graph
-/// files. All or nothing: when any graph cannot migrate, nothing is written.
-/// Builder scripts are never rewritten; the report names their nodes.
+/// files no open scene reads) and each graph file's format (ADR-0061 §10),
+/// and unless `--dry-run`, rewrites the graph files. All or nothing: when
+/// any graph cannot migrate, nothing is written. Builder scripts are never
+/// rewritten; the report names their nodes.
 pub fn migrate(args: MigrateArgs, project: &Path) -> ExitCode {
     let app = match re_app::App::open_project(project) {
         Ok(app) => app,
         Err(d) => return refuse(args.json, vec![d]),
     };
     let world = app.world();
-    let mut report = re_proc::migrate::migration_report(world, Some(project));
+    let opts = re_proc::migrate::MigrateOptions {
+        format_only: args.format_only,
+    };
+    let mut report = re_proc::migrate::migration_report_with(world, Some(project), opts);
     let m1 = NodeRegistry::m1();
     let registry = world
         .ecs
@@ -202,7 +210,8 @@ pub fn migrate(args: MigrateArgs, project: &Path) -> ExitCode {
         );
     } else {
         crate::print_diagnostics(&diags);
-        for s in &report.sources {
+        // A source whose file only changes format is in the format lines below.
+        for s in report.sources.iter().filter(|s| !s.nodes.is_empty()) {
             let from = s.file.as_deref().or(s.builder.as_deref()).unwrap_or("");
             println!(
                 "{} ({from}): {} node{}{}",
@@ -240,6 +249,12 @@ pub fn migrate(args: MigrateArgs, project: &Path) -> ExitCode {
                 f.path,
                 f.nodes.len(),
                 if f.nodes.len() == 1 { "" } else { "s" }
+            );
+        }
+        for f in report.files.iter().filter(|f| f.format.from != f.format.to) {
+            println!(
+                "{}: format version {} -> {}",
+                f.path, f.format.from, f.format.to
             );
         }
         let verb = if args.dry_run {

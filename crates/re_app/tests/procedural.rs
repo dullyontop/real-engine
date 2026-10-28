@@ -373,3 +373,86 @@ fn terrain_that_appears_late_still_catches_the_character() {
         p.y
     );
 }
+
+/// `doc` evaluated by a fresh evaluator over `registry`, with paths relative
+/// to `root`: its fragment hash and each node's key.
+fn evaluated(
+    doc: &re_types::graph::GraphDoc,
+    registry: &re_proc::NodeRegistry,
+    root: &Path,
+    world: &re_scene::World,
+) -> (String, Vec<(String, String)>) {
+    let g = re_proc::ProcGraph::from_doc(doc, registry)
+        .unwrap_or_else(|d| panic!("{}: {d:#?}", doc.name));
+    let e = re_proc::Evaluator::new(std::sync::Arc::new(registry.clone())).evaluate(
+        &g,
+        &re_proc::EvalOptions {
+            root: Some(root.to_path_buf()),
+            ..Default::default()
+        },
+    );
+    assert!(e.ok(), "{}: {:#?}", doc.name, e.report.diagnostics);
+    let (fragment, _) = e.scene_fragment(&world.registry).unwrap();
+    let keys = e
+        .report
+        .nodes
+        .iter()
+        .map(|n| (n.id.clone(), n.key.clone()))
+        .collect();
+    (re_proc::fragment_hash_hex(&fragment), keys)
+}
+
+/// ADR-0061 §10: each builder's graph (the island's, the town's and the
+/// terrain template's), as built and rewritten as graph file version 2,
+/// gives the same fragment and the same key for every node.
+#[test]
+fn builder_graphs_mean_the_same_rewritten_as_version_2() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let same = |doc: &re_types::graph::GraphDoc,
+                registry: &re_proc::NodeRegistry,
+                root: &Path,
+                world: &re_scene::World| {
+        let v2 = re_proc::migrate::upgrade_format(doc, &doc.name).unwrap();
+        assert_eq!(v2.version, 2);
+        assert_eq!(
+            evaluated(doc, registry, root, world),
+            evaluated(&v2, registry, root, world),
+            "{}",
+            doc.name
+        );
+    };
+    for (project, source) in [("examples/island", "island"), ("examples/town", "town")] {
+        let dir = repo.join(project);
+        let app = open(&dir);
+        let store = app.world().ecs.resource::<re_proc::GraphStore>();
+        let built = store.graph(source).expect("the builder's graph").clone();
+        assert_eq!(built.version, 1, "{project}");
+        same(&built, store.evaluator().registry(), &dir, app.world());
+    }
+    // The terrain template's builder declares its params, so its graph is
+    // version 2 as built; with the defaults written in place of the
+    // references, as the template wrote them before, it is the same.
+    let dir = repo.join("templates/terrain");
+    let mut runtime = re_script::ScriptRuntime::new(re_script::RuntimeConfig::new(&dir)).unwrap();
+    let mut world = re_scene::World::new();
+    let mut services = re_script::NoServices::default();
+    let built = runtime
+        .run_builder(
+            &mut re_script::WorldHost {
+                world: &mut world,
+                services: &mut services,
+            },
+            "scripts/tools/terrain_graph.luau",
+        )
+        .unwrap();
+    assert_eq!(built.version, 2);
+    let mut literal = re_proc::params::bind(&built).unwrap();
+    literal.params.clear();
+    literal.version = 1;
+    let registry = re_proc::NodeRegistry::m1();
+    assert_eq!(
+        evaluated(&built, &registry, &dir, &world),
+        evaluated(&literal, &registry, &dir, &world)
+    );
+    same(&literal, &registry, &dir, &world);
+}

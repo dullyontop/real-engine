@@ -75,6 +75,17 @@ declare extern type Graph with
     function node(self, kind: string, params: { [string]: any }?, inputs: { [string]: GraphNode | GraphPort }?, id: string?): GraphNode
     -- Connects an output to a node's input port.
     function connect(self, from: GraphNode | GraphPort, to: GraphNode, port: string): ()
+    -- Declares a typed graph param, which the inspector, recipes and graph.set_param set
+    -- per source. Given as a node param's value, the handle binds that param.
+    -- type: number, integer, bool, string, enum, vec2, vec3, color, file or curve.
+    function param(self, name: string, options: { type: string, default: any?, min: number?, max: number?, values: { string }?, extensions: { string }?, doc: string? }): GraphParam
+    -- Declares an output of the graph, fed by a node or port, of the type it brings.
+    function output(self, name: string, from: GraphNode | GraphPort, options: { doc: string? }?): ()
+end
+
+-- A param of a Graph; as a node param's value it binds that param to it.
+declare extern type GraphParam with
+    read name: string
 end
 
 -- A node of a Graph; as an input it stands for its "out" port.

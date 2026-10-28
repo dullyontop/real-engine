@@ -72,11 +72,18 @@ pub fn hash64(text: &str) -> u64 {
 }
 
 /// The hash of a graph document's canonical JSON, without its `layout`:
-/// moving a node on the canvas regenerates nothing (ADR-0044).
+/// moving a node on the canvas regenerates nothing (ADR-0044). The format
+/// version is hashed as the lowest version that holds the document, so a
+/// version 1 file rewritten as version 2 with nothing else changed
+/// (`real migrate-graph --format-only`) keeps its hash and regenerates
+/// nothing (ADR-0061 §1).
 pub fn doc_hash(doc: &GraphDoc) -> blake3::Hash {
     let mut json = serde_json::to_value(doc).unwrap_or(Json::Null);
     if let Some(obj) = json.as_object_mut() {
         obj.shift_remove("layout");
+        if doc.version_2_use().is_none() {
+            obj.insert("version".into(), Json::from(1));
+        }
     }
     blake3::hash(canonical_json(&json).as_bytes())
 }

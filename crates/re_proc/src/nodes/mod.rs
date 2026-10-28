@@ -761,8 +761,11 @@ impl NodeRegistry {
 
     /// The JSON Schema (2020-12) of `*.graph.json` files with these node
     /// kinds: a [`GraphDoc`](re_types::graph::GraphDoc) whose nodes are
-    /// checked per kind (`kind` selects the parameter schema). `real schema`
-    /// writes it as `graph.schema.json`.
+    /// checked per kind (`kind` selects the parameter schema), where every
+    /// node param may instead be a reference to a graph param,
+    /// `{"$param": "<name>"}` (ADR-0061 §10), and a node's kind is one of
+    /// these or a project's (`project.*`). `real schema` writes it as
+    /// `graph.schema.json`.
     pub fn graph_json_schema(&self) -> Json {
         let mut doc = serde_json::to_value(schemars::schema_for!(re_types::graph::GraphDoc))
             .unwrap_or(Json::Null);
@@ -781,6 +784,7 @@ impl NodeRegistry {
                 }
                 let prefix = format!("{}.", d.kind);
                 rename_refs(&mut params, &prefix);
+                allow_param_refs(&mut params);
                 if let Json::Object(defs) = defs {
                     for (name, mut def) in defs {
                         rename_refs(&mut def, &prefix);
@@ -793,6 +797,16 @@ impl NodeRegistry {
                 })
             })
             .collect();
+        root_defs.insert(
+            PARAM_REF_DEF.into(),
+            json!({
+                "description": "A reference to a graph param: the node param takes the param's value (ADR-0061 §2).",
+                "type": "object",
+                "properties": { "$param": { "type": "string" } },
+                "required": ["$param"],
+                "additionalProperties": false,
+            }),
+        );
         if let Some(defs) = doc.get_mut("$defs").and_then(Json::as_object_mut) {
             defs.extend(root_defs);
         } else if let Some(obj) = doc.as_object_mut() {
@@ -809,10 +823,40 @@ impl NodeRegistry {
                 .and_then(|p| p.get_mut("kind"))
                 .and_then(Json::as_object_mut)
             {
-                kind.insert("enum".into(), json!(kinds));
+                // A project's Luau kinds and graph kinds are `project.*`.
+                kind.remove("type");
+                kind.insert(
+                    "anyOf".into(),
+                    json!([
+                        { "enum": kinds },
+                        { "type": "string", "pattern": "^project\\.[a-z0-9_.]+$" },
+                    ]),
+                );
             }
         }
         doc
+    }
+}
+
+/// The name in `graph.schema.json`'s `$defs` of a reference to a graph param.
+const PARAM_REF_DEF: &str = "ParamRef";
+
+/// Lets every property of a kind's params schema be a graph param reference
+/// instead (`anyOf [the property, ParamRef]`), keeping its description
+/// where editors show it.
+fn allow_param_refs(params: &mut Json) {
+    let Some(props) = params.get_mut("properties").and_then(Json::as_object_mut) else {
+        return;
+    };
+    for prop in props.values_mut() {
+        let description = prop.get("description").cloned();
+        let mut wrapped = json!({
+            "anyOf": [prop.take(), { "$ref": format!("#/$defs/{PARAM_REF_DEF}") }],
+        });
+        if let Some(d) = description {
+            wrapped["description"] = d;
+        }
+        *prop = wrapped;
     }
 }
 

@@ -1,11 +1,14 @@
-//! The procedural panel: each procedural source's seed and regeneration, and
-//! its graph parameter overrides.
+//! The procedural panel: each procedural source's seed and regeneration, its
+//! graph's params (ADR-0061 §3) and its node parameter overrides.
 
 use egui::{Color32, RichText};
 use re_app::App;
 use re_core::Diagnostic;
+use re_proc::GraphStore;
+use re_proc::params::{GRAPH_KEY, check_value};
 use re_reflect::{FieldType, Value};
 use re_scene::{Entity, World};
+use re_types::graph::{ParamDoc, ParamType};
 use serde_json::{Map, Value as Json, json};
 
 use crate::codes;
@@ -193,16 +196,19 @@ fn graph_params(
             }
         }
     };
+    graph_param_values(ed, ui, world, id, &overrides, has_set_param, actions);
     let set = |node: &str, param: &str, value: Json| {
         set_param(&overrides, id, node, param, value, has_set_param)
     };
-    if overrides.is_empty() {
+    // The graph params' values are listed above, not as node overrides.
+    let nodes: Vec<(&String, &Json)> = overrides.iter().filter(|(k, _)| *k != GRAPH_KEY).collect();
+    if nodes.is_empty() {
         ui.label(RichText::new("No parameter overrides.").weak());
     }
     egui::Grid::new(("re_editor.params", id))
         .num_columns(3)
         .show(ui, |ui| {
-            for (node, params) in &overrides {
+            for (node, params) in nodes {
                 let Json::Object(params) = params else {
                     continue;
                 };
@@ -258,6 +264,218 @@ fn graph_params(
             }
         }
     });
+}
+
+/// The source's graph params (ADR-0061 §3), each with a plain widget for
+/// its type (a number field, a checkbox, a list, or text: JSON text for
+/// vectors, colours and curves) showing the value in use (the source's,
+/// else the default), its `doc` as the tooltip, and a button that clears
+/// the source's value. Writes through `graph.set_param { source, param }`.
+fn graph_param_values(
+    ed: &mut Editor,
+    ui: &mut egui::Ui,
+    world: &World,
+    id: &str,
+    overrides: &Map<String, Json>,
+    has_set_param: bool,
+    actions: &mut Vec<Action>,
+) {
+    let Some(Ok(doc)) = world
+        .ecs
+        .get_resource::<GraphStore>()
+        .and_then(|store| store.current(world, id))
+    else {
+        return;
+    };
+    if doc.params.is_empty() {
+        return;
+    }
+    let values = overrides.get(GRAPH_KEY).and_then(Json::as_object);
+    let set =
+        |param: &str, value: Json| set_graph_param(overrides, id, param, value, has_set_param);
+    ui.label(RichText::new("Graph params").strong());
+    egui::Grid::new(("re_editor.graph_params", id))
+        .num_columns(3)
+        .show(ui, |ui| {
+            for decl in &doc.params {
+                let label = ui.label(decl.name.as_str());
+                if !decl.doc.is_empty() {
+                    label.on_hover_text(decl.doc.as_str());
+                }
+                let own = values
+                    .and_then(|v| v.get(&decl.name))
+                    .filter(|v| !v.is_null());
+                // A stored value the declaration no longer takes is skipped
+                // at regeneration (`RE4202`), so the default is in use.
+                let in_use = own
+                    .and_then(|v| check_value(decl, v).ok())
+                    .or_else(|| {
+                        decl.default
+                            .as_ref()
+                            .and_then(|v| check_value(decl, v).ok())
+                    })
+                    .unwrap_or(Json::Null);
+                let key = format!("gparam\u{1f}{id}\u{1f}{}", decl.name);
+                if let Some(v) = param_widget(ui, &mut ed.pending, &key, id, decl, &in_use) {
+                    actions.push(match v {
+                        Ok(v) => set(&decl.name, v),
+                        Err(text) => Action::Report(
+                            Diagnostic::error(
+                                codes::INVALID_FIELD_TEXT,
+                                format!(
+                                    "`{text}` is not a JSON value for graph param {}",
+                                    decl.name
+                                ),
+                            )
+                            .with_hint("type a JSON value, as `[1.0, 2.0]` for a vec2"),
+                        ),
+                    });
+                }
+                let clear = ui
+                    .add_enabled(own.is_some(), egui::Button::new("×").small())
+                    .on_hover_text("Use the graph's default");
+                if clear.clicked() {
+                    actions.push(set(&decl.name, Json::Null));
+                }
+                ui.end_row();
+            }
+        });
+}
+
+/// One graph param's widget: `Some` with the value to set once an edit is
+/// done (`Err` with the text when it is not JSON).
+fn param_widget(
+    ui: &mut egui::Ui,
+    pending: &mut crate::editor::Pending,
+    key: &str,
+    id: &str,
+    decl: &ParamDoc,
+    in_use: &Json,
+) -> Option<Result<Json, String>> {
+    // A dragged number stays pending until its widget is released, as a
+    // field's does ([`settle`]); the target only names what is set.
+    let target = FieldTarget {
+        id,
+        component: "GraphSource",
+        field: "params",
+        ty: &FieldType::F64,
+    };
+    let mut settled = Vec::new();
+    match decl.ty {
+        ParamType::Number => {
+            let current = Value::Float(in_use.as_f64().unwrap_or_default());
+            let mut x = match pending.values.get(key) {
+                Some(Value::Float(x)) => *x,
+                _ => in_use.as_f64().unwrap_or_default(),
+            };
+            let speed = drag_speed(decl, x);
+            let mut drag = egui::DragValue::new(&mut x).speed(speed);
+            if let (Some(a), Some(b)) = (decl.min, decl.max) {
+                drag = drag.range(a..=b);
+            }
+            let r = ui.add(drag.update_while_editing(false));
+            settle(
+                ui,
+                &[r],
+                pending,
+                key.to_string(),
+                Value::Float(x),
+                &current,
+                &target,
+                &mut settled,
+            );
+        }
+        ParamType::Integer => {
+            let current = Value::Int(in_use.as_i64().unwrap_or_default());
+            let mut i = match pending.values.get(key) {
+                Some(Value::Int(i)) => *i,
+                _ => in_use.as_i64().unwrap_or_default(),
+            };
+            let mut drag = egui::DragValue::new(&mut i).speed(0.1);
+            if let (Some(a), Some(b)) = (decl.min, decl.max) {
+                drag = drag.range(a.ceil() as i64..=b.floor() as i64);
+            }
+            let r = ui.add(drag.update_while_editing(false));
+            settle(
+                ui,
+                &[r],
+                pending,
+                key.to_string(),
+                Value::Int(i),
+                &current,
+                &target,
+                &mut settled,
+            );
+        }
+        ParamType::Bool => {
+            let mut on = in_use.as_bool().unwrap_or_default();
+            if ui.checkbox(&mut on, "").changed() {
+                return Some(Ok(Json::Bool(on)));
+            }
+        }
+        ParamType::Enum => {
+            let shown = in_use.as_str().unwrap_or_default().to_string();
+            let mut chosen = None;
+            egui::ComboBox::from_id_salt(key)
+                .selected_text(shown.as_str())
+                .show_ui(ui, |ui| {
+                    for v in &decl.values {
+                        if ui.selectable_label(*v == shown, v.as_str()).clicked() && *v != shown {
+                            chosen = Some(v.clone());
+                        }
+                    }
+                });
+            return chosen.map(|v| Ok(Json::String(v)));
+        }
+        ParamType::Str | ParamType::File => {
+            let shown = in_use.as_str().unwrap_or_default();
+            return text_field(ui, pending, key, shown).map(|t| Ok(Json::String(t)));
+        }
+        ParamType::Vec2 | ParamType::Vec3 | ParamType::Color | ParamType::Curve => {
+            return text_field(ui, pending, key, &in_use.to_string())
+                .map(|t| serde_json::from_str::<Json>(&t).map_err(|_| t));
+        }
+    }
+    settled.into_iter().find_map(|a| match a {
+        Action::SetField {
+            value: Value::Float(x),
+            ..
+        } => Some(Ok(Json::from(x))),
+        Action::SetField {
+            value: Value::Int(i),
+            ..
+        } => Some(Ok(Json::from(i))),
+        _ => None,
+    })
+}
+
+/// A drag speed for a number param: a two-hundredth of its range, else of
+/// its value.
+fn drag_speed(decl: &ParamDoc, x: f64) -> f64 {
+    match (decl.min, decl.max) {
+        (Some(a), Some(b)) if b > a => (b - a) / 200.0,
+        _ => (x.abs() / 200.0).max(0.001),
+    }
+}
+
+/// Sets one of the source's graph param values: through `graph.set_param`
+/// without a node when it is registered, else by writing it under
+/// `"$graph"` in `GraphSource.params` ([`set_param`]). `null` clears it.
+fn set_graph_param(
+    overrides: &Map<String, Json>,
+    id: &str,
+    param: &str,
+    value: Json,
+    has_set_param: bool,
+) -> Action {
+    if has_set_param {
+        command(
+            "graph.set_param",
+            json!({ "source": id, "param": param, "value": value }),
+        )
+    } else {
+        set_param(overrides, id, GRAPH_KEY, param, value, false)
+    }
 }
 
 fn bad_param(text: &str, node: &str, param: &str, e: &serde_json::Error) -> Diagnostic {
@@ -382,6 +600,30 @@ mod tests {
                 json!({ "source": "island", "node": "terrain", "param": "height", "value": 3 })
             )
         );
+    }
+
+    #[test]
+    fn graph_params_are_set_without_a_node() {
+        let action = set_graph_param(&Map::new(), "island", "height", json!(12), true);
+        assert_eq!(
+            action,
+            command(
+                "graph.set_param",
+                json!({ "source": "island", "param": "height", "value": 12 })
+            )
+        );
+        // Without the command: under "$graph", beside the node overrides.
+        let Json::Object(current) = json!({ "terrain": { "scale": 0.5 } }) else {
+            unreachable!()
+        };
+        let text = params(set_graph_param(
+            &current,
+            "island",
+            "height",
+            json!(12),
+            false,
+        ));
+        assert_eq!(text, r#"{"$graph":{"height":12},"terrain":{"scale":0.5}}"#);
     }
 
     #[test]
