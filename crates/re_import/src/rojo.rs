@@ -4,7 +4,9 @@
 //! * The project's `tree` must be a place (`"$className": "DataModel"`); each
 //!   child of it is a service.
 //! * A node is `$className` (default `Folder`), `$path`, `$properties`,
-//!   `$attributes`, and its other keys as children.
+//!   `$attributes`, and its other keys as children. As in Rojo, a child of
+//!   `StarterPlayer` named `StarterPlayerScripts` or `StarterCharacterScripts`
+//!   without `$className` is of that class, so it is the place's own.
 //! * A directory is a `Folder`, or the script its `init.luau`,
 //!   `init.server.luau` or `init.client.luau` makes (`.lua` too), with
 //!   `init.meta.json` for its class and properties.
@@ -115,6 +117,18 @@ fn script_file(file_name: &str) -> Option<(&'static str, &str)> {
     None
 }
 
+/// The class Rojo gives a child named `name` of a `parent_class` node that
+/// has no `$className`, when its name alone says. (Rojo also infers
+/// `Terrain` under `Workspace`; the engine has no terrain to adopt, so here
+/// it is a `Folder`.)
+fn inferred_class(parent_class: &str, name: &str) -> Option<&'static str> {
+    match (parent_class, name) {
+        ("StarterPlayer", "StarterPlayerScripts") => Some("StarterPlayerScripts"),
+        ("StarterPlayer", "StarterCharacterScripts") => Some("StarterCharacterScripts"),
+        _ => None,
+    }
+}
+
 impl Reader {
     fn rel(&self, p: &Path) -> String {
         p.strip_prefix(&self.base)
@@ -153,8 +167,11 @@ impl Reader {
                         format!("{at}.{name}.$className is not a string"),
                     ));
                 }
-                None if cobj.contains_key("$path") => String::new(),
-                None => "Folder".into(),
+                None => match inferred_class(&self.tree.nodes[node].class, name) {
+                    Some(c) => c.into(),
+                    None if cobj.contains_key("$path") => String::new(),
+                    None => "Folder".into(),
+                },
             };
             let c = self.tree.instance(&class, name, Kind::Declared, None);
             self.tree.nodes[c].file = Some(self.project.display().to_string());
