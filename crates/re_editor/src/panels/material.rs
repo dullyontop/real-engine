@@ -187,8 +187,8 @@ fn record(pending: &mut Pending, spot: MaterialSpot<'_>, rect: egui::Rect) {
 
 pub(super) fn material(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Vec<Action>) {
     ed.material.live = None;
-    let files = app.files().clone();
-    let assets = move |kind: &str| schema::project_assets(&files, kind);
+    let lists = ed.assets.lists();
+    let assets = move |kind: &str| lists.of(kind);
     chooser(ed, ui, app, &assets, actions);
     ui.separator();
     let Some(path) = ed.material.path.clone() else {
@@ -325,7 +325,7 @@ fn chooser(
     ed: &mut Editor,
     ui: &mut egui::Ui,
     app: &App,
-    assets: &dyn Fn(&str) -> Vec<String>,
+    assets: &dyn Fn(&str) -> Arc<[String]>,
     actions: &mut Vec<Action>,
 ) {
     ui.horizontal_wrapped(|ui| {
@@ -478,7 +478,7 @@ impl Row<'_> {
         &self,
         ui: &mut egui::Ui,
         pending: &mut Pending,
-        assets: &dyn Fn(&str) -> Vec<String>,
+        assets: &dyn Fn(&str) -> Arc<[String]>,
     ) -> Option<Edit> {
         let shape = Shape::of(self.prop, self.root);
         let default = schema::default(self.prop, self.root).unwrap_or(Json::Null);

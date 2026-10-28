@@ -480,8 +480,8 @@ pub(crate) fn ui(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Ve
         );
     }
 
-    let files = app.files().clone();
-    let assets = move |kind: &str| schema::project_assets(&files, kind);
+    let lists = ed.assets.lists();
+    let assets = move |kind: &str| lists.of(kind);
     let overrides = overrides(world, &source);
     let read_only = builder.then(|| read_only_text(&path));
     let report = store.report(&source);
@@ -975,7 +975,7 @@ struct Viewer<'a> {
     /// The source's parameter overrides, by node.
     overrides: &'a Map<String, Json>,
     /// The project's files of an asset kind, for asset pickers.
-    assets: &'a dyn Fn(&str) -> Vec<String>,
+    assets: &'a dyn Fn(&str) -> Arc<[String]>,
     /// Why nothing can be edited (a builder graph), shown on the disabled
     /// widgets.
     read_only: Option<&'a str>,

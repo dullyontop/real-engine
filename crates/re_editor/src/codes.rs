@@ -31,3 +31,8 @@ pub const PARAM_VALUE: Code = Code::new("RE8850");
 /// A builder script makes the graph shown on the node canvas, so the canvas
 /// shows it read-only (a note, once per source).
 pub const BUILDER_READ_ONLY: Code = Code::new("RE8852");
+
+/// An asset's thumbnail in the Assets panel could not be made (a warning,
+/// once until the file changes): the file cannot be read or decoded, or a
+/// material does not load or cannot be drawn. Its kind's icon is shown.
+pub const THUMBNAIL: Code = Code::new("RE8853");

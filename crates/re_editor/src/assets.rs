@@ -14,14 +14,21 @@
 //!
 //! *Loaded* and *failed* are the App's: [`AssetIndex::state`] reads them from
 //! its asset server and media when asked, over what the worker found.
+//!
+//! The worker also makes the Assets panel's thumbnails ([`crate::thumbs`]),
+//! after the index's own jobs: a change is looked at before the next
+//! thumbnail is made.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 
 use re_app::App;
 use re_assets::{AssetChange, AssetMeta, AssetsConfig, ProcessedCache};
-use re_core::ProjectFiles;
+use re_core::{Diagnostic, ProjectFiles};
+use re_render::Image;
+
+use crate::thumbs::{Made, MaterialJob, Thumbs};
 
 /// A kind of asset, as `x-real-asset` and the field hints name it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -184,16 +191,48 @@ enum Job {
     Scan,
     /// Look at these paths again: changed files, folders, sidecars.
     Paths(Vec<String>),
+    /// Make these thumbnails: each ask's number, path and kind.
+    Thumbs(Vec<(u64, String, AssetKind)>),
+    /// Write a thumbnail the preview's renderer drew to the disk cache,
+    /// under its key ([`Done::Stored`] when it is).
+    Store(String, Image),
 }
 
 /// What the worker found: for each path it looked at, the files at and
 /// under it now. `""` is the whole project.
 type Found = Vec<(String, Vec<AssetFile>)>;
 
+/// What the worker answers.
+enum Done {
+    /// What a [`Job::Scan`] or [`Job::Paths`] found.
+    Found(Found),
+    /// A thumbnail: the ask's number, the path, and what was made or why
+    /// nothing could be.
+    Thumb(u64, String, Result<Made, String>),
+    /// A [`Job::Store`] is done.
+    Stored,
+}
+
+/// The assets of each kind, sorted (a model's clips and skins in its order),
+/// as the asset pickers list them; made again when the index changes.
+#[derive(Debug, Default)]
+pub(crate) struct KindLists(HashMap<AssetKind, Arc<[String]>>);
+
+impl KindLists {
+    /// The assets of the kind named `kind` (as `x-real-asset` and the field
+    /// hints name it); none for an unknown kind.
+    pub(crate) fn of(&self, kind: &str) -> Arc<[String]> {
+        AssetKind::from_name(kind)
+            .and_then(|k| self.0.get(&k))
+            .cloned()
+            .unwrap_or_else(|| Arc::new([]))
+    }
+}
+
 /// The worker thread's end of the index.
 struct Worker {
     jobs: mpsc::Sender<Job>,
-    done: mpsc::Receiver<Found>,
+    done: mpsc::Receiver<Done>,
 }
 
 /// The project's files by kind, built and kept current by a worker thread.
@@ -208,9 +247,15 @@ pub struct AssetIndex {
     worker: Option<Worker>,
     /// Jobs sent and not answered yet.
     waiting: usize,
+    /// Thumbnails sent to the disk cache and not written yet.
+    storing: usize,
     /// Goes up with every change, so lists made from the index are kept
     /// until it changes.
     revision: u64,
+    /// The Assets panel's thumbnails.
+    thumbs: Thumbs,
+    /// The assets of each kind, for the pickers.
+    lists: Arc<KindLists>,
 }
 
 impl std::fmt::Debug for AssetIndex {
@@ -220,6 +265,7 @@ impl std::fmt::Debug for AssetIndex {
             .field("root", &self.root)
             .field("waiting", &self.waiting)
             .field("revision", &self.revision)
+            .field("thumbs", &self.thumbs)
             .finish_non_exhaustive()
     }
 }
@@ -240,20 +286,79 @@ impl AssetIndex {
             .any(|c| paths(c).any(|p| p == re_app::CONFIG_FILE))
         {
             self.start(app);
-        } else if !changes.is_empty() {
-            let mut look: Vec<String> = changes.iter().flat_map(paths).map(str::to_owned).collect();
+        } else {
+            // The engine's own files (`.real/`, where thumbnails are written)
+            // and other hidden ones are not assets.
+            let mut look: Vec<String> = changes
+                .iter()
+                .flat_map(paths)
+                .filter(|p| !hidden(p))
+                .map(str::to_owned)
+                .collect();
             look.sort();
             look.dedup();
-            self.send(Job::Paths(look));
+            if !look.is_empty() {
+                self.send(Job::Paths(look));
+            }
+        }
+        let asks = self.thumbs.begin_frame();
+        if !asks.is_empty()
+            && let Some(w) = &self.worker
+        {
+            let _ = w.jobs.send(Job::Thumbs(asks));
         }
         self.take(false);
     }
 
-    /// Waits until the worker has answered every job sent so far, taking in
-    /// what it found (for tests, and tools that need the index complete).
+    /// Waits until the worker has answered every job sent so far, the
+    /// thumbnails asked for and their disk writes included, taking in what it
+    /// found (for tests, and tools that need the index complete).
     pub(crate) fn wait(&mut self, app: &mut App) {
         self.poll(app);
         self.take(true);
+    }
+
+    /// The thumbnail of the asset at `path`, of `kind`, to draw now: its
+    /// texture and its size in pixels. It is asked for when it is not made
+    /// yet ([`crate::thumbs`]).
+    pub(crate) fn thumbnail(
+        &self,
+        path: &str,
+        kind: AssetKind,
+    ) -> Option<(egui::TextureId, egui::Vec2)> {
+        self.thumbs.get(path, kind)
+    }
+
+    /// True when the thumbnail of the asset at `path` is made and shown.
+    pub fn has_thumbnail(&self, path: &str) -> bool {
+        self.thumbs.is_shown(path)
+    }
+
+    /// Makes egui textures of the thumbnails made since the last frame, and
+    /// returns the notes (`RE8853`) of those that could not be made.
+    pub(crate) fn upload_thumbnails(&mut self, ctx: &egui::Context) -> Vec<Diagnostic> {
+        self.thumbs.upload(ctx)
+    }
+
+    /// The next material thumbnail for the preview's renderer to draw.
+    pub(crate) fn next_material_thumbnail(&mut self) -> Option<MaterialJob> {
+        self.thumbs.next_material()
+    }
+
+    /// Takes in the material thumbnail the preview's renderer drew for
+    /// `job`, or why it could not, and has the worker write it to the disk
+    /// cache.
+    pub(crate) fn material_thumbnail_drawn(
+        &mut self,
+        job: &MaterialJob,
+        drawn: Result<Image, String>,
+    ) {
+        if let Some((key, image)) = self.thumbs.material_drawn(job, drawn)
+            && let Some(w) = &self.worker
+            && w.jobs.send(Job::Store(key, image)).is_ok()
+        {
+            self.storing += 1;
+        }
     }
 
     /// True once the worker has answered every job sent.
@@ -285,26 +390,13 @@ impl AssetIndex {
     /// The assets of `kind`, sorted: project paths, or for clips and skins
     /// `<model>#<name>`.
     pub fn of_kind(&self, kind: AssetKind) -> Vec<String> {
-        match kind {
-            AssetKind::Clip | AssetKind::Skin => self
-                .files
-                .values()
-                .flat_map(|f| {
-                    let names = if kind == AssetKind::Clip {
-                        &f.clips
-                    } else {
-                        &f.skins
-                    };
-                    names.iter().map(move |n| format!("{}#{n}", f.path))
-                })
-                .collect(),
-            _ => self
-                .files
-                .values()
-                .filter(|f| f.kind == kind)
-                .map(|f| f.path.clone())
-                .collect(),
-        }
+        self.lists.of(kind.name()).to_vec()
+    }
+
+    /// The assets of each kind, as the asset pickers list them: a list that
+    /// stays as it is while the index changes.
+    pub(crate) fn lists(&self) -> Arc<KindLists> {
+        Arc::clone(&self.lists)
     }
 
     /// The import state of the asset at `path` (a file, or `<model>#<name>`)
@@ -341,6 +433,7 @@ impl AssetIndex {
         let look = Look {
             config: server.config(),
             cache: ProcessedCache::in_dir(server.cache().dir().clone()),
+            thumbs: dir.join(".real/cache/thumbs"),
             dir,
             files,
         };
@@ -348,17 +441,7 @@ impl AssetIndex {
         let (outbox, done) = mpsc::channel();
         let spawned = std::thread::Builder::new()
             .name("re_editor asset index".into())
-            .spawn(move || {
-                for job in inbox {
-                    let found = match job {
-                        Job::Scan => vec![(String::new(), look.under(""))],
-                        Job::Paths(paths) => paths.iter().map(|p| look.at(p)).collect(),
-                    };
-                    if outbox.send(found).is_err() {
-                        break;
-                    }
-                }
-            });
+            .spawn(move || look.serve(&inbox, &outbox));
         if spawned.is_ok() {
             self.worker = Some(Worker { jobs, done });
             self.send(Job::Scan);
@@ -373,34 +456,42 @@ impl AssetIndex {
         }
     }
 
-    /// Takes in what the worker found; with `block`, until it has answered
-    /// every job.
+    /// Takes in what the worker answered; with `block`, until it has
+    /// answered every job and ask.
     fn take(&mut self, block: bool) {
-        while self.waiting > 0 {
+        loop {
             let Some(w) = &self.worker else {
                 return;
             };
-            let found = if block {
+            let due = self.waiting > 0 || self.storing > 0 || self.thumbs.due() > 0;
+            let done = if block && due {
                 w.done.recv().map_err(|_| mpsc::TryRecvError::Disconnected)
             } else {
                 w.done.try_recv()
             };
-            match found {
-                Ok(found) => {
-                    self.waiting -= 1;
+            match done {
+                Ok(Done::Found(found)) => {
+                    self.waiting = self.waiting.saturating_sub(1);
                     self.apply(found);
                 }
+                Ok(Done::Thumb(number, path, made)) => self.thumbs.answered(number, path, made),
+                Ok(Done::Stored) => self.storing = self.storing.saturating_sub(1),
                 Err(mpsc::TryRecvError::Empty) => return,
                 // The worker is gone (it panicked): the index stays as it is.
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.worker = None;
                     self.waiting = 0;
+                    self.storing = 0;
+                    return;
                 }
             }
         }
     }
 
     fn apply(&mut self, found: Found) {
+        for (path, _) in &found {
+            self.thumbs.forget(path);
+        }
         for (path, files) in found {
             if path.is_empty() {
                 self.files.clear();
@@ -418,6 +509,16 @@ impl AssetIndex {
             .keys()
             .flat_map(|p| p.match_indices('/').map(move |(i, _)| p[..i].to_string()))
             .collect();
+        let mut lists: HashMap<AssetKind, Vec<String>> = HashMap::new();
+        for f in self.files.values() {
+            lists.entry(f.kind).or_default().push(f.path.clone());
+            for (kind, names) in [(AssetKind::Clip, &f.clips), (AssetKind::Skin, &f.skins)] {
+                let parts = names.iter().map(|n| format!("{}#{n}", f.path));
+                lists.entry(kind).or_default().extend(parts);
+            }
+        }
+        let lists = lists.into_iter().map(|(k, v)| (k, v.into())).collect();
+        self.lists = Arc::new(KindLists(lists));
         self.revision += 1;
     }
 }
@@ -443,9 +544,53 @@ struct Look {
     files: ProjectFiles,
     config: AssetsConfig,
     cache: ProcessedCache,
+    /// The thumbnails' disk cache.
+    thumbs: PathBuf,
 }
 
 impl Look {
+    /// The worker thread: answers jobs until the index is dropped, the
+    /// index's first, then one thumbnail at a time while none is waiting.
+    fn serve(&self, inbox: &mpsc::Receiver<Job>, outbox: &mpsc::Sender<Done>) {
+        let mut asks = VecDeque::new();
+        loop {
+            let job = if asks.is_empty() {
+                match inbox.recv() {
+                    Ok(job) => Some(job),
+                    Err(_) => return,
+                }
+            } else {
+                match inbox.try_recv() {
+                    Ok(job) => Some(job),
+                    Err(mpsc::TryRecvError::Empty) => None,
+                    Err(mpsc::TryRecvError::Disconnected) => return,
+                }
+            };
+            let done = match job {
+                Some(Job::Scan) => Done::Found(vec![(String::new(), self.under(""))]),
+                Some(Job::Paths(paths)) => Done::Found(paths.iter().map(|p| self.at(p)).collect()),
+                Some(Job::Thumbs(more)) => {
+                    asks.extend(more);
+                    continue;
+                }
+                Some(Job::Store(key, image)) => {
+                    crate::thumbs::store(&self.thumbs, &key, &image);
+                    Done::Stored
+                }
+                None => {
+                    let Some((number, path, kind)) = asks.pop_front() else {
+                        continue;
+                    };
+                    let made = crate::thumbs::make(&self.files, &self.thumbs, &path, kind);
+                    Done::Thumb(number, path, made)
+                }
+            };
+            if outbox.send(done).is_err() {
+                return;
+            }
+        }
+    }
+
     /// The files at and under `path` now, with the path they replace: a
     /// sidecar stands for its file.
     fn at(&self, path: &str) -> (String, Vec<AssetFile>) {

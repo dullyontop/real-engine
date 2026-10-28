@@ -11,6 +11,13 @@
 //! renderer, not the World's assets, and a texture is loaded as the game
 //! view loads it. It draws before the game view, so the renderer's last
 //! frame (its statistics, the shadow probes) stays the game view's.
+//!
+//! The same sphere draws the Assets panel's material thumbnails
+//! ([`crate::thumbs`]), one a frame, in the fixed light: the asset index's
+//! worker gives the material and its textures, shrunk, and the preview
+//! uploads them, draws the sphere into a capture of its own, releases them,
+//! and reads the picture back in the next frame, when the GPU has drawn it.
+//! Nothing is loaded into the asset server for a thumbnail.
 
 use std::collections::HashMap;
 
@@ -25,6 +32,7 @@ use re_types::{
 };
 use serde_json::Value as Json;
 
+use crate::thumbs::{self, MaterialJob};
 use crate::view::{VIEW_FORMAT, no_graphics};
 use crate::{Editor, Panel};
 
@@ -54,6 +62,14 @@ pub struct MaterialPreview {
     error: Option<String>,
     /// How many times the sphere was drawn.
     draws: u64,
+    /// The capture material thumbnails are drawn in, made for the first.
+    thumb_target: Option<Capture>,
+    /// The material thumbnail to draw this frame, taken from the asset index
+    /// in `sync`.
+    thumb_job: Option<MaterialJob>,
+    /// The one drawn in the last frame, read back in the next `sync`, and
+    /// whether it could be drawn.
+    thumb_drawn: Option<(MaterialJob, Result<(), String>)>,
 }
 
 /// What a drawing of the preview depends on.
@@ -118,6 +134,7 @@ impl MaterialPreview {
         ui: &mut Renderer,
         editor: &mut Editor,
     ) -> Result<(), Diagnostic> {
+        self.sync_thumbnails(app, editor);
         if self.target.is_none() && editor.rects().get(Panel::Material).is_some() {
             let device = &app.graphics().ok_or_else(no_graphics)?.gpu().device;
             let capture = Capture::with_format(device, SIZE, SIZE, VIEW_FORMAT)?;
@@ -129,10 +146,49 @@ impl MaterialPreview {
         Ok(())
     }
 
-    /// Draws the sphere if the Material panel was drawn this frame and what
-    /// it shows changed. An error is kept for the panel to show, and the
-    /// frame goes on.
+    /// Hands the material thumbnail drawn in the last frame to the asset
+    /// index, and takes the next one to draw.
+    fn sync_thumbnails(&mut self, app: &App, editor: &mut Editor) {
+        if let Some((job, drawn)) = self.thumb_drawn.take() {
+            let picture = drawn.and_then(|()| self.read_thumbnail(app).map_err(|d| d.message));
+            editor.assets.material_thumbnail_drawn(&job, picture);
+        }
+        self.thumb_job = editor.assets.next_material_thumbnail();
+        if self.thumb_job.is_some() && self.thumb_target.is_none() {
+            let side = thumbs::MATERIAL_DRAWN;
+            let made = app
+                .graphics()
+                .ok_or_else(no_graphics)
+                .and_then(|g| Capture::with_format(&g.gpu().device, side, side, VIEW_FORMAT));
+            match made {
+                Ok(capture) => self.thumb_target = Some(capture),
+                Err(d) => {
+                    if let Some(job) = self.thumb_job.take() {
+                        editor.assets.material_thumbnail_drawn(&job, Err(d.message));
+                    }
+                }
+            }
+        }
+    }
+
+    /// The material thumbnail drawn in the last frame, shrunk to its size.
+    fn read_thumbnail(&self, app: &App) -> Result<Image, Diagnostic> {
+        let capture = self.thumb_target.as_ref().ok_or_else(no_graphics)?;
+        let gpu = app.graphics().ok_or_else(no_graphics)?.gpu();
+        let image = capture.read(&gpu.device, &gpu.queue)?;
+        Ok(thumbs::shrink(&image, thumbs::SIZE, thumbs::Mode::Colour))
+    }
+
+    /// Draws the material thumbnail taken in `sync`, then the sphere if the
+    /// Material panel was drawn this frame and what it shows changed. An
+    /// error is kept for the panel to show, and the frame goes on.
     pub(crate) fn render(&mut self, app: &mut App, editor: &Editor) {
+        if let Some(mut job) = self.thumb_job.take() {
+            let drawn = self.draw_thumbnail(app, &job).map_err(|d| d.message);
+            // Uploaded and released: what is left names the thumbnail.
+            job.textures.clear();
+            self.thumb_drawn = Some((job, drawn));
+        }
         if self.target.is_none() || editor.rects().get(Panel::Material).is_none() {
             return;
         }
@@ -216,13 +272,7 @@ impl MaterialPreview {
         let gfx = app.graphics_mut().ok_or_else(no_graphics)?;
         let (device, queue) = (gfx.gpu().device.clone(), gfx.gpu().queue.clone());
         let renderer = gfx.renderer_mut();
-        let sphere = match self.sphere {
-            Some(h) => h,
-            None => {
-                let mesh = re_app::media::builtin_mesh("sphere").expect("a built-in sphere");
-                *self.sphere.insert(renderer.upload_mesh(&mesh)?)
-            }
-        };
+        let sphere = sphere(&mut self.sphere, renderer)?;
         let mut desc = desc.clone();
         for (slot, id, version, data) in textures {
             let handle = match (self.textures.get(id), data) {
@@ -240,12 +290,7 @@ impl MaterialPreview {
                 }
                 (_, None) => continue,
             };
-            let target = match slot {
-                0 => &mut desc.base_color_texture,
-                1 => &mut desc.metallic_roughness_texture,
-                _ => &mut desc.normal_texture,
-            };
-            *target = Some(TextureRef::Handle(handle));
+            *slot_of(&mut desc, *slot) = Some(TextureRef::Handle(handle));
         }
         // A texture the asset server could not give is drawn without.
         for t in [
@@ -277,25 +322,13 @@ impl MaterialPreview {
             }
             keep
         });
-        let snapshot = RenderSnapshot {
-            camera: Camera {
-                world: Mat4::from_translation(Vec3::new(0.0, 0.0, 1.9)),
-                fov_y_radians: 35f32.to_radians(),
-                near: 0.05,
-                far: 10.0,
-            },
-            lights: shown.lights.clone(),
-            items: vec![DrawItem {
-                entity: EntityId(0),
-                mesh: sphere,
-                material,
-                world: Mat4::from_rotation_y(shown.turn),
-                flags: DrawFlags::NONE,
-            }],
-            clear: BACKGROUND,
-            post: shown.post,
-            ..RenderSnapshot::default()
-        };
+        let snapshot = sphere_snapshot(
+            sphere,
+            material,
+            shown.turn,
+            shown.lights.clone(),
+            shown.post,
+        );
         renderer.render_with(
             &device,
             &queue,
@@ -306,11 +339,110 @@ impl MaterialPreview {
         Ok(())
     }
 
+    /// Draws the material thumbnail `job` into the thumbnail capture, in the
+    /// fixed light, with its own uploads of the job's textures, released
+    /// after (wgpu keeps them until the GPU has drawn).
+    fn draw_thumbnail(&mut self, app: &mut App, job: &MaterialJob) -> Result<(), Diagnostic> {
+        let capture = self.thumb_target.as_ref().ok_or_else(no_graphics)?;
+        let gfx = app.graphics_mut().ok_or_else(no_graphics)?;
+        let (device, queue) = (gfx.gpu().device.clone(), gfx.gpu().queue.clone());
+        let renderer = gfx.renderer_mut();
+        let sphere = sphere(&mut self.sphere, renderer)?;
+        let mut desc = job.desc.clone();
+        let mut uploaded = Vec::new();
+        let mut drawn = Ok(());
+        for (slot, data) in &job.textures {
+            match renderer.upload_texture(data) {
+                Ok(h) => {
+                    uploaded.push(h);
+                    *slot_of(&mut desc, *slot) = Some(TextureRef::Handle(h));
+                }
+                Err(d) => {
+                    drawn = Err(d);
+                    break;
+                }
+            }
+        }
+        if drawn.is_ok() {
+            drawn = renderer.create_material(&desc).and_then(|material| {
+                let (lights, post) = light(&RenderSnapshot::default());
+                let snapshot = sphere_snapshot(sphere, material, 0.0, lights, post);
+                let frame = renderer.render_with(
+                    &device,
+                    &queue,
+                    capture.view(),
+                    &snapshot,
+                    &SceneExtras::default(),
+                );
+                let _ = renderer.release_material(material);
+                frame.map(|_| ())
+            });
+        }
+        for h in uploaded {
+            let _ = renderer.release_texture(h);
+        }
+        drawn
+    }
+
     /// Forgets the capture's egui id (before the UI renderer is dropped).
     pub(crate) fn release(&mut self, ui: &mut Renderer) {
         if let Some((_, id)) = self.target.take() {
             ui.free_ui_texture(id);
         }
+    }
+}
+
+/// The preview's sphere, uploaded to `renderer` the first time.
+fn sphere(
+    slot: &mut Option<MeshHandle>,
+    renderer: &mut Renderer,
+) -> Result<MeshHandle, Diagnostic> {
+    match *slot {
+        Some(h) => Ok(h),
+        None => {
+            let mesh = re_app::media::builtin_mesh("sphere").expect("a built-in sphere");
+            Ok(*slot.insert(renderer.upload_mesh(&mesh)?))
+        }
+    }
+}
+
+/// The texture of `desc` in `slot`: 0 base colour, 1 metallic-roughness, 2
+/// normal.
+fn slot_of(desc: &mut MaterialDesc, slot: usize) -> &mut Option<TextureRef> {
+    match slot {
+        0 => &mut desc.base_color_texture,
+        1 => &mut desc.metallic_roughness_texture,
+        _ => &mut desc.normal_texture,
+    }
+}
+
+/// The sphere with `material`, turned by `turn` radians, seen from the front
+/// in `lights`.
+fn sphere_snapshot(
+    sphere: MeshHandle,
+    material: MaterialHandle,
+    turn: f32,
+    lights: Vec<Light>,
+    post: PostSettings,
+) -> RenderSnapshot {
+    RenderSnapshot {
+        camera: Camera {
+            world: Mat4::from_translation(Vec3::new(0.0, 0.0, 1.9)),
+            fov_y_radians: 35f32.to_radians(),
+            near: 0.05,
+            far: 10.0,
+        },
+        lights,
+        items: vec![DrawItem {
+            entity: EntityId(0),
+            mesh: sphere,
+            material,
+            world: Mat4::from_rotation_y(turn),
+            flags: DrawFlags::NONE,
+        }],
+        clear: BACKGROUND,
+        post,
+        ..RenderSnapshot::default()
     }
 }
 

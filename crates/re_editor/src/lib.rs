@@ -32,7 +32,9 @@
 //! files by folder and kind from the asset index ([`AssetIndex`]), which a
 //! worker thread builds and the App's file changes keep current: each file's
 //! details, the entities that use it, opening it by its kind, new materials,
-//! prefabs and scenes, and imports.
+//! prefabs and scenes, and imports. Textures and materials show thumbnails,
+//! made by the same worker (a material's on the preview sphere) and kept on
+//! disk under `.real/cache/thumbs/`.
 //!
 //! The panels other than the toolbar and the palette are tabs in a dock
 //! (egui_dock): they can be dragged into other splits, stacked or floated.
@@ -91,6 +93,7 @@ mod panels;
 mod preview;
 mod selection;
 mod socket;
+mod thumbs;
 mod view;
 mod widgets;
 mod windowed;
@@ -204,6 +207,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::BUILDER_READ_ONLY,
         title: "A builder graph is read-only on the canvas",
         page: include_str!("../explain/RE8852.md"),
+    },
+    DiagInfo {
+        code: codes::THUMBNAIL,
+        title: "An asset's thumbnail could not be made",
+        page: include_str!("../explain/RE8853.md"),
     },
 ];
 

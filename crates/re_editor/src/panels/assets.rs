@@ -2,6 +2,9 @@
 //! ([`crate::assets`]) in a folder tree and a grid of tiles or a list, with
 //! a kind filter and a search over every folder.
 //!
+//! Textures and materials show thumbnails ([`crate::thumbs`]), asked for as
+//! their tiles are drawn; the other kinds show an icon.
+//!
 //! A click selects an asset and shows its details: its path, kind, size,
 //! asset id, import state, and the open scene's entities whose asset fields
 //! name it (the fields with a [`FieldHint`](re_reflect::FieldHint)); a click
@@ -224,7 +227,7 @@ pub(super) fn assets(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mu
         let clicked = if view.list {
             list(ui, app, &index, &items, &selected, &mut ed.pending)
         } else {
-            grid(ui, &items, &selected, &mut ed.pending)
+            grid(ui, &index, &items, &selected, &mut ed.pending)
         };
         if let Some((path, double)) = clicked {
             if double {
@@ -580,6 +583,7 @@ fn folder_children(
 /// whether it was a double click.
 fn grid(
     ui: &mut egui::Ui,
+    index: &AssetIndex,
     items: &[Item<'_>],
     selected: &Option<String>,
     pending: &mut Pending,
@@ -596,7 +600,7 @@ fn grid(
             for row in items.chunks(columns).skip(rows.start).take(rows.len()) {
                 ui.horizontal(|ui| {
                     for item in row {
-                        if let Some(c) = tile(ui, item, size, selected, pending) {
+                        if let Some(c) = tile(ui, index, item, size, selected, pending) {
                             clicked = Some(c);
                         }
                     }
@@ -606,10 +610,11 @@ fn grid(
     clicked
 }
 
-/// One tile: the asset's icon, and its name under it. Returns its path when
-/// it was clicked, and whether it was a double click.
+/// One tile: the asset's thumbnail or icon, and its name under it. Returns
+/// its path when it was clicked, and whether it was a double click.
 fn tile(
     ui: &mut egui::Ui,
+    index: &AssetIndex,
     item: &Item<'_>,
     size: egui::Vec2,
     selected: &Option<String>,
@@ -631,7 +636,10 @@ fn tile(
     }
     let thumb =
         egui::Rect::from_min_size(rect.min + egui::vec2(4.0, 4.0), egui::vec2(THUMB, THUMB));
-    icon(ui, thumb, item.kind);
+    match index.thumbnail(&item.path, item.kind) {
+        Some((texture, size)) => picture(ui, thumb, texture, size),
+        None => icon(ui, thumb, item.kind),
+    }
     let label = egui::Rect::from_min_max(
         egui::pos2(rect.min.x + 2.0, thumb.max.y + 2.0),
         egui::pos2(rect.max.x - 2.0, rect.max.y),
@@ -712,6 +720,14 @@ fn list(
     clicked
 }
 
+/// A thumbnail, as large as fits in `rect`, keeping its shape.
+fn picture(ui: &egui::Ui, rect: egui::Rect, texture: egui::TextureId, size: egui::Vec2) {
+    let scale = (rect.width() / size.x).min(rect.height() / size.y);
+    let shown = egui::Rect::from_center_size(rect.center(), size * scale);
+    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    ui.painter().image(texture, shown, uv, Color32::WHITE);
+}
+
 /// A tile's icon: the kind's name on its colour.
 fn icon(ui: &egui::Ui, rect: egui::Rect, kind: AssetKind) {
     let painter = ui.painter();
@@ -790,6 +806,10 @@ fn details(
     actions: &mut Vec<Action>,
 ) {
     ui.label(RichText::new(&item.name).strong());
+    if let Some((texture, size)) = index.thumbnail(&item.path, item.kind) {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(THUMB, THUMB), egui::Sense::hover());
+        picture(ui, rect, texture, size);
+    }
     egui::Grid::new("re_editor.assets.details.grid")
         .num_columns(2)
         .show(ui, |ui| {

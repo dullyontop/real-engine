@@ -27,6 +27,7 @@
 //! one undo step, each.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use egui::{Color32, Id, RichText};
 use re_app::App;
@@ -126,8 +127,8 @@ pub(super) fn graph(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut
         return;
     }
     let has_regenerate = app.commands().spec("graph.regenerate").is_some();
-    let files = app.files().clone();
-    let assets = move |kind: &str| schema::project_assets(&files, kind);
+    let lists = ed.assets.lists();
+    let assets = move |kind: &str| lists.of(kind);
     for (id, e) in sources {
         let generator = match world.get(id, "Procedural", "generator") {
             Ok(Value::Str(s)) => s,
@@ -506,7 +507,7 @@ fn graph_params(
     ui: &mut egui::Ui,
     app: &App,
     id: &str,
-    assets: &dyn Fn(&str) -> Vec<String>,
+    assets: &dyn Fn(&str) -> Arc<[String]>,
     actions: &mut Vec<Action>,
 ) {
     let world = app.world();
@@ -741,7 +742,7 @@ impl Row<'_> {
         ui: &mut egui::Ui,
         pending: &mut Pending,
         types: &Types<'_>,
-        assets: &dyn Fn(&str) -> Vec<String>,
+        assets: &dyn Fn(&str) -> Arc<[String]>,
         actions: &mut Vec<Action>,
     ) -> Option<RowEdit> {
         let typed = types.param(self.node, self.param);
@@ -836,7 +837,7 @@ impl Picker<'_> {
         ui: &mut egui::Ui,
         pending: &mut Pending,
         state: &mut [String; 3],
-        assets: &dyn Fn(&str) -> Vec<String>,
+        assets: &dyn Fn(&str) -> Arc<[String]>,
         actions: &mut Vec<Action>,
     ) -> Option<(String, String, Json)> {
         let [node, param, value] = state;

@@ -808,6 +808,9 @@ impl Editor {
             self.camera_saved = self.camera;
         }
         self.assets.poll(app);
+        for note in self.assets.upload_thumbnails(ui.ctx()) {
+            self.log_diagnostic(&note);
+        }
         self.pull_log(app);
         self.rects = PanelRects::default();
         self.pending.rects.clear();

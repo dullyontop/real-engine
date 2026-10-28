@@ -14,7 +14,6 @@
 //! guard.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use egui::{Id, RichText};
@@ -26,10 +25,6 @@ use crate::codes;
 /// The shortest time between two live edits of one drag, in seconds: each one
 /// regenerates the procedural source.
 pub(crate) const LIVE_INTERVAL: f64 = 0.2;
-
-/// How long a picker's list of asset files is reused before the project is
-/// listed again, in seconds.
-const ASSET_LIST_AGE: f64 = 2.0;
 
 /// How deep `$ref`s and nested shapes are followed.
 const DEPTH: usize = 8;
@@ -475,8 +470,9 @@ pub(crate) enum Change {
 
 /// What a widget reads beside its value, and where it records its parts.
 pub(crate) struct Env<'a> {
-    /// The project's files of an asset kind, for asset pickers.
-    assets: &'a dyn Fn(&str) -> Vec<String>,
+    /// The project's assets of a kind (the asset index's), for asset
+    /// pickers.
+    assets: &'a dyn Fn(&str) -> Arc<[String]>,
     /// Where each part of the widget was drawn this frame, in screen points:
     /// `""` the widget itself; `"0"`, `"1"`… a vector's components, or a
     /// list's items and map's values (each with its own parts after a `/`);
@@ -488,7 +484,7 @@ pub(crate) struct Env<'a> {
 }
 
 impl<'a> Env<'a> {
-    pub(crate) fn new(assets: &'a dyn Fn(&str) -> Vec<String>) -> Env<'a> {
+    pub(crate) fn new(assets: &'a dyn Fn(&str) -> Arc<[String]>) -> Env<'a> {
         Env {
             assets,
             parts: Vec::new(),
@@ -812,33 +808,6 @@ pub(crate) fn edit(
     }
 }
 
-/// The asset files last listed for each kind, and when.
-#[derive(Clone, Default)]
-struct AssetLists(HashMap<String, (f64, Arc<[String]>)>);
-
-/// The project's files of `kind`, listed again when the last list is older
-/// than [`ASSET_LIST_AGE`].
-fn asset_list(ui: &egui::Ui, kind: &str, env: &Env<'_>) -> Arc<[String]> {
-    let id = Id::new("re_editor.asset_lists");
-    let now = ui.input(|i| i.time);
-    let cached = ui.data(|d| {
-        d.get_temp::<AssetLists>(id)
-            .and_then(|l| l.0.get(kind).cloned())
-    });
-    if let Some((at, files)) = cached
-        && now - at < ASSET_LIST_AGE
-    {
-        return files;
-    }
-    let files: Arc<[String]> = (env.assets)(kind).into();
-    ui.data_mut(|d| {
-        d.get_temp_mut_or_default::<AssetLists>(id)
-            .0
-            .insert(kind.to_string(), (now, files.clone()));
-    });
-    files
-}
-
 /// A path field with a searchable list of the project's files of `kind`.
 fn asset_picker(
     ui: &mut egui::Ui,
@@ -859,7 +828,7 @@ fn asset_picker(
             ui.add(
                 egui::TextEdit::singleline(&mut search).hint_text(format!("search {kind} files")),
             );
-            let files = asset_list(ui, kind, env);
+            let files = (env.assets)(kind);
             let needle = search.to_lowercase();
             egui::ScrollArea::vertical()
                 .id_salt(id.with("files"))
@@ -1112,37 +1081,6 @@ pub(crate) fn misfit(what: &str, value: &Json, shape: &Shape) -> Diagnostic {
         ),
     )
     .with_hint("set a value of its type, or remove it so the node kind's default applies")
-}
-
-/// The file suffixes of an asset kind (ADR-0064 §7); none for `clip` and
-/// `skin`, which name a model's animations and skins (`<model>#<name>`).
-pub(crate) fn asset_suffixes(kind: &str) -> &'static [&'static str] {
-    match kind {
-        "material" => &[".material.json"],
-        "prefab" => &[".prefab.json"],
-        "scene" => &[".scene.json"],
-        "graph" => &[".graph.json"],
-        "animgraph" => &[".animgraph.json"],
-        "script" => &[".luau"],
-        "texture" => &[".png", ".jpg", ".jpeg"],
-        "model" => &[".gltf", ".glb"],
-        "audio" => &[".wav", ".ogg"],
-        _ => &[],
-    }
-}
-
-/// The project's files of an asset kind, sorted, without the engine's own
-/// folder (`.real/`) or hidden folders.
-pub(crate) fn project_assets(files: &re_core::ProjectFiles, kind: &str) -> Vec<String> {
-    let mut out: Vec<String> = asset_suffixes(kind)
-        .iter()
-        .flat_map(|suffix| files.list("", suffix))
-        .map(|p| p.as_str().to_string())
-        .filter(|p| !p.split('/').any(|segment| segment.starts_with('.')))
-        .collect();
-    out.sort();
-    out.dedup();
-    out
 }
 
 /// True when the command `spec` takes a `coalesce` key.
