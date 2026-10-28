@@ -114,6 +114,80 @@ fn fixtures() {
     insta::assert_json_snapshot!("fixtures_types", t);
 }
 
+const ROCKS: &str = r#"--!strict
+return proc.node({
+    kind = "project.rocks",
+    version = 1,
+    doc = "Rocks.",
+    output = "points",
+    params = { count = proc.param.integer({ default = 3, min = 0 }) },
+    eval = function(ctx, _inputs, params)
+        local n: number = ctx.rng:int(0, params.count)
+        return { count = n }
+    end,
+})
+"#;
+
+/// A project's generator scripts (`scripts/generators/`) run with an API of
+/// their own: the scan and the type checker compare them with
+/// `generator.d.luau`, and the game's scripts with `engine.d.luau`.
+#[test]
+fn generator_scripts_are_checked_against_their_own_api() {
+    let dir = tempfile::tempdir().unwrap();
+    let write = |path: &str, text: &str| {
+        let p = dir.path().join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    };
+    write(
+        "scripts/game/main.luau",
+        "--!strict\nlocal e = world.get(\"hero\")\nprint(e, proc.node)\n",
+    );
+    write("scripts/generators/rocks.luau", ROCKS);
+    write(
+        "scripts/generators/lib/bad.luau",
+        "--!strict\nlocal e = world.get(\"hero\")\nreturn e\n",
+    );
+    let report = corpus::run(
+        &[dir.path().join("scripts")],
+        &CorpusOptions {
+            types: checker_present(),
+            ..CorpusOptions::default()
+        },
+    );
+    assert_eq!(report.compile.ok, 3);
+    // The generators' `proc` is not the game's, and the game's `world` is
+    // not the generators'.
+    let gap = &report.scan.gap.missing;
+    assert_eq!(gap.get("proc.node"), Some(&1), "{gap:?}");
+    assert_eq!(gap.get("world"), Some(&1), "{gap:?}");
+    assert!(!gap.contains_key("proc.param"), "{gap:?}");
+
+    let Some(t) = &report.types else {
+        println!("skipped tier 3: luau-lsp not found");
+        return;
+    };
+    let errors: Vec<(String, u32)> = t
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == codes::TYPE_ERROR)
+        .filter_map(|d| match &d.location {
+            Some(re_core::Location::File {
+                file,
+                line: Some(line),
+                ..
+            }) => Some((file.rsplit('/').next().unwrap().to_string(), *line)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        errors,
+        [("main.luau".to_string(), 3), ("bad.luau".to_string(), 2)],
+        "{:#?}",
+        t.diagnostics
+    );
+}
+
 #[test]
 fn missing_and_overlapping_directories() {
     let dirs = [

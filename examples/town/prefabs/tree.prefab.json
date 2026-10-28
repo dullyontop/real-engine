@@ -1,0 +1,36 @@
+{
+  "format": "real-engine/prefab",
+  "version": 1,
+  "entities": [
+    {
+      "id": "trunk",
+      "name": "Tree",
+      "components": {
+        "Collider": { "shape": "Box", "half_extents": [0.2, 1.4, 0.2] },
+        "MaterialRef": { "asset": "materials/bark.material.json" },
+        "MeshRef": { "asset": "builtin:cube" },
+        "Transform": { "translation": [0.0, 1.4, 0.0], "scale": [0.4, 2.8, 0.4] }
+      }
+    },
+    {
+      "id": "crown",
+      "name": "Crown",
+      "parent": "trunk",
+      "components": {
+        "MaterialRef": { "asset": "materials/leaves.material.json" },
+        "MeshRef": { "asset": "builtin:sphere" },
+        "Transform": { "translation": [0.0, 0.95, 0.0], "scale": [9.0, 1.3, 9.0] }
+      }
+    },
+    {
+      "id": "top",
+      "name": "Crown",
+      "parent": "trunk",
+      "components": {
+        "MaterialRef": { "asset": "materials/leaves.material.json" },
+        "MeshRef": { "asset": "builtin:sphere" },
+        "Transform": { "translation": [0.15, 1.35, -0.1], "scale": [6.0, 0.9, 6.0] }
+      }
+    }
+  ]
+}

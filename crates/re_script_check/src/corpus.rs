@@ -157,6 +157,8 @@ pub fn run(dirs: &[PathBuf], options: &CorpusOptions) -> CorpusReport {
         ..CorpusReport::default()
     };
     let mut usage = ApiUsage::default();
+    // Generator scripts have an API of their own.
+    let mut generator_usage = ApiUsage::default();
     let mut types = options.types.then(TypesReport::default);
     if let Some(t) = &mut types {
         t.checker = types::find_checker(&options.types_options).map(|p| display(&p));
@@ -214,6 +216,7 @@ pub fn run(dirs: &[PathBuf], options: &CorpusOptions) -> CorpusReport {
                 report.compile.failed.extend(diags);
             }
             match scan::scan_source(&source, &name) {
+                Ok(u) if types::is_generator_script(file) => generator_usage.merge(&u),
                 Ok(u) => usage.merge(&u),
                 Err(d) => report.scan.parse_failed.push(d),
             }
@@ -240,6 +243,11 @@ pub fn run(dirs: &[PathBuf], options: &CorpusOptions) -> CorpusReport {
         t.warnings = t.diagnostics.len() - t.errors;
     }
     report.scan.gap = GapReport::new(&usage, &Coverage::compat());
+    report
+        .scan
+        .gap
+        .merge(GapReport::new(&generator_usage, &Coverage::generator()));
+    usage.merge(&generator_usage);
     report.scan.by_member = usage.by_member;
     report.scan.unknown_receivers = usage.unknown_receivers;
     report.scan.dynamic_requires = usage.dynamic_requires;

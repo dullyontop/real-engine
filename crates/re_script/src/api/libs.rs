@@ -8,6 +8,7 @@ use re_core::Code;
 use re_reflect::Value as ReflectValue;
 use re_scene::{Entity, entity_from_id, entity_id};
 use re_types::audio::{AudioCmd, EffectParam};
+use re_types::glam::Vec3;
 use re_types::host::HostError;
 use re_types::physics::{GroundState, GroupMask, RagdollMode, VehicleInput};
 
@@ -55,7 +56,7 @@ pub(crate) fn all(lua: &Lua, kind: ContextKind) -> Result<Vec<(&'static str, Tab
         ("input", "Input actions from real.toml [input].", input_lib),
         (
             "physics",
-            "Ray casts, impulses, characters and contacts.",
+            "Ray casts, impulses and velocities, characters and contacts.",
             physics_lib,
         ),
         ("audio", "Sound playback.", audio_lib),
@@ -67,7 +68,7 @@ pub(crate) fn all(lua: &Lua, kind: ContextKind) -> Result<Vec<(&'static str, Tab
         ("ui", "The heads-up display.", ui_lib),
         (
             "time",
-            "Simulation time and per-frame and per-step callbacks.",
+            "Simulation time, its scale, and per-frame and per-step callbacks.",
             time_lib,
         ),
         (
@@ -117,6 +118,28 @@ pub(crate) fn host_err(e: HostError) -> mlua::Error {
         Some(code) => super::error(code, e.message),
         None => mlua::Error::runtime(format!("{} ({})", e.message, e.code)),
     }
+}
+
+/// Refuses `e` unless it describes a dynamic body: a `Collider` and a
+/// `RigidBody` of kind `Dynamic`. The host takes an entity whose body is not
+/// made yet (one spawned this frame gets it at the next physics phase), so this
+/// is what stops a push on an entity that will never have one.
+fn dynamic_body(world: &re_scene::World, e: Entity, what: &str) -> Result<()> {
+    alive(world, e)?;
+    let dynamic = world
+        .ecs
+        .get::<re_scene::RigidBody>(e)
+        .is_some_and(|b| b.kind == re_scene::BodyKind::Dynamic);
+    if dynamic && world.ecs.get::<re_scene::Collider>(e).is_some() {
+        return Ok(());
+    }
+    Err(super::error(
+        codes::BAD_ARGUMENT,
+        format!(
+            "{what}: entity {} is not a dynamic body (give it a Collider and a RigidBody of kind Dynamic)",
+            entity_id(e).0
+        ),
+    ))
 }
 
 pub(crate) fn entity_arg(v: &Value, what: &str) -> Result<Entity> {
@@ -220,10 +243,11 @@ fn physics_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
         lua,
         "impulse",
         "(e: Entity, impulse: vector) -> ()",
-        "Applies an impulse (N·s) to a dynamic body at its centre of mass, at the next step.",
+        "Applies an impulse (N·s) to a dynamic body at its centre of mass, at the next step; a body spawned this frame gets it as it starts.",
         |lua, (e, v): (Value, V3)| {
             let e = entity_arg(&e, "physics.impulse")?;
             with_host(lua, |h| {
+                dynamic_body(h.world(), e, "physics.impulse")?;
                 h.services()
                     .apply_impulse(entity_id(e), v.0)
                     .map_err(host_err)
@@ -241,6 +265,22 @@ fn physics_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
                 h.services().body_velocity(entity_id(e)).map_err(host_err)
             })?;
             Ok((V3(l), V3(a)))
+        },
+    )?;
+    lib.func(
+        lua,
+        "set_velocity",
+        "(e: Entity, linear: vector, angular: vector?) -> ()",
+        "Sets a dynamic body's linear velocity (m/s) and angular velocity (rad/s, default none) at the next step, in place of what it had; a body spawned this frame starts with them.",
+        |lua, (e, linear, angular): (Value, V3, Option<V3>)| {
+            let e = entity_arg(&e, "physics.set_velocity")?;
+            let angular = angular.map_or(Vec3::ZERO, |a| a.0);
+            with_host(lua, |h| {
+                dynamic_body(h.world(), e, "physics.set_velocity")?;
+                h.services()
+                    .set_body_velocity(entity_id(e), linear.0, angular)
+                    .map_err(host_err)
+            })
         },
     )?;
     lib.func(
@@ -611,6 +651,22 @@ fn time_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
         "() -> number",
         "Simulation time in seconds (advances by the fixed step).",
         |lua, ()| scheduler::with(lua, |s| s.now),
+    )?;
+    lib.func(
+        lua,
+        "set_scale",
+        "(scale: number) -> ()",
+        "Sets how fast simulation time runs against frame time, from the next fixed steps counted: 1 is normal, 0.5 half speed, and 0 pauses (no fixed steps run, so physics and `on_step` stop while `on_frame` goes on); 0 to 10. A frame still runs at most five fixed steps, so at 60 frames a second a scale above 5 runs as 5. A restart sets it back to 1.",
+        |lua, scale: f64| {
+            with_host(lua, |h| h.services().set_time_scale(scale).map_err(host_err))
+        },
+    )?;
+    lib.func(
+        lua,
+        "scale",
+        "() -> number",
+        "The time scale in effect (1 unless `time.set_scale` changed it).",
+        |lua, ()| with_host(lua, |h| Ok(h.services().time_scale())),
     )?;
     lib.func(
         lua,

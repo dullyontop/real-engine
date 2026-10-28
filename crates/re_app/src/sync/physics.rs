@@ -614,6 +614,24 @@ fn local_tr(world: &World, entity: Entity) -> (Vec3, Quat) {
         })
 }
 
+/// Drops the commands scripts queued (through the host) for entities despawned
+/// since: an impulse, a velocity, a character move, or a vehicle's or a
+/// ragdoll's input for an entity destroyed in the same frame has nothing left to
+/// move, and is not an error. Commands for live entities stay.
+fn drop_despawned(world: &World, cmds: &mut Vec<PhysicsCmd>) {
+    cmds.retain(|cmd| match cmd {
+        PhysicsCmd::ApplyImpulse { id, .. }
+        | PhysicsCmd::SetVelocity { id, .. }
+        | PhysicsCmd::MoveCharacter { id, .. }
+        | PhysicsCmd::SetVehicleInput { id, .. }
+        | PhysicsCmd::SetRagdollMode { id, .. }
+        | PhysicsCmd::ApplyRagdollImpulse { id, .. } => {
+            entity_from_id(*id).is_some_and(|e| world.ecs.get_entity(e).is_ok())
+        }
+        _ => true,
+    });
+}
+
 /// Turns World changes since the last call into physics commands, appended to
 /// `cmds` (unsorted; `Physics::apply` sorts by kind and entity).
 ///
@@ -622,7 +640,8 @@ fn local_tr(world: &World, entity: Entity) -> (Vec3, Quat) {
 /// whose collider is disabled, and teleports (or, for kinematic bodies,
 /// retargets) entities whose `Transform` was written by someone other than
 /// [`pull`]. Problems become diagnostics in `diagnostics`, each reported once;
-/// the entity then gets no body until it is fixed.
+/// the entity then gets no body until it is fixed. Commands already in `cmds`
+/// for entities despawned since they were queued are dropped.
 pub fn push(
     world: &mut World,
     sync: &mut PhysicsSync,
@@ -630,6 +649,7 @@ pub fn push(
     cmds: &mut Vec<PhysicsCmd>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    drop_despawned(world, cmds);
     // A shape library change may fix a missing source: report again if still broken.
     let shapes_changed = sync.shapes_generation != shapes.generation;
     if shapes_changed {

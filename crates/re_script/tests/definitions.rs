@@ -1,4 +1,5 @@
-//! `engine.d.luau`: the snapshot, and luau-lsp loading it.
+//! `engine.d.luau` and `generator.d.luau`: the snapshots, and luau-lsp
+//! loading them.
 
 use std::path::Path;
 use std::process::Command;
@@ -6,6 +7,11 @@ use std::process::Command;
 #[test]
 fn engine_definitions_snapshot() {
     insta::assert_snapshot!("engine.d.luau", re_script::definitions());
+}
+
+#[test]
+fn generator_definitions_snapshot() {
+    insta::assert_snapshot!("generator.d.luau", re_script::generator::definitions());
 }
 
 #[test]
@@ -27,18 +33,24 @@ fn write_definitions_puts_them_in_the_project_once() {
     );
 }
 
-/// Runs `luau-lsp analyze` over `script` with the generated definitions. `None`
-/// when luau-lsp is not installed (CI installs it, so there it must be found).
+/// Runs `luau-lsp analyze` over `script` with the generated engine
+/// definitions. `None` when luau-lsp is not installed (CI installs it, so
+/// there it must be found).
 fn analyze(dir: &Path, script: &str) -> Option<(bool, String)> {
-    let defs = dir.join("engine.d.luau");
-    std::fs::write(&defs, re_script::definitions()).unwrap();
+    analyze_with(dir, script, "engine", &re_script::definitions())
+}
+
+/// Runs `luau-lsp analyze` over `script` with `definitions` loaded as `@name`.
+fn analyze_with(dir: &Path, script: &str, name: &str, definitions: &str) -> Option<(bool, String)> {
+    let defs = dir.join(format!("{name}.d.luau"));
+    std::fs::write(&defs, definitions).unwrap();
     let file = dir.join("check.luau");
     std::fs::write(&file, script).unwrap();
     let out = match Command::new("luau-lsp")
         .arg("analyze")
         .arg("--platform=standard")
         .arg("--flag:LuauSolverV2=true")
-        .arg(format!("--definitions=@engine={}", defs.display()))
+        .arg(format!("--definitions=@{name}={}", defs.display()))
         .arg("--formatter=gnu")
         .arg(&file)
         .output()
@@ -115,4 +127,62 @@ fn luau_lsp_loads_the_definitions_and_checks_against_them() {
     assert!(!ok, "a type error must be reported");
     assert!(text.contains("check.luau:2"), "{text}");
     assert!(text.contains("check.luau:3"), "{text}");
+}
+
+const GOOD_GENERATOR: &str = r#"--!strict
+return proc.node({
+    kind = "project.rocks",
+    version = 2,
+    doc = "Scatters rocks.",
+    inputs = { { name = "field", type = "field", required = true, doc = "The ground." } },
+    output = "points",
+    params = {
+        count = proc.param.integer({ default = 10, min = 0, max = 1000 }),
+        size = proc.param.number({ default = 1.5, doc = "Metres." }),
+        shape = proc.param.enum({ values = { "round", "flat" }, default = "round" }),
+        tint = proc.param.vec3({ default = vector.create(1, 1, 1) }),
+        on = proc.param.bool(),
+        label = proc.param.string({ default = "rock" }),
+    },
+    uses_seed = true,
+    migrate = function(from, params)
+        return params
+    end,
+    eval = function(ctx, inputs, params)
+        local rng = ctx.rng:fork(1)
+        local n: number = rng:int(1, params.count) + rng:next() * ctx.seed
+        ctx:log(`node {ctx.node} v{ctx.version}: {n}`)
+        local q = quat.from_euler(0, math.pi, 0)
+        local up: vector = q * vector.create(0, 1, 0)
+        print(color.new(1, 0.5, 0), up, inputs.field)
+        return {}
+    end,
+})
+"#;
+
+#[test]
+fn luau_lsp_loads_the_generator_definitions_and_checks_against_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let defs = re_script::generator::definitions();
+    let Some((ok, text)) = analyze_with(dir.path(), GOOD_GENERATOR, "generator", &defs) else {
+        return;
+    };
+    assert!(
+        ok,
+        "the definitions or the sample do not type-check:\n{text}"
+    );
+
+    // The game's API is not there, and a parameter type must exist.
+    let Some((ok, text)) = analyze_with(
+        dir.path(),
+        "--!strict\nlocal e = world.get(\"x\")\nlocal p = proc.param.numbr({})\nlocal n: number = proc.param.number({ min = \"0\" })\n",
+        "generator",
+        &defs,
+    ) else {
+        return;
+    };
+    assert!(!ok, "a type error must be reported");
+    for line in ["check.luau:2", "check.luau:3", "check.luau:4"] {
+        assert!(text.contains(line), "{line}: {text}");
+    }
 }

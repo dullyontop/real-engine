@@ -9,6 +9,7 @@ use re_app::{App, AppConfig};
 use re_command::{AllowAll, Origin};
 use re_reflect::Value;
 use re_script::ContextKind;
+use re_types::ReplayDoc;
 use serde_json::json;
 
 const SCENE: &str = r#"{
@@ -317,4 +318,97 @@ fn a_running_script_stops_at_a_breakpoint_and_a_reload_ends_the_stop() {
     app.run_headless(Some(2), None).unwrap();
     assert!(debugger.stopped().is_none());
     assert!(mover_z(&app) > z);
+}
+
+fn x_of(app: &App, id: &str) -> f32 {
+    match app.world().get(id, "Transform", "translation").unwrap() {
+        Value::Vec3(v) => v.x,
+        other => panic!("{other:?}"),
+    }
+}
+
+/// A body spawned this frame starts with the velocity a script gives it, and
+/// the pushes for a body destroyed in the same step are dropped, not errors.
+#[test]
+fn a_body_spawned_this_step_starts_with_its_velocity() {
+    let dir = project(
+        r#"local function spawn(id: string): Entity
+	return world.spawn({ id = id, components = {
+		Transform = { translation = vector.create(20, 10, 0) },
+		Collider = { shape = "Box", half_extents = vector.create(0.5, 0.5, 0.5) },
+		RigidBody = { kind = "Dynamic", mass = 1 },
+	} })
+end
+physics.set_velocity(spawn("thrown"), vector.create(3, 0, 0))
+local gone = spawn("gone")
+physics.set_velocity(gone, vector.create(3, 0, 0))
+physics.impulse(gone, vector.create(0, 5, 0))
+gone:destroy()
+"#,
+    );
+    let mut app = open(dir.path());
+    let report = app.run_headless(Some(60), None).unwrap();
+    assert!(report.ok(), "{:?}", report.diagnostics);
+    // One second at 3 m/s.
+    let x = x_of(&app, "thrown");
+    assert!((x - 23.0).abs() < 0.1, "x = {x}");
+}
+
+/// `math.random` starts from the run's seed (`[scripts] seed`, or a replay's),
+/// and `os.clock` is simulation time, so a run repeats.
+#[test]
+fn the_run_seed_starts_math_random_and_os_clock_is_simulation_time() {
+    let draws = |toml: &str, replay: Option<ReplayDoc>| -> Vec<String> {
+        let dir = project("print(math.random(1, 1000000), os.clock())\n");
+        std::fs::write(dir.path().join("real.toml"), toml).unwrap();
+        let report = open(dir.path()).run_headless(Some(2), replay).unwrap();
+        assert!(report.ok(), "{:?}", report.diagnostics);
+        report.output
+    };
+    let base = "[project]\nname = \"scripts\"\n";
+    let seven = format!("{base}\n[scripts]\nseed = 7\n");
+    let a = draws(&seven, None);
+    assert_eq!(a, draws(&seven, None));
+    assert_ne!(a, draws(&format!("{base}\n[scripts]\nseed = 8\n"), None));
+    // A replay's seed takes the place of real.toml's.
+    assert_eq!(a, draws(base, Some(ReplayDoc::new(7, 2))));
+    assert!(a[0].ends_with("\t86400"), "{a:?}");
+}
+
+/// `time.set_scale` slows or stops the fixed steps, `on_frame` goes on, and a
+/// restart sets the scale back to 1.
+#[test]
+fn the_time_scale_slows_and_pauses_the_steps_until_a_restart() {
+    let dir = project(
+        r#"print("scale", time.scale())
+local steps, frames = 0, 0
+time.on_step(function()
+	steps += 1
+end)
+time.on_frame(function()
+	frames += 1
+	if frames == 1 and time.frame() < 10 then
+		time.set_scale(0.5)
+	elseif frames == 61 then
+		print("half", steps)
+		time.set_scale(0)
+	elseif frames == 91 then
+		print("paused", steps, time.scale())
+		world.restart()
+	end
+end)
+"#,
+    );
+    let mut app = open(dir.path());
+    let report = app.run_headless(Some(100), None).unwrap();
+    assert!(report.ok(), "{:?}", report.diagnostics);
+    assert_eq!(
+        report.output,
+        [
+            "[game] scale\t1",
+            "[game] half\t30",
+            "[game] paused\t30\t0",
+            "[game] scale\t1"
+        ]
+    );
 }

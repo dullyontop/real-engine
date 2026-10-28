@@ -204,7 +204,7 @@ There is no render thread in M1. The seam for one is that `RenderSnapshot` is `S
 Input          poll winit/gilrs or the replay → RawInput → ActionMap → ActionFrame;
                asset, shader and script hot reload
 PreRender      script contexts: per-frame callbacks (variable dt)
-fixed steps    FixedClock.advance(frame_dt) → 0..=5 steps of 1/60 s
+fixed steps    FixedClock.advance(frame_dt × time scale) → 0..=5 steps of 1/60 s
   PreAnimation   re_anim samples clips and tweens → Transform writes; animation graphs step,
                  and root motion moves entities and characters
   PreSimulation  world streaming (cells unloaded and loaded at this tick; scripts see stream.on_unloaded,
@@ -341,11 +341,13 @@ task.wait(0.5)
 
 - Vectors are native Luau vectors, built with the builtin `vector.create` (ADR-0011).
 - Each script context (`game` and `tools` in M1) is one sandboxed VM. Inside it, each script and module has its own environment table over the frozen globals, with `safeenv` set, so scripts cannot see each other's globals and builtin fastcalls stay fast.
-- A CPU budget per context is enforced by a raw Luau interrupt that keeps raising once tripped, so `pcall` cannot swallow it.
+- A CPU budget per context is enforced by a raw Luau interrupt that keeps raising once tripped, so `pcall` cannot swallow it. It is wall-clock time per resume; reading and compiling a module that `require` loads does not count against it.
 - `tools` scripts may issue commands. `game` scripts may not issue destructive commands; they reach the engine through `HostServices`.
 - `engine.d.luau`, generated from the binding registry, describes the whole native API for the type checker, editors and agents (`real describe --luau-defs`).
 - M3 additions to the native libraries: `physics.drive` and `physics.vehicle` (vehicles); `physics.ragdoll(entity, mode, strength?)`, `physics.ragdoll_state(entity)` (root, mode, strength and `calm`; no pose) and `physics.ragdoll_impulse(entity, joint, impulse)`; `audio.play(clip, at?, volume?, bus?)`, `audio.set_rate(e, rate)` (writes `AudioSource.rate`), `audio.set_bus_volume`, `audio.set_effect` (1-based effect index), `audio.snapshot` and `audio.levels` (frame-only: an error during a fixed step). The `anim` library drives the graph an entity's `Animator` plays: `anim.set(e, param, value)`, `anim.get(e, param)`, `anim.trigger(e, param)`, `anim.state(e, layer?)` and `anim.joint(e, joint)` (world-space position and rotation from the last step's pose); an unknown or mistyped parameter is `RE7609`. The `stream` library (game and tools contexts, ADR-0042) has `stream.on_loaded`, `stream.on_unloaded`, `stream.cells()` and `stream.is_loaded(key)`; `stream.load` and `stream.release` exist in the `tools` context only. A script that starts after cells loaded gets no `on_loaded` for them, so it reads `stream.cells()` at start.
 - `math` is portable (ADR-0036): every VM replaces the transcendental functions with `libm` versions through `re_script::portable_math`, and the compiler disables the matching builtins. `x ^ y` still uses the platform's `pow` unless `y` is 2, 0.5 or 3; use `math.pow` in simulated code. `real verify`'s scan stage warns about any other `^` (`RE3083`).
+- Additions from the sample game (`examples/town`): `physics.set_velocity(e, linear, angular?)` (dynamic bodies only, like `physics.impulse`; either applies to a body spawned the same frame as it starts, and is dropped without an error for one destroyed the same frame); `time.set_scale(scale)` (0 to 10; 0 runs no fixed steps, so physics and `on_step` stop while `on_frame` goes on; a frame still runs at most five steps, so at 60 frames a second a scale above 5 runs as 5; a restart sets it back to 1) and `time.scale()`; `HudText.color`, the linear colour of each HUD line (a line breaks only at its `\n`s; egui would wrap it to the width its panel had the frame before). `math.random` starts from the run's seed (`[scripts] seed`, or a replay's `seed`; the `tools` context from seed + 1), and `os.clock` is 86,400 plus simulation time, so a native run repeats as compat runs do. `os.time` and `os.date` are still the wall clock.
+- Generator scripts (`scripts/generators/`, ADR-0043 §4) run in VMs of their own with another API, described by a generated `generator.d.luau` (`re_script::generator::definitions()`): `proc.node`, `proc.param`, the `ctx` an `eval` gets, `quat` and `color`. `real check --types` checks them against it in a run of their own (and writes it to `.real/types/generator.d.luau`), and the API gap scan compares them with it.
 - **Debugger** (M3, WP25, ADR-0045): `re_script::debug` holds Luau breakpoints, stepping and pausing, and its DAP server (`re_script::debug::dap`) listens on 127.0.0.1 only. `real run --debug [PORT]` and `real editor --debug [PORT]` serve it (default port 4711); the editor also has a debugger panel. Compat Scripts and ModuleScripts register their chunks under their source paths too, and register again when hot reload restarts them, so breakpoints keep working.
 
 ### M2 Roblox-style compatibility layer (`re_compat`)
@@ -527,7 +529,7 @@ This works during play. The M1 demo regenerates the island with a new seed while
 
 - **Versions** (ADR-0043): every node records its kind's version, old parameter shapes migrate in memory, and `real migrate-graph [--project DIR] [--dry-run] [--json]` rewrites graph files to the current versions, all or nothing. `graph.migration_report` (read) says what a migration would change.
 - **Bake** (ADR-0043): `proc.bake { source, keys?, keep_source? }` turns a source's output into authored entities with a `Baked` provenance record, in one undoable transaction. Baked ids are `<source>.<key with / as .>` (`~N` on a clash), and derived meshes and heightfields become `.glb` and `.heightfield` files under `assets/baked/<encoded source id>/`.
-- **Luau node kinds** (ADR-0043 §4): scripts under `scripts/generators/` declare `project.*` node kinds, run in the sandboxed `generator` context with the `[proc]` budget; `proc.create_source { kind, params }` places one as a source.
+- **Luau node kinds** (ADR-0043 §4): scripts under `scripts/generators/` declare `project.*` node kinds, run in the sandboxed `generator` context with the `[proc]` budget; `proc.create_source { kind, params }` places one as a source. Their implementation hash, part of every key of a node that uses one, covers the scripts compiled with the packaged options, so a packaged game, which holds that bytecode, keys its nodes and names their meshes (`derived:<key>`) as its project does.
 - **Streaming** (ADR-0042): `re_proc::stream` evaluates a streamed source per cell (`c/<x>_<z>`) around the focus points, on the task pool from the tick a cell is requested, and applies it `delay_ticks` later within the per-tick budgets. `re_scene::stream` holds the per-cell apply, unload and stash hooks (`World::apply_cell`, `unload_cell`) and the `StreamCell` type. `play.run` copies remap the streamer's source handles by id (`Streamer::forked`). Streaming adds two node kinds: `terrain.erode` (hydraulic erosion of a field, output Field; streamed, it erodes region tiles and blends them, so cells meet without seams) and `terrain.chunks` (a streamed world's terrain, output Fragment: the field drawn as level-of-detail chunks, with heightfield colliders near each focus; one mesh when not streamed). A `terrain.chunks` source's level-of-detail view lives in `TerrainView`, outside `state_hash`, and is swapped in as its chunks are ready; under `Lateness::Wait`, a frame that takes a screenshot first completes it (`Streamer::complete_view`), so a golden image does not depend on worker timing.
 
 ## 6. AI integration
@@ -735,6 +737,7 @@ contexts = ["game", "tools"]
 cpu_budget_ms = 4
 memory_limit_mb = 256
 checker = "luau-lsp"          # or a path to a patched luau-analyze (ADR-0013)
+seed = 0                      # math.random's seed (a replay's seed takes its place)
 
 [proc]                        # Luau node kinds (M3, ADR-0043 §4) and the node-output cache
 luau_budget = 20000000        # safepoints per evaluation (RE4101 past it)
@@ -902,6 +905,8 @@ Rules (verified by the core spike's round-trip tests, ADR-0016):
   "commands": [ { "frame": 300, "name": "graph.regenerate", "args": { "source": "island", "seed": 99 } } ],
   "checks": [ { "frame": 600, "screenshot": "tests/goldens/{backend}/island_600.png" } ] }
 ```
+
+The `seed` is the run's seed: native scripts' `math.random` starts from it (it takes the place of `[scripts] seed`), as compat scripts' `Random` and `math.random` start from `[compat] seed`.
 
 A replay may also carry `raw` rows (`RawReplayInput`) for layers that read keys rather than actions. Each row has one change: a `key`, `mouse_button` or `pad_button` with `down`, or a `mouse_move`, `mouse_position` or `wheel`. Buttons use the `real.toml` names without the device prefix, and `raw` is left out when empty, so action-only replays are unchanged:
 

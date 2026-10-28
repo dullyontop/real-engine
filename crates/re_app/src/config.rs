@@ -233,6 +233,11 @@ pub struct ScriptsConfig {
     /// The external type checker: `luau-lsp`, or a path to a patched `luau-analyze`.
     #[serde(default = "default_checker")]
     pub checker: String,
+    /// The run's seed: `math.random` starts from it in the game context and
+    /// from `seed + 1` in the tools context, so runs repeat. A replay's `seed`
+    /// takes its place while the replay plays.
+    #[serde(default)]
+    pub seed: i64,
 }
 
 fn default_contexts() -> Vec<String> {
@@ -255,6 +260,7 @@ impl Default for ScriptsConfig {
             cpu_budget_ms: default_cpu_budget(),
             memory_limit_mb: default_memory_limit(),
             checker: default_checker(),
+            seed: 0,
         }
     }
 }

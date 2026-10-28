@@ -315,12 +315,14 @@ field_enum! {
 component! {
     /// A line of text drawn on the heads-up display.
     pub struct HudText {
-        /// The text.
+        /// The text. It breaks into lines only at its `\n`s.
         pub text: String = String::new(),
         /// Screen anchor.
         pub anchor: HudAnchor = HudAnchor::TopLeft,
         /// Font size in logical pixels.
         pub size: f32 = 18.0,
+        /// Linear colour of the text; its alpha fades it.
+        pub color: Color = Color::WHITE,
     }
 }
 

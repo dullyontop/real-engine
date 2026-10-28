@@ -1,0 +1,600 @@
+{
+  "format": "real-engine/scene",
+  "version": 1,
+  "script_components": [
+    {
+      "name": "Rules",
+      "fields": [
+        {
+          "name": "shift_seconds",
+          "type": {
+            "kind": "f32"
+          },
+          "default": 240.0
+        },
+        {
+          "name": "parcels",
+          "type": {
+            "kind": "i32"
+          },
+          "default": 5
+        },
+        {
+          "name": "autopilot",
+          "type": {
+            "kind": "bool"
+          },
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "Address",
+      "fields": [
+        {
+          "name": "street",
+          "type": {
+            "kind": "string"
+          },
+          "default": ""
+        },
+        {
+          "name": "number",
+          "type": {
+            "kind": "i32"
+          },
+          "default": 0
+        },
+        {
+          "name": "name",
+          "type": {
+            "kind": "string"
+          },
+          "default": ""
+        },
+        {
+          "name": "spot",
+          "type": {
+            "kind": "vec3"
+          },
+          "default": [
+            0,
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Depot",
+      "fields": [
+        {
+          "name": "street",
+          "type": {
+            "kind": "string"
+          },
+          "default": ""
+        }
+      ]
+    },
+    {
+      "name": "SpawnPoint",
+      "fields": []
+    },
+    {
+      "name": "Junction",
+      "fields": [
+        {
+          "name": "row",
+          "type": {
+            "kind": "i32"
+          },
+          "default": 0
+        },
+        {
+          "name": "col",
+          "type": {
+            "kind": "i32"
+          },
+          "default": 0
+        },
+        {
+          "name": "row_street",
+          "type": {
+            "kind": "string"
+          },
+          "default": ""
+        },
+        {
+          "name": "col_street",
+          "type": {
+            "kind": "string"
+          },
+          "default": ""
+        }
+      ]
+    }
+  ],
+  "entities": [
+    {
+      "id": "camera",
+      "name": "Camera",
+      "components": {
+        "Camera": {
+          "active": true,
+          "far": 1500.0,
+          "near": 0.3,
+          "fov_y_deg": 62.0
+        },
+        "ScriptRef": {
+          "path": "scripts/game/camera.luau"
+        },
+        "Transform": {
+          "translation": [
+            0.0,
+            30.0,
+            40.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "sun",
+      "name": "Sun",
+      "components": {
+        "Light": {
+          "kind": "Directional",
+          "intensity": 1.15,
+          "shadows": true
+        },
+        "Transform": {
+          "rotation": [
+            -0.5025189,
+            0.30151135,
+            0.10050379,
+            0.8040303
+          ]
+        }
+      }
+    },
+    {
+      "id": "town",
+      "name": "Town",
+      "components": {
+        "GraphSource": {
+          "builder": "scripts/tools/town_graph.luau"
+        },
+        "Procedural": {
+          "generator": "graph",
+          "seed": 1
+        },
+        "Transform": {}
+      }
+    },
+    {
+      "id": "game",
+      "name": "Game",
+      "components": {
+        "ScriptRef": {
+          "path": "scripts/game/game.luau"
+        },
+        "Rules": {}
+      }
+    },
+    {
+      "id": "hud_status",
+      "name": "Status",
+      "parent": "game",
+      "components": {
+        "HudText": {
+          "text": "",
+          "anchor": "TopLeft",
+          "size": 22.0,
+          "color": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "hud_jobs",
+      "name": "Parcels",
+      "parent": "game",
+      "components": {
+        "HudText": {
+          "text": "",
+          "anchor": "TopRight",
+          "size": 18.0,
+          "color": [
+            1.0,
+            0.86,
+            0.45,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "hud_street",
+      "name": "Street",
+      "parent": "game",
+      "components": {
+        "HudText": {
+          "text": "",
+          "anchor": "Top",
+          "size": 20.0,
+          "color": [
+            0.85,
+            0.92,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "hud_message",
+      "name": "Message",
+      "parent": "game",
+      "components": {
+        "HudText": {
+          "text": "",
+          "anchor": "Center",
+          "size": 26.0,
+          "color": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "hud_help",
+      "name": "Help",
+      "parent": "game",
+      "components": {
+        "HudText": {
+          "text": "",
+          "anchor": "BottomLeft",
+          "size": 15.0,
+          "color": [
+            0.8,
+            0.8,
+            0.8,
+            0.85
+          ]
+        }
+      }
+    },
+    {
+      "id": "hud_speed",
+      "name": "Speed",
+      "parent": "game",
+      "components": {
+        "HudText": {
+          "text": "",
+          "anchor": "BottomRight",
+          "size": 22.0,
+          "color": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "truck",
+      "name": "Truck",
+      "components": {
+        "Collider": {
+          "shape": "Box",
+          "half_extents": [
+            1.0,
+            0.96,
+            2.62
+          ]
+        },
+        "RigidBody": {
+          "kind": "Dynamic",
+          "mass": 1800.0,
+          "friction": 0.5,
+          "angular_damping": 0.2,
+          "center_of_mass_offset": [
+            0.0,
+            -0.55,
+            0.2
+          ]
+        },
+        "Vehicle": {
+          "max_torque": 700.0,
+          "differential_ratio": 3.9,
+          "anti_roll_stiffness": 2500.0,
+          "shift_up_rpm": 4200.0,
+          "shift_down_rpm": 1800.0
+        },
+        "ScriptRef": {
+          "path": "scripts/game/truck.luau"
+        },
+        "Transform": {
+          "translation": [
+            0.0,
+            8.0,
+            0.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "truck_body",
+      "name": "Body",
+      "parent": "truck",
+      "components": {
+        "MeshRef": {
+          "asset": "models/truck.glb"
+        },
+        "MaterialRef": {
+          "asset": "materials/vehicle.material.json"
+        },
+        "Transform": {}
+      }
+    },
+    {
+      "id": "wheel_fl",
+      "name": "Wheel",
+      "parent": "truck",
+      "components": {
+        "VehicleWheel": {
+          "radius": 0.42,
+          "width": 0.3,
+          "suspension_min": 0.2,
+          "suspension_max": 0.45,
+          "suspension_frequency": 1.6,
+          "suspension_damping": 0.6,
+          "max_steer_deg": 34.0,
+          "driven": false,
+          "max_brake_torque": 2600.0,
+          "max_hand_brake_torque": 0.0
+        },
+        "Transform": {
+          "translation": [
+            0.95,
+            -0.7,
+            1.6
+          ]
+        }
+      }
+    },
+    {
+      "id": "wheel_fl_tyre",
+      "name": "Tyre",
+      "parent": "wheel_fl",
+      "components": {
+        "MeshRef": {
+          "asset": "models/wheel.glb"
+        },
+        "MaterialRef": {
+          "asset": "materials/vehicle.material.json"
+        },
+        "Transform": {}
+      }
+    },
+    {
+      "id": "wheel_fr",
+      "name": "Wheel",
+      "parent": "truck",
+      "components": {
+        "VehicleWheel": {
+          "radius": 0.42,
+          "width": 0.3,
+          "suspension_min": 0.2,
+          "suspension_max": 0.45,
+          "suspension_frequency": 1.6,
+          "suspension_damping": 0.6,
+          "max_steer_deg": 34.0,
+          "driven": false,
+          "max_brake_torque": 2600.0,
+          "max_hand_brake_torque": 0.0
+        },
+        "Transform": {
+          "translation": [
+            -0.95,
+            -0.7,
+            1.6
+          ]
+        }
+      }
+    },
+    {
+      "id": "wheel_fr_tyre",
+      "name": "Tyre",
+      "parent": "wheel_fr",
+      "components": {
+        "MeshRef": {
+          "asset": "models/wheel.glb"
+        },
+        "MaterialRef": {
+          "asset": "materials/vehicle.material.json"
+        },
+        "Transform": {}
+      }
+    },
+    {
+      "id": "wheel_rl",
+      "name": "Wheel",
+      "parent": "truck",
+      "components": {
+        "VehicleWheel": {
+          "radius": 0.42,
+          "width": 0.3,
+          "suspension_min": 0.2,
+          "suspension_max": 0.45,
+          "suspension_frequency": 1.6,
+          "suspension_damping": 0.6,
+          "max_steer_deg": 0.0,
+          "driven": true,
+          "max_brake_torque": 2600.0,
+          "max_hand_brake_torque": 4000.0
+        },
+        "Transform": {
+          "translation": [
+            0.95,
+            -0.7,
+            -1.5
+          ]
+        }
+      }
+    },
+    {
+      "id": "wheel_rl_tyre",
+      "name": "Tyre",
+      "parent": "wheel_rl",
+      "components": {
+        "MeshRef": {
+          "asset": "models/wheel.glb"
+        },
+        "MaterialRef": {
+          "asset": "materials/vehicle.material.json"
+        },
+        "Transform": {}
+      }
+    },
+    {
+      "id": "wheel_rr",
+      "name": "Wheel",
+      "parent": "truck",
+      "components": {
+        "VehicleWheel": {
+          "radius": 0.42,
+          "width": 0.3,
+          "suspension_min": 0.2,
+          "suspension_max": 0.45,
+          "suspension_frequency": 1.6,
+          "suspension_damping": 0.6,
+          "max_steer_deg": 0.0,
+          "driven": true,
+          "max_brake_torque": 2600.0,
+          "max_hand_brake_torque": 4000.0
+        },
+        "Transform": {
+          "translation": [
+            -0.95,
+            -0.7,
+            -1.5
+          ]
+        }
+      }
+    },
+    {
+      "id": "wheel_rr_tyre",
+      "name": "Tyre",
+      "parent": "wheel_rr",
+      "components": {
+        "MeshRef": {
+          "asset": "models/wheel.glb"
+        },
+        "MaterialRef": {
+          "asset": "materials/vehicle.material.json"
+        },
+        "Transform": {}
+      }
+    },
+    {
+      "id": "engine_idle",
+      "name": "Engine",
+      "parent": "truck",
+      "components": {
+        "AudioSource": {
+          "clip": "assets/sfx/engine_idle.wav",
+          "volume": 0.0,
+          "looping": true,
+          "autoplay": true,
+          "bus": "engine"
+        },
+        "Transform": {
+          "translation": [
+            0.0,
+            0.0,
+            1.8
+          ]
+        }
+      }
+    },
+    {
+      "id": "engine_mid",
+      "name": "Engine",
+      "parent": "truck",
+      "components": {
+        "AudioSource": {
+          "clip": "assets/sfx/engine_mid.wav",
+          "volume": 0.0,
+          "looping": true,
+          "autoplay": true,
+          "bus": "engine"
+        },
+        "Transform": {
+          "translation": [
+            0.0,
+            0.0,
+            1.8
+          ]
+        }
+      }
+    },
+    {
+      "id": "engine_high",
+      "name": "Engine",
+      "parent": "truck",
+      "components": {
+        "AudioSource": {
+          "clip": "assets/sfx/engine_high.wav",
+          "volume": 0.0,
+          "looping": true,
+          "autoplay": true,
+          "bus": "engine"
+        },
+        "Transform": {
+          "translation": [
+            0.0,
+            0.0,
+            1.8
+          ]
+        }
+      }
+    },
+    {
+      "id": "music",
+      "name": "Music",
+      "components": {
+        "AudioSource": {
+          "clip": "assets/music/theme.wav",
+          "volume": 0.8,
+          "looping": true,
+          "spatial": false,
+          "autoplay": true,
+          "bus": "music"
+        }
+      }
+    },
+    {
+      "id": "ambience",
+      "name": "Town Ambience",
+      "components": {
+        "AudioSource": {
+          "clip": "assets/ambience/town.wav",
+          "volume": 1.0,
+          "looping": true,
+          "spatial": false,
+          "autoplay": true,
+          "bus": "ambience"
+        }
+      }
+    }
+  ]
+}

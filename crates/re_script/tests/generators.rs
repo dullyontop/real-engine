@@ -5,6 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use re_core::TaskPool;
+use re_core::files::{Form, LayerKind, MemLayer, ProjectFiles, ProjectPath};
 use re_proc::{
     CustomKind, CustomPort, EvalOptions, Evaluator, Field, NodeRegistry, Output, PortType,
     ProcGraph, Streaming, codes,
@@ -453,6 +454,42 @@ fn editing_any_generator_script_changes_the_implementation_hash() {
     let none = tempfile::tempdir().unwrap();
     let d = declare(&files(none.path()), &NodeRegistry::m1(), Limits::default());
     assert!(d.kinds.is_empty() && d.diagnostics.is_empty());
+}
+
+#[test]
+fn a_packaged_game_has_its_projects_implementation_hash() {
+    // A packaged game holds the generator scripts as bytecode (ADR-0037).
+    // The meshes Luau nodes make are named by their node keys, which hash
+    // the implementation, so a hash of the files' bytes named them
+    // differently there and the packaged game's state differed.
+    let scripts = [
+        ("scripts/generators/shape.luau", SHAPE),
+        ("scripts/generators/lib/util.luau", UTIL),
+    ];
+    let dir = project(&scripts);
+    let project = declare(&files(dir.path()), &NodeRegistry::m1(), Limits::default());
+    let mut archive = MemLayer::new(LayerKind::Archive);
+    for (path, source) in scripts {
+        archive.insert(
+            ProjectPath::new(path).unwrap(),
+            re_script::compile_bytecode(source, path).unwrap(),
+            Form::Bytecode {
+                compiler: re_script::COMPILER_ID.into(),
+            },
+        );
+    }
+    let packaged = declare(
+        &ProjectFiles::for_tests(archive),
+        &NodeRegistry::m1(),
+        Limits::default(),
+    );
+    assert!(
+        packaged.diagnostics.is_empty(),
+        "{:?}",
+        packaged.diagnostics
+    );
+    assert_eq!(packaged.kinds.len(), project.kinds.len());
+    assert_eq!(packaged.implementation, project.implementation);
 }
 
 mod source {

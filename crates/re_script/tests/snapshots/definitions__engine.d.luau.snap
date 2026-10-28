@@ -143,14 +143,16 @@ declare input: {
     on_released: (action: string, f: () -> ()) -> Connection,
 }
 
--- Ray casts, impulses, characters and contacts.
+-- Ray casts, impulses and velocities, characters and contacts.
 declare physics: {
     -- The closest hit along a ray against bodies whose groups intersect `mask` (default: all), or nil.
     raycast: (origin: vector, direction: vector, max_distance: number, mask: number?) -> { entity: Entity?, point: vector, normal: vector, distance: number }?,
-    -- Applies an impulse (N·s) to a dynamic body at its centre of mass, at the next step.
+    -- Applies an impulse (N·s) to a dynamic body at its centre of mass, at the next step; a body spawned this frame gets it as it starts.
     impulse: (e: Entity, impulse: vector) -> (),
     -- A body's linear and angular velocity after the last step.
     velocity: (e: Entity) -> (vector, vector),
+    -- Sets a dynamic body's linear velocity (m/s) and angular velocity (rad/s, default none) at the next step, in place of what it had; a body spawned this frame starts with them.
+    set_velocity: (e: Entity, linear: vector, angular: vector?) -> (),
     -- Sets a character's desired velocity for the next step; `jump` jumps when it is on the ground.
     move_character: (e: Entity, velocity: vector, jump: boolean?) -> (),
     -- A character's state after the last step.
@@ -209,10 +211,14 @@ declare ui: {
     set_text: (e: Entity, text: string) -> (),
 }
 
--- Simulation time and per-frame and per-step callbacks.
+-- Simulation time, its scale, and per-frame and per-step callbacks.
 declare time: {
     -- Simulation time in seconds (advances by the fixed step).
     now: () -> number,
+    -- Sets how fast simulation time runs against frame time, from the next fixed steps counted: 1 is normal, 0.5 half speed, and 0 pauses (no fixed steps run, so physics and `on_step` stop while `on_frame` goes on); 0 to 10. A frame still runs at most five fixed steps, so at 60 frames a second a scale above 5 runs as 5. A restart sets it back to 1.
+    set_scale: (scale: number) -> (),
+    -- The time scale in effect (1 unless `time.set_scale` changed it).
+    scale: () -> number,
     -- The time of the current frame in seconds (variable).
     delta: () -> number,
     -- The number of frames run so far.

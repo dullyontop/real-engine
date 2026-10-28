@@ -1,6 +1,6 @@
 # Roadmap
 
-There are four stages. Each milestone has exit criteria that can be checked by a command, not by opinion. The work breakdowns are in [M1_PLAN.md](M1_PLAN.md), [M2_PLAN.md](M2_PLAN.md) and [M3_PLAN.md](M3_PLAN.md).
+There are five stages. Each milestone has exit criteria that can be checked by a command, not by opinion. The work breakdowns are in [M1_PLAN.md](M1_PLAN.md), [M2_PLAN.md](M2_PLAN.md), [M3_PLAN.md](M3_PLAN.md) and [M4_PLAN.md](M4_PLAN.md).
 
 ## Ordering rationale
 
@@ -14,6 +14,7 @@ The result:
 - **M1 builds the core loop end to end**: render, physics, scripting, procedural generation, commands and verify. It uses an engine-native API. Every later feature plugs into these seams, and every one of them was proven by a spike, the entity core included.
 - **M2 is compatibility.** It matters a great deal to the owner, but it depends on a working scripting runtime, object model, physics and frame order. It is also the largest chunk of work. The owner chose "Demo first" (DECISIONS, open question 3): M1 ships the demo on the engine's own API, and M2's goal is the sample scenes running through the Roblox-style layer; whether a mechanical migration step is acceptable on the way was left open, and M2 ended up running the samples from their unmodified source. Measuring the gap on real scripts (the M1 validation suite) comes before building the layer.
 - **M3 adds scale, polish and the rest of a complete game workflow.** That means shipping games, richer rendering, cross-machine determinism, streaming, the node canvas and gizmos. None of these block the others, and each needs M1's measurements (PerfReport, D1 harness) to be done well.
+- **M4 makes complete games.** M3 ships games, but most game-making features went into the compatibility layer: a game on the engine's own API has HUD text but no UI, saved games, tweens, particles or joints; procedural content has a strong workflow but a small geometry kernel, with no mesh editing, sweeps or building generators; and the editor has no viewport picking, multiple selection or play mode. M4 builds the native gameplay API, procedural modelling and a designer's editor together, because `examples/town` needs all three.
 - **AI integration grows in every milestone** (see "AI track" below), always on top of the same command registry, and always optional.
 
 ## M0: Spikes (done)
@@ -95,6 +96,7 @@ AI support stays optional and provider-neutral (ARCHITECTURE §6). It grows with
 | M1 | The command registry as MCP tools (25, including `scene.apply` for atomic multi-operation edits), dry runs, `real verify --json`, `real explain`, `engine.d.luau`, checkpoints, the policy file, generated `AGENTS.md` and per-client configs | `re_command`, `re_agent`, `re_mcp` |
 | M2 | Luau-defined tools (`tools` context, capped at `edit`); MCP resources for the docs, the explain pages and `engine.d.luau` (for clients that support resources; everything stays reachable through tools); a verify-diff loop that reports which verify results a change altered; structured output schemas on every tool | the registry, ADR-0026 |
 | M3 | Natural-language starting points for beginners: project templates and generator recipes that an agent fills in through ordinary commands; an evaluation harness that runs scripted agent tasks against sample projects and scores them with `real verify`; the HTTP MCP transport (WP26: templates and recipes #104, `real agent eval` #124, `real mcp --http` #92) | the registry, `real verify`, templates |
+| M4 | The user guide as MCP resources with `docs.search`, beside a reference generated from the code; eyes for agents: screenshots from a given camera, previews from `graph.generate` and `graph.inspect`, and watches in `play.run`; `real test` and `real doctor`; path checks for every tier that writes; procedural, gameplay and import evaluation suites with numeric and visual checks; approving agent edits in the editor (WP44) | the registry, `real verify`, the user guide |
 
 The engine never calls a model itself. Every capability an agent uses is also usable by a human through the CLI or the editor.
 
@@ -139,3 +141,23 @@ M3 also added browser builds (WP29, ADR-0049), online play for Roblox-style proj
 - The M1, M2 and WP26 MCP end-to-end tests pass over stdio and HTTP.
 - The island and the plaza build for the web and play their replays in headless Chromium with WebGPU, and the plaza's `net` stage passes on all three platforms.
 - The docs were checked against the code at the end of M3 (the "maintainer audit" amendments in DECISIONS.md), and `coverage.json` matches the code.
+
+## M4: Complete games, procedural modelling and the designer's editor (planned)
+
+The work packages (WP31–WP48), contracts and definition of done are in [M4_PLAN.md](M4_PLAN.md). The plan comes from eight audits of the engine as M3 left it and from the rough edges a sample game found, which grows into M4's example, `examples/town`.
+
+**What M4 takes on** (each item has its ADR, named in the plan):
+
+| Area | In M4 |
+|---|---|
+| Complete games on the native API | The gameplay scripting API: world transforms, spawning prefabs, script events, the cursor, pause and time scale, debug drawing and replays recorded by playing (WP35); physics for gameplay: shape casts, triggers, body settings, joints, compound bodies and surface materials (WP34); native UI on one core shared with the compat GUI (WP36); scenes, saves and settings (WP37); compressed audio and animation events (WP45) |
+| Content | Prefabs v2: nesting, variants and linked instances (WP38); the procedural authoring loop and a faster evaluator (WP39); graph language v2 with graph params, subgraphs and point attributes (WP40); procedural modelling and building generators (WP41) |
+| Rendering | Reversed-Z, masked shadows, more lights, and sky, fog, spot lights and effects for native games (WP32); instance sets, terrain materials, an atmosphere and image-based lighting (WP33) |
+| The designer's editor | An editor camera, picking, multiple selection and play-in-editor with the debugger (WP42); previews on the node canvas, and materials, prefabs, scenes and `real.toml` as documents with an asset browser (WP43) |
+| Tools and documentation | A user guide and a generated reference, `real test`, `real doctor`, the editor socket on Windows, and the agent safety fixes (WP44) |
+| Online play and compat | Encrypted online play with join codes (WP46); GUI input, images, tools, teams and missing classes for Roblox-style games, and the cost of big maps (WP47) |
+| CI and releases | Faster CI that stays cheap if the repository goes private again, a pinned toolchain, version 0.4.0 with a build id in every binary, and the first tag (WP31) |
+
+**Left for later.** A native networking API for game scripts (replication, RPCs, prediction and interest management); navigation meshes and AI; mesh booleans and CSG; dungeon and interior generators; GPU procedural evaluation and GPU-driven rendering beyond instance sets; terrain voxels in compat; license keys and activation for selling the engine, installers, code signing, auto-update and crash upload; mobile and consoles; localisation; hosted relays, matchmaking and accounts; and type checking inside the engine in place of luau-lsp.
+
+**Exit.** M4_PLAN's [definition of done](M4_PLAN.md#definition-of-done-for-m4). In short: the town is a complete game that `real verify` checks in CI, with the same `state_hash` on Linux, Windows and macOS, and builds for the desktop and the web; a designer can build and play-test a scene in the editor; the user guide matches the code; online play is encrypted; and `v0.4.0` is tagged.
