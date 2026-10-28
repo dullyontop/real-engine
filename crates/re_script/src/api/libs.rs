@@ -112,9 +112,15 @@ pub(crate) fn all(lua: &Lua, kind: ContextKind) -> Result<Vec<(&'static str, Tab
     Ok(out)
 }
 
-/// A `HostError` as a Luau error carrying its code.
+/// A `HostError` as a Luau error carrying its code. A provided method's
+/// default body ([`HostError::unavailable`]) is `RE3015`.
 pub(crate) fn host_err(e: HostError) -> mlua::Error {
-    match Code::parse(e.code) {
+    let code = if e.code == HostError::UNAVAILABLE {
+        Some(codes::SERVICE_UNAVAILABLE)
+    } else {
+        Code::parse(e.code)
+    };
+    match code {
         Some(code) => super::error(code, e.message),
         None => mlua::Error::runtime(format!("{} ({})", e.message, e.code)),
     }
@@ -848,4 +854,18 @@ pub(crate) fn fire_contact(lua: &Lua, ev: &re_types::physics::ContactEvent) -> R
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_default_host_body_raises_service_unavailable() {
+        let e = host_err(HostError::unavailable("time.set_scale")).to_string();
+        assert!(
+            e.contains("[RE3015] time.set_scale is not available here"),
+            "{e}"
+        );
+    }
 }

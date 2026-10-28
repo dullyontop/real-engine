@@ -40,12 +40,16 @@ impl HostError {
         }
     }
 
+    /// The code of [`HostError::unavailable`]. It is not an `RE####` code,
+    /// since `re_types` owns none: `re_script` reports it as its `RE3015`, as
+    /// it does any service its host lacks.
+    pub const UNAVAILABLE: &'static str = "unavailable";
+
     /// What a provided method's default body answers: this host does not offer
-    /// `what` (a script function, such as `"time.set_scale"`). The code is
-    /// `RE3015`, which `re_script` reports for any service its host lacks.
+    /// `what` (a script function, such as `"time.set_scale"`).
     pub fn unavailable(what: &str) -> HostError {
         HostError::new(
-            "RE3015",
+            Self::UNAVAILABLE,
             format!("{what} is not available here: this host does not offer it"),
         )
     }
