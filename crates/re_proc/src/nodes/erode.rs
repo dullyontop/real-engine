@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use re_geom::terrain::{APRON, ErosionParams, TILE_CELLS, erode, tile_blend, tile_window};
 use re_noise::Pcg32;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::{Domain, NodeCtx, NodeDef, NodeRegistry, NodeSpec, Params, PortDef, positive, within};
 use crate::value::{Field, Output, PortType};
@@ -24,7 +24,7 @@ use crate::value::{Field, Output, PortType};
 const TILE_CACHE: usize = 256;
 
 /// Parameters of `terrain.erode`.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct ErodeParams {
     /// Metres between the samples erosion runs on, when streamed (the

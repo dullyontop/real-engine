@@ -7,7 +7,8 @@
 //! { "$schema": "../../schemas/replay.schema.json", "version": 1, "seed": 1234, "frames": 600,
 //!   "input": [ { "frame": 30, "action": "move", "axis": [0, 1] }, { "frame": 90, "action": "jump", "down": true } ],
 //!   "commands": [ { "frame": 300, "name": "graph.regenerate", "args": { "source": "island", "seed": 99 } } ],
-//!   "checks": [ { "frame": 600, "screenshot": "tests/goldens/{backend}/island_600.png" } ] }
+//!   "checks": [ { "frame": 600, "screenshot": "tests/goldens/{backend}/island_600.png" } ],
+//!   "scenes": [ { "frame": 240, "switch": "town" } ] }
 //! ```
 //!
 //! Unknown keys are errors.
@@ -41,6 +42,10 @@ pub struct ReplayDoc {
     /// Checks to make, in frame order.
     #[serde(default)]
     pub checks: Vec<ReplayCheck>,
+    /// The scene changes the run must make, in order (ADR-0059 §6): checked
+    /// as the run applies them, never driven. Without it, nothing is checked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scenes: Option<Vec<SceneChange>>,
 }
 
 impl ReplayDoc {
@@ -58,6 +63,7 @@ impl ReplayDoc {
             raw: Vec::new(),
             commands: Vec::new(),
             checks: Vec::new(),
+            scenes: None,
         }
     }
 }
@@ -145,6 +151,101 @@ impl RawReplayInput {
         .count();
         let button = self.key.is_some() || self.mouse_button.is_some() || self.pad_button.is_some();
         set == 1 && button == self.down.is_some()
+    }
+}
+
+/// One scene change a run applied (ADR-0059 §6), at the end of `frame`: the
+/// main scene switched, a scene loaded beside the loaded ones or unloaded, or
+/// a restart into the scene the run began in. Exactly one of `switch`,
+/// `load`, `unload` and `restart` is set, to the scene's name (its project
+/// path when the project's scene list does not name it).
+///
+/// ```json
+/// { "frame": 120, "switch": "town" }
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct SceneChange {
+    /// The frame whose end applied the change.
+    pub frame: u64,
+    /// The scene switched to: it replaced every loaded scene.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub switch: Option<String>,
+    /// A scene loaded beside the loaded ones.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub load: Option<String>,
+    /// A scene unloaded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unload: Option<String>,
+    /// The scene a restart (`world.restart()`) loaded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restart: Option<String>,
+}
+
+/// What a [`SceneChange`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SceneChangeKind {
+    /// `switch`.
+    Switch,
+    /// `load`.
+    Load,
+    /// `unload`.
+    Unload,
+    /// `restart`.
+    Restart,
+}
+
+impl SceneChangeKind {
+    /// The change's key in a replay: `switch`, `load`, `unload` or `restart`.
+    pub fn name(self) -> &'static str {
+        match self {
+            SceneChangeKind::Switch => "switch",
+            SceneChangeKind::Load => "load",
+            SceneChangeKind::Unload => "unload",
+            SceneChangeKind::Restart => "restart",
+        }
+    }
+}
+
+impl SceneChange {
+    /// The change `kind` of scene `name` at `frame`.
+    pub fn new(frame: u64, kind: SceneChangeKind, name: impl Into<String>) -> SceneChange {
+        let name = Some(name.into());
+        let mut change = SceneChange {
+            frame,
+            ..SceneChange::default()
+        };
+        match kind {
+            SceneChangeKind::Switch => change.switch = name,
+            SceneChangeKind::Load => change.load = name,
+            SceneChangeKind::Unload => change.unload = name,
+            SceneChangeKind::Restart => change.restart = name,
+        }
+        change
+    }
+
+    /// What the change did and to which scene, when exactly one of the four
+    /// keys is set.
+    pub fn kind(&self) -> Option<(SceneChangeKind, &str)> {
+        let set: Vec<(SceneChangeKind, &str)> = [
+            (SceneChangeKind::Switch, &self.switch),
+            (SceneChangeKind::Load, &self.load),
+            (SceneChangeKind::Unload, &self.unload),
+            (SceneChangeKind::Restart, &self.restart),
+        ]
+        .into_iter()
+        .filter_map(|(k, n)| n.as_deref().map(|n| (k, n)))
+        .collect();
+        match set.as_slice() {
+            [one] => Some(*one),
+            _ => None,
+        }
+    }
+
+    /// True when exactly one of `switch`, `load`, `unload` and `restart` is set.
+    pub fn is_well_formed(&self) -> bool {
+        self.kind().is_some()
     }
 }
 

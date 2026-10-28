@@ -35,7 +35,9 @@ use re_script::{Context, ContextKind, OutputLine, RuntimeConfig, ScriptHost, sch
 
 pub use codec::{EnumFromLuaFn, EnumToLuaFn, FromUserdataFn, ToLuaFn, ValueCodec};
 
-use crate::class::{Accessor, ClassMarker, ClassRegistry, ClassRegistryBuilder, Converter};
+use crate::class::{
+    Accessor, ClassIndex, ClassMarker, ClassRegistry, ClassRegistryBuilder, Converter,
+};
 use crate::data::Status;
 use crate::error::CompatError;
 use crate::scene::CompatConfig;
@@ -389,6 +391,8 @@ impl CompatVm {
         let behavior = compat.signal_behavior;
         let classes = &setup.classes;
         classes.register_components(world)?;
+        // Index the scene's instances now rather than in the first frame.
+        ClassIndex::of(world);
         crate::signal::events::prepare_world(world);
         let game = world.entity(GAME_ID).map_err(|_| {
             CompatError::Scene(format!("the world has no root entity with id {GAME_ID:?}"))

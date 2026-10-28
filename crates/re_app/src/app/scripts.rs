@@ -146,6 +146,7 @@ impl App {
                 skins: &mut self.skin_sync,
                 time_scale: &mut self.time_scale,
             },
+            game: Some(&mut self.scenes),
         };
         let out = f(scripts, &mut host);
         self.collect_script_output();

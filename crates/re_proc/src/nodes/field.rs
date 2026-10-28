@@ -3,13 +3,18 @@
 use std::sync::Arc;
 
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use super::{NodeCtx, NodeDef, NodeRegistry, NodeSpec, Params, PortDef, positive, within};
-use crate::value::{Output, PortType};
+use re_core::Diagnostic;
+
+use super::{
+    InputValue, NodeCtx, NodeDef, NodeRegistry, NodeSpec, Params, PortDef, positive, within,
+};
+use crate::codes;
+use crate::value::{Field, Output, PortType};
 
 /// How [`CombineParams`] combines two fields.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CombineOp {
     /// `a + b`.
@@ -28,7 +33,7 @@ pub enum CombineOp {
 }
 
 /// Parameters of `field.combine`.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct CombineParams {
     /// `add`, `sub`, `mul`, `min`, `max` or `lerp`.
@@ -73,8 +78,48 @@ fn combine(ctx: &NodeCtx, p: &CombineParams) -> Result<Output, String> {
     Ok(Output::Field(Arc::new(a.like(values)?)))
 }
 
+/// `RE4030` when `a` and `b` cover different areas (a different size or
+/// position): `b` is then stretched over `a` by normalised position, not
+/// matched by world position. Fields over one area at different spacings
+/// resample correctly. A `terrain.island_mask` field is made to be
+/// stretched over the field it masks, so it is not reported.
+fn check_extents(inputs: &[InputValue]) -> Vec<Diagnostic> {
+    let field = |port: &str| {
+        inputs.iter().find_map(|i| match i.value {
+            Output::Field(f) if i.port == port && i.from_kind != "terrain.island_mask" => {
+                Some(f.clone())
+            }
+            _ => None,
+        })
+    };
+    let (Some(a), Some(b)) = (field("a"), field("b")) else {
+        return Vec::new();
+    };
+    let extent = |f: &Field| {
+        let h = &f.0;
+        (h.offset.x, h.offset.z, (h.n - 1) as f32 * h.spacing)
+    };
+    let ((ax, az, a_side), (bx, bz, b_side)) = (extent(&a), extent(&b));
+    let tolerance = 1e-4 * a_side.max(b_side).max(1.0);
+    if (ax - bx).abs() <= tolerance
+        && (az - bz).abs() <= tolerance
+        && (a_side - b_side).abs() <= tolerance
+    {
+        return Vec::new();
+    }
+    vec![
+        Diagnostic::warning(
+            codes::COMBINE_EXTENTS,
+            format!(
+                "`a` covers {a_side} m from ({ax}, {az}) and `b` {b_side} m from ({bx}, {bz}): `b` is stretched over `a` by normalised position, not matched by world position"
+            ),
+        )
+        .with_hint("give both fields the same extent: the same size × cell, and the same centre"),
+    ]
+}
+
 /// How [`RemapParams`] maps values.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RemapMode {
     /// Clamp to `[min, max]`.
@@ -90,7 +135,7 @@ pub enum RemapMode {
 }
 
 /// Parameters of `field.remap`.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct RemapParams {
     /// `clamp`, `linear`, `curve` or `terrace`.
@@ -248,7 +293,8 @@ pub(super) fn register(r: &mut NodeRegistry) {
             file_params: &[],
         },
         combine,
-    ));
+    )
+    .with_input_check(check_extents));
     r.register(NodeDef::new(
         NodeSpec {
             kind: "field.remap",

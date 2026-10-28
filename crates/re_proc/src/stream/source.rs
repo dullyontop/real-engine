@@ -14,7 +14,7 @@ use serde_json::Value as Json;
 
 use super::StreamConfig;
 use crate::canon::{doc_hash, version_stamp};
-use crate::generator::{GENERATOR, apply_overrides, parse_overrides};
+use crate::generator::{GENERATOR, overridden};
 use crate::value::{DerivedAsset, Fragment};
 use crate::{Domain, EvalOptions, Evaluator, GraphStore, PortType, ProcGraph, Streaming, codes};
 
@@ -39,9 +39,11 @@ pub(crate) struct Source {
     pub inputs: blake3::Hash,
     /// Its `terrain.chunks` terrain, if its graph has one.
     pub terrain: Option<Arc<TerrainSource>>,
-    /// Its nodes written for an older version (`RE4019`), which still
-    /// evaluate as that version.
-    pub outdated: Vec<Diagnostic>,
+    /// Problems to report once: overrides it ignores (`RE4011`), and nodes
+    /// written for an older version (`RE4019`), which still evaluate as that
+    /// version. Streamed cells skip the generator, which reports those for
+    /// other sources.
+    pub warnings: Vec<Diagnostic>,
 }
 
 /// The terrain of a streamed source: the field reaching its `terrain.chunks`
@@ -204,10 +206,7 @@ fn prepare(
 ) -> Result<Source, Diagnostic> {
     let id = id.to_string();
     let registry = store.evaluator().registry();
-    let doc = match parse_overrides(params) {
-        Ok(o) => apply_overrides(doc, &o, registry, &id).0,
-        Err(_) => doc.clone(),
-    };
+    let (doc, mut warnings) = overridden(doc, params, registry, &id);
     for node in &doc.nodes {
         if let Some(def) = registry.get(&node.kind)
             && def.streaming == Streaming::Whole
@@ -253,16 +252,17 @@ fn prepare(
         })),
         None => None,
     };
-    let outdated = crate::graph::outdated_nodes(
-        &graph.id,
-        doc.nodes
-            .iter()
-            .map(|n| (n.id.as_str(), n.kind.as_str(), n.version)),
-        registry,
-    )
-    .into_iter()
-    .map(|d| d.at(Location::entity(id.clone())))
-    .collect();
+    warnings.extend(
+        crate::graph::outdated_nodes(
+            &graph.id,
+            doc.nodes
+                .iter()
+                .map(|n| (n.id.as_str(), n.kind.as_str(), n.version)),
+            registry,
+        )
+        .into_iter()
+        .map(|d| d.at(Location::entity(id.clone()))),
+    );
     let stamp = version_stamp(&doc, registry).to_hex().to_string();
     let seed = seed as u64;
     let mut h = blake3::Hasher::new();
@@ -281,7 +281,7 @@ fn prepare(
         stamp,
         inputs: h.finalize(),
         terrain,
-        outdated,
+        warnings,
     })
 }
 

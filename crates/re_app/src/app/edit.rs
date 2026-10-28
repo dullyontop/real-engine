@@ -101,7 +101,8 @@ impl App {
         }
     }
 
-    /// Writes the World's authored entities back to the entry scene file,
+    /// Writes the World's authored entities back to the open scene's file
+    /// ([`App::scene_path`]: the entry scene, unless another was opened),
     /// and each open document with unsaved changes back to its file
     /// (ADR-0044), which clears its dirty flag; the procedural sources that
     /// read a saved file reload their stored graph from it, so it stays the
@@ -113,7 +114,7 @@ impl App {
     pub fn save_scene(&mut self) -> Result<(), Diagnostic> {
         let doc = self.world.save(SaveOptions::default());
         let text = re_scene::scene::to_json(&doc);
-        let rel_path = self.config.project.entry_scene.clone();
+        let rel_path = self.scene_path().to_string();
         // Only a development run writes project files (ADR-0037).
         let Some(dir) = self.files.project_dir().map(Path::to_path_buf) else {
             return Err(Diagnostic::error(

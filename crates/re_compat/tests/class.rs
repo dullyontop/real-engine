@@ -1,14 +1,17 @@
-//! The class layer: data checks, inheritance, member lookup and property
-//! access through every storage kind.
+//! The class layer: data checks, inheritance, member lookup, the class index
+//! and property access through every storage kind.
 
 mod common;
 
 use common::{TEST_CLASSES, test_builder, test_registry};
 use glam::Vec3;
+use re_compat::class::ClassIndex;
 use re_compat::data::{ClassFile, EnumFile, LibraryFile};
-use re_compat::{ClassRegistry, ClassRegistryBuilder, CompatError, Member, Status, codes, scene};
+use re_compat::{
+    ClassMarker, ClassRegistry, ClassRegistryBuilder, CompatError, Member, Status, codes, scene,
+};
 use re_reflect::Value;
-use re_scene::World;
+use re_scene::{Entity, World};
 
 fn code(e: &CompatError) -> String {
     e.code().to_string()
@@ -205,6 +208,130 @@ fn instance_components_follow_the_class_chain() {
         ["Compat_Instance", "Compat_BaseScript"]
     );
     assert_eq!(code(&r.instance_components("Nope").unwrap_err()), "RE9001");
+}
+
+#[test]
+fn is_a_and_families_agree_with_the_superclass_walk() {
+    let r = test_registry();
+    // IsA by definition: walk the superclass names.
+    let walk = |class: &str, ancestor: &str| {
+        let mut cur = Some(class.to_string());
+        while let Some(c) = cur {
+            if c == ancestor {
+                return true;
+            }
+            cur = r.class(&c).unwrap().superclass.clone();
+        }
+        false
+    };
+    let names: Vec<&str> = r.classes().map(|c| c.name.as_str()).collect();
+    for &c in &names {
+        let id = r.id(c).unwrap();
+        assert_eq!(r.def(id).name, c);
+        for &a in &names {
+            let expect = walk(c, a);
+            assert_eq!(r.is_a(c, a), expect, "{c} IsA {a}");
+            assert_eq!(r.is_a_id(id, r.id(a).unwrap()), expect, "{c} IsA {a}");
+        }
+        // Ids follow name order, so a family in id order is in name order.
+        let family: Vec<&str> = r
+            .family(id)
+            .iter()
+            .map(|&f| r.def(f).name.as_str())
+            .collect();
+        let expect: Vec<&str> = names.iter().copied().filter(|&f| walk(f, c)).collect();
+        assert_eq!(family, expect, "the family of {c}");
+    }
+    assert!(r.id("Nope").is_none());
+    assert!(!r.is_a("Instance", "Nope"));
+}
+
+/// Every instance of `class` or a subclass, in entity order, from a walk over
+/// the whole world: what the class index must answer.
+fn scan(w: &mut World, r: &ClassRegistry, class: &str, exactly: bool) -> Vec<Entity> {
+    let mut q = w.ecs.query::<(Entity, &ClassMarker)>();
+    let mut out: Vec<Entity> = q
+        .iter(&w.ecs)
+        .filter(|(_, m)| match exactly {
+            true => m.class == class,
+            false => r.is_a(&m.class, class),
+        })
+        .map(|(e, _)| e)
+        .collect();
+    out.sort();
+    out
+}
+
+fn check_index(w: &mut World, r: &ClassRegistry) {
+    for class in [
+        "Instance",
+        "DataModel",
+        "Folder",
+        "LuaSourceContainer",
+        "BaseScript",
+        "Script",
+        "LocalScript",
+        "TestBlock",
+        "Nope",
+    ] {
+        assert_eq!(r.instances(w, class), scan(w, r, class, false), "{class}");
+        assert_eq!(
+            r.instances_exactly(w, class),
+            scan(w, r, class, true),
+            "exactly {class}"
+        );
+    }
+}
+
+#[test]
+fn the_class_index_follows_spawns_despawns_class_writes_and_forks() {
+    let r = test_registry();
+    let mut w = World::new();
+    r.register_components(&mut w).unwrap();
+    let spawn = |w: &mut World, class: &str, id: &str, parent: Option<Entity>| {
+        scene::spawn_instance(w, &r, class, Some(id), id, parent).unwrap()
+    };
+    // Instances from before the first question: the walk that makes the
+    // index finds them.
+    let game = spawn(&mut w, "DataModel", "game", None);
+    let folder = spawn(&mut w, "Folder", "folder", Some(game));
+    let script = spawn(&mut w, "Script", "script", Some(folder));
+    assert!(!w.ecs.contains_resource::<ClassIndex>());
+    check_index(&mut w, &r);
+    assert!(w.ecs.contains_resource::<ClassIndex>());
+
+    // Spawned later: the hooks add them.
+    let local = spawn(&mut w, "LocalScript", "local", Some(folder));
+    spawn(&mut w, "TestBlock", "block", Some(game));
+    check_index(&mut w, &r);
+    let mut scripts = vec![script, local];
+    scripts.sort();
+    assert_eq!(r.instances(&mut w, "BaseScript"), scripts);
+
+    // A write of the class replaces the immutable marker, so the instance
+    // moves to its new class.
+    w.set("local", "ClassMarker", "class", Value::Str("Script".into()))
+        .unwrap();
+    check_index(&mut w, &r);
+    assert_eq!(r.instances_exactly(&mut w, "LocalScript"), []);
+    assert_eq!(r.instances_exactly(&mut w, "Script"), scripts);
+
+    // A despawn takes the whole subtree out.
+    w.despawn_runtime(folder).unwrap();
+    check_index(&mut w, &r);
+    assert_eq!(r.instances(&mut w, "BaseScript"), []);
+
+    // A fork starts without an index and makes its own from its instances;
+    // spawns in it leave the original alone.
+    let mut fork = w.fork();
+    assert!(!fork.ecs.contains_resource::<ClassIndex>());
+    check_index(&mut fork, &r);
+    let fork_game = fork.entity("game").unwrap();
+    spawn(&mut fork, "Folder", "folder2", Some(fork_game));
+    check_index(&mut fork, &r);
+    assert_eq!(r.instances(&mut fork, "Folder").len(), 1);
+    check_index(&mut w, &r);
+    assert_eq!(r.instances(&mut w, "Folder"), []);
 }
 
 #[test]

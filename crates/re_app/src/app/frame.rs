@@ -35,8 +35,9 @@ pub(super) struct HalfFrame {
 
 impl App {
     /// Plays `replay` from the next frame: its actions replace live input, its
-    /// commands are dispatched at their frames and its checks are recorded as
-    /// screenshot requests.
+    /// commands are dispatched at their frames, its checks are recorded as
+    /// screenshot requests, and the scene changes it lists are checked as the
+    /// run makes them (`RE0571`).
     ///
     /// # Errors
     ///
@@ -44,6 +45,7 @@ impl App {
     /// input crate's diagnostics as `related`).
     pub fn play_replay(&mut self, doc: ReplayDoc) -> Result<(), Diagnostic> {
         let seed = doc.seed;
+        let scenes = doc.scenes.clone();
         let replay = Replay::new(doc, &self.action_map.layout()).map_err(|ds| {
             let mut d = Diagnostic::error(
                 codes::REPLAY_FAILED,
@@ -55,6 +57,8 @@ impl App {
             d
         })?;
         self.replay = Some(replay);
+        // Its scene changes are checked as the run makes them (ADR-0059 §6).
+        self.scenes.expect(scenes);
         // The run starts from the replay's seed: scripts that already run
         // start their `math.random` again from it.
         self.seed = seed;
@@ -116,6 +120,13 @@ impl App {
             perf: self.perf_report(),
             screenshots: std::mem::take(&mut self.screenshots),
             output: std::mem::take(&mut self.script_output),
+            scenes: self
+                .scenes
+                .log()
+                .iter()
+                .filter(|c| c.frame >= start)
+                .cloned()
+                .collect(),
             compat: self.compat.as_ref().map(|c| c.info()),
         })
     }
@@ -490,8 +501,6 @@ impl App {
             });
         }
         self.take_frame_screenshots(f);
-        if pending.restart {
-            self.restart();
-        }
+        self.scenes_end_frame(f, pending.restart);
     }
 }

@@ -2015,6 +2015,43 @@ fn stream_reports_outdated_nodes_once() {
 }
 
 #[test]
+fn stream_reports_ignored_overrides_once() {
+    // A streamed source applies its overrides itself: the ones it ignores
+    // are reported as the generator reports them for other sources.
+    let mut st = streamed(world_graph(), 32.0, 32.0, json!([]));
+    let set = |w: &mut World, text: &str| {
+        w.set("terrain", "GraphSource", "params", Value::Str(text.into()))
+            .unwrap();
+    };
+    let codes = |r: &[StepReport]| -> Vec<Vec<String>> {
+        r.iter()
+            .map(|r| r.diagnostics.iter().map(|d| d.code.to_string()).collect())
+            .collect()
+    };
+    set(&mut st.world, "{not json");
+    let r = run(&mut st.world, 0..5);
+    assert_eq!(codes(&r)[0], ["RE4011"], "{:#?}", r[0].diagnostics);
+    assert!(codes(&r)[1..].iter().all(Vec::is_empty), "{:?}", codes(&r));
+    assert!(
+        r[0].diagnostics[0].message.contains("overrides ignored"),
+        "{}",
+        r[0].diagnostics[0].message
+    );
+    // An override of a node the graph does not have.
+    set(&mut st.world, r#"{"nope":{"height":3}}"#);
+    let r = run(&mut st.world, 5..10);
+    assert_eq!(codes(&r)[0], ["RE4011"], "{:#?}", r[0].diagnostics);
+    assert!(codes(&r)[1..].iter().all(Vec::is_empty), "{:?}", codes(&r));
+    assert!(
+        r[0].diagnostics[0]
+            .message
+            .contains("override of `nope.height` ignored"),
+        "{}",
+        r[0].diagnostics[0].message
+    );
+}
+
+#[test]
 fn stream_cell_bounds_span_the_terrain_heights() {
     // Terrain lifted to 100 m and more: the cell's bounds hold its mesh's
     // heights, not the corner-local entity's origin at y = 0.

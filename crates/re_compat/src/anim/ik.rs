@@ -25,7 +25,7 @@ use re_scene::{Entity, World};
 
 use super::pose::{self, Joint};
 use super::{cframe_value, rig_of};
-use crate::class::{ClassMarker, ClassRegistry};
+use crate::class::ClassRegistry;
 use crate::datatypes::CFrame;
 use crate::instance::tree;
 use crate::runtime::with_world;
@@ -33,15 +33,7 @@ use crate::runtime::with_world;
 /// Applies the IK controls of every rig that has an Animator.
 pub fn apply_all(lua: &Lua, classes: &Arc<ClassRegistry>) -> Result<()> {
     with_world(lua, |w| {
-        let mut animators: Vec<Entity> = w
-            .ecs
-            .query::<(Entity, &ClassMarker)>()
-            .iter(&w.ecs)
-            .filter(|(_, m)| m.class == "Animator")
-            .map(|(e, _)| e)
-            .collect();
-        animators.sort();
-        for a in animators {
+        for a in classes.instances_exactly(w, "Animator") {
             if tree::is_destroyed(w, a) {
                 continue;
             }
