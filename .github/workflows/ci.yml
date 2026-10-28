@@ -113,6 +113,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/linux-setup
+        with:
+          free-disk: true
       - name: Install luau-lsp 1.70.1
         run: |
           curl -fsSL -o /tmp/luau-lsp.zip https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-linux-x86_64.zip
@@ -144,6 +146,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/linux-setup
+        with:
+          free-disk: true
       - run: rustup toolchain install 1.95.0 --profile minimal
       - run: cargo +1.95.0 build --workspace --all-targets --locked
 

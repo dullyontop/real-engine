@@ -12,9 +12,26 @@ inputs:
       (the release `real` on ubuntu-latest). Empty, the job has its own cache.
     required: false
     default: ""
+  free-disk:
+    description: >
+      "true" deletes preinstalled SDKs no job here uses (Android, .NET, Haskell,
+      Swift, CodeQL), for the jobs that link every test binary: a private
+      repository's runners have too little free disk for those builds.
+    required: false
+    default: "false"
 runs:
   using: composite
   steps:
+    - name: Free disk space
+      if: inputs.free-disk == 'true'
+      shell: bash
+      # In the background, while the next steps download; the last step waits.
+      # Its input and output are files, or the step would wait for it to finish.
+      run: |
+        df -h /
+        sudo sh -c 'rm -rf /usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup /opt/ghc \
+          /usr/share/swift /opt/hostedtoolcache/CodeQL; touch /tmp/real-engine-disk-freed' \
+          < /dev/null > /tmp/real-engine-free-disk.log 2>&1 &
     - name: The key of the downloaded packages
       id: apt-key
       shell: bash
@@ -70,3 +87,11 @@ runs:
       with:
         shared-key: ${{ inputs.cargo-cache }}
         save-if: ${{ github.ref == 'refs/heads/main' }}
+    - name: Wait for the disk space
+      if: inputs.free-disk == 'true'
+      shell: bash
+      run: |
+        if ! timeout 600 sh -c 'until [ -e /tmp/real-engine-disk-freed ]; do sleep 2; done'; then
+          echo "::warning::The preinstalled SDKs were still being deleted after 10 minutes."
+        fi
+        df -h /
