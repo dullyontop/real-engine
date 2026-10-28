@@ -1152,10 +1152,12 @@ impl Evaluation {
     }
 
     /// The graph's output: the fragments of every node no edge leaves (a mesh
-    /// becomes one entity `<node>/mesh`; in a streamed window it sits at the
-    /// window's corner, and an empty one adds nothing), in document order,
-    /// with the derived assets they reference. Fails with the first error of
-    /// the evaluation, or `RE4013` when two entities share a key.
+    /// becomes one entity `<node>/mesh`, a polygon mesh one per material
+    /// part; in a streamed window they sit at the window's corner, and an
+    /// empty one adds nothing), in document order, with the derived assets
+    /// they reference. Fails with the first error of the evaluation, the
+    /// error of a polygon mesh that cannot be triangulated, or `RE4013` when
+    /// two entities share a key.
     pub fn fragment(&self) -> Result<Fragment, Diagnostic> {
         if let Some(d) = self.report.first_error() {
             return Err(d.clone());
@@ -1166,11 +1168,19 @@ impl Evaluation {
             if !self.sinks[i] {
                 continue;
             }
-            let Some(f) = self.outputs[i]
-                .as_ref()
-                .and_then(|o| sink_fragment_in(id, o, self.domain.as_ref()))
-            else {
+            let Some(output) = &self.outputs[i] else {
                 continue;
+            };
+            let f = match sink_fragment_in(id, output, self.domain.as_ref()) {
+                Ok(Some(f)) => f,
+                Ok(None) => continue,
+                Err(e) => {
+                    let kind = self.report.node(id).map_or("", |n| n.kind.as_str());
+                    return Err(Diagnostic::error(
+                        e.code,
+                        format!("node `{id}` ({kind}): {}", e.message),
+                    ));
+                }
             };
             for item in &f.items {
                 if seen.insert(item.key.clone(), ()).is_some() {

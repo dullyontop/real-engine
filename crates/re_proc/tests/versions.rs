@@ -90,6 +90,29 @@ const GOLDEN_ROADS: &[(&str, u32, &str, &str)] = &[
     ("points.mask", 1, "off_road", "087b5717f949479c"),
 ];
 
+/// The same for the modelling kinds (ADR-0062), from
+/// `examples/poly.graph.json`, whose `fragment.merge` checks the entities
+/// polygon meshes become.
+const GOLDEN_POLY: &[(&str, u32, &str, &str)] = &[
+    ("poly.box", 1, "walls", "3571818ada46f36b"),
+    ("poly.icosphere", 1, "ball", "8933c2382da83549"),
+    ("poly.cone", 1, "chimney", "b9a69ccb73f72951"),
+    ("poly.torus", 1, "wreath", "d50139e1a651a7ff"),
+    ("poly.stairs", 1, "step", "193715481e656b12"),
+    ("poly.arch", 1, "door", "93470c561a0dfab2"),
+    ("poly.transform", 1, "wreath_placed", "4a32f5eec9299571"),
+    ("poly.mirror", 1, "bench", "6cba1edd46eefdf8"),
+    ("poly.weld", 1, "welded", "d391ce7db1c1c9db"),
+    ("poly.flip", 1, "inside", "d02c84edd46eda95"),
+    ("poly.merge", 1, "cottage", "011bc9ced6d470ea"),
+    ("poly.group", 1, "up", "81bef93a0579a3b6"),
+    ("poly.material", 1, "roof", "4957e3a5d8c3f770"),
+    ("poly.attribute", 1, "tint", "69ab27e242ba73ab"),
+    ("poly.from_mesh", 1, "post_poly", "96092a86c43b91c2"),
+    ("poly.to_mesh", 1, "ball_mesh", "4d23ae86136039f9"),
+    ("fragment.merge", 1, "out", "c19c2e4fc089349a"),
+];
+
 #[test]
 fn every_supported_kind_version_has_a_golden_output() {
     let registry = NodeRegistry::m1();
@@ -99,6 +122,7 @@ fn every_supported_kind_version_has_a_golden_output() {
                 GOLDEN
                     .iter()
                     .chain(GOLDEN_ROADS)
+                    .chain(GOLDEN_POLY)
                     .any(|(k, gv, ..)| *k == def.kind && *gv == v),
                 "{}@{v} has no golden in tests/versions.rs",
                 def.kind
@@ -106,11 +130,13 @@ fn every_supported_kind_version_has_a_golden_output() {
         }
     }
     let roads = GraphDoc::from_json(include_str!("../examples/roads.graph.json")).unwrap();
+    let poly = GraphDoc::from_json(include_str!("../examples/poly.graph.json")).unwrap();
     for (doc, version, entries) in [
         (example_with_every_kind(), 1u32, GOLDEN),
         (example_with_every_kind(), 2, GOLDEN),
         (example_with_every_kind(), 3, GOLDEN),
         (roads, 1, GOLDEN_ROADS),
+        (poly, 1, GOLDEN_POLY),
     ] {
         let mut doc = doc;
         for n in &mut doc.nodes {

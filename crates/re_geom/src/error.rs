@@ -30,6 +30,23 @@ pub enum GeomError {
     /// A polygon could not be triangulated (`RE4505`).
     #[error("triangulation failed: {0}")]
     Triangulation(String),
+    /// An argument to a modelling operation is unusable (`RE4510`).
+    #[error("invalid argument: {0}")]
+    Argument(String),
+    /// A polygon mesh breaks a validity rule (`RE4511`).
+    #[error("invalid mesh: {0}")]
+    InvalidMesh(String),
+    /// A modelling operation's result would be too large (`RE4515`).
+    #[error(
+        "the result would have {points} points and {corners} corners, more than the {max} allowed",
+        max = crate::poly::MAX_ELEMENTS
+    )]
+    PolyTooLarge {
+        /// The points the result would have.
+        points: u64,
+        /// The corners the result would have.
+        corners: u64,
+    },
 }
 
 impl GeomError {
@@ -42,6 +59,9 @@ impl GeomError {
             GeomError::OutOfRange(_) => codes::OUT_OF_RANGE,
             GeomError::Polygon(_) => codes::INVALID_POLYGON,
             GeomError::Triangulation(_) => codes::TRIANGULATION_FAILED,
+            GeomError::Argument(_) => codes::INVALID_ARGUMENT,
+            GeomError::InvalidMesh(_) => codes::INVALID_POLYMESH,
+            GeomError::PolyTooLarge { .. } => codes::POLYMESH_TOO_LARGE,
         }
     }
 

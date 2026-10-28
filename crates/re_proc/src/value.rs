@@ -1,12 +1,14 @@
 //! The values that flow along a graph's edges: [`Field`], [`MeshValue`],
-//! [`Points`], [`Fragment`], [`Shapes`] and [`RoadPath`], carried as an
-//! [`Output`].
+//! [`Points`], [`Fragment`], [`Shapes`], [`RoadPath`] and [`PolyMesh`],
+//! carried as an [`Output`].
 
 use std::sync::Arc;
 
 use glam::Vec3;
 use re_geom::Heightfield;
 pub use re_geom::Shapes;
+/// A polygon mesh with attribute columns, for modelling (ADR-0062).
+pub use re_geom::poly::PolyMesh;
 /// A road centreline sampled at a fixed spacing (`re_geom::road::Path`).
 pub use re_geom::road::Path as RoadPath;
 use re_reflect::Value;
@@ -29,11 +31,14 @@ pub enum PortType {
     Shapes,
     /// A [`RoadPath`]: a sampled road centreline with width and bank.
     Path,
+    /// A [`PolyMesh`]: polygons with attribute columns, for modelling
+    /// (ADR-0062 §6).
+    PolyMesh,
 }
 
 impl PortType {
     /// The name of a node's output port of this type (`field`, `mesh`,
-    /// `points`, `fragment`, `shapes` or `path`).
+    /// `points`, `fragment`, `shapes`, `path` or `polymesh`).
     pub fn port_name(self) -> &'static str {
         match self {
             PortType::Field => "field",
@@ -42,6 +47,7 @@ impl PortType {
             PortType::Fragment => "fragment",
             PortType::Shapes => "shapes",
             PortType::Path => "path",
+            PortType::PolyMesh => "polymesh",
         }
     }
 }
@@ -227,6 +233,8 @@ pub enum Output {
     Shapes(Arc<Shapes>),
     /// A road path.
     Path(Arc<RoadPath>),
+    /// A polygon mesh.
+    PolyMesh(Arc<PolyMesh>),
 }
 
 impl Output {
@@ -239,12 +247,13 @@ impl Output {
             Output::Fragment(_) => PortType::Fragment,
             Output::Shapes(_) => PortType::Shapes,
             Output::Path(_) => PortType::Path,
+            Output::PolyMesh(_) => PortType::PolyMesh,
         }
     }
 
-    /// `(items, bytes)`: samples, vertices, points, entities, polygon points
-    /// or path samples, and an
-    /// estimate of the memory held.
+    /// `(items, bytes)`: samples, vertices, points, entities, polygon points,
+    /// path samples or polygon mesh corners, and an estimate of the memory
+    /// held.
     pub fn size(&self) -> (u64, u64) {
         match self {
             Output::Field(f) => (f.0.samples.len() as u64, f.0.samples.len() as u64 * 4),
@@ -271,8 +280,29 @@ impl Output {
                 (n, n * 16 + s.shapes.len() as u64 * 48)
             }
             Output::Path(p) => (p.samples.len() as u64, p.samples.len() as u64 * 48),
+            Output::PolyMesh(m) => (m.corner_count() as u64, polymesh_bytes(m)),
         }
     }
+}
+
+/// About how many bytes a polygon mesh holds: its positions and indices,
+/// and each column's values.
+fn polymesh_bytes(m: &PolyMesh) -> u64 {
+    let columns: u64 = [&m.points, &m.corners, &m.faces]
+        .iter()
+        .flat_map(|a| a.iter())
+        .map(|(_, c)| {
+            let width = match c.ty() {
+                re_geom::poly::ColumnType::Bool => 1,
+                re_geom::poly::ColumnType::Float | re_geom::poly::ColumnType::Int => 4,
+                re_geom::poly::ColumnType::Vec2 => 8,
+                re_geom::poly::ColumnType::Vec3 => 12,
+                re_geom::poly::ColumnType::Vec4 | re_geom::poly::ColumnType::Quat => 16,
+            };
+            c.len() as u64 * width
+        })
+        .sum();
+    m.positions.len() as u64 * 12 + (m.face_start.len() + m.corner_point.len()) as u64 * 4 + columns
 }
 
 /// `derived:<64 hex digits>` for a 32-byte key.

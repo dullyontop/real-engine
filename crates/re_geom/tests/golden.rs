@@ -163,3 +163,155 @@ fn polygon_and_road_golden_hashes() {
     let got: Vec<(&str, &str)> = got.iter().map(|(k, v)| (*k, v.as_str())).collect();
     assert_eq!(got, want, "polygon or road bytes changed");
 }
+
+/// Every value of a polygon mesh, in order: positions, faces, corners, each
+/// domain's columns by name, the materials, the collider and visibility.
+fn poly_hash(m: &re_geom::poly::PolyMesh) -> String {
+    use re_geom::poly::AttrValue;
+    let mut h = blake3::Hasher::new();
+    let floats = |h: &mut blake3::Hasher, fs: &[f32]| {
+        for f in fs {
+            h.update(&f.to_bits().to_le_bytes());
+        }
+    };
+    for p in &m.positions {
+        floats(&mut h, &p.to_array());
+    }
+    for i in m.face_start.iter().chain(&m.corner_point) {
+        h.update(&i.to_le_bytes());
+    }
+    for attrs in [&m.points, &m.corners, &m.faces] {
+        h.update(b"|");
+        for (name, col) in attrs.iter() {
+            h.update(name.as_bytes());
+            h.update(col.ty().name().as_bytes());
+            for i in 0..col.len() {
+                match col.get(i) {
+                    AttrValue::Float(v) => floats(&mut h, &[v]),
+                    AttrValue::Int(v) => {
+                        h.update(&v.to_le_bytes());
+                    }
+                    AttrValue::Bool(v) => {
+                        h.update(&[u8::from(v)]);
+                    }
+                    AttrValue::Vec2(v) => floats(&mut h, &v),
+                    AttrValue::Vec3(v) => floats(&mut h, &v.to_array()),
+                    AttrValue::Vec4(v) => floats(&mut h, &v),
+                    AttrValue::Quat(v) => floats(&mut h, &v.to_array()),
+                }
+            }
+        }
+    }
+    for path in &m.materials {
+        h.update(path.as_bytes());
+        h.update(b"\0");
+    }
+    h.update(format!("{:?}{}", m.collider, m.visible).as_bytes());
+    h.finalize().to_hex()[..16].to_string()
+}
+
+/// The modelling kernel (ADR-0062 §12): each primitive and operation on fixed
+/// inputs, as the polygon mesh and as its triangulation. Any change to these
+/// bytes changes the output of a `poly.*` node kind, so it needs that kind's
+/// version bumped (ADR-0043 §1).
+#[test]
+fn poly_golden_hashes() {
+    use re_geom::math::quat_from_euler_deg;
+    use re_geom::poly::{self, AttrDomain, AttrValue, Axis};
+    let rounded = poly::rounded_box(Vec3::new(2.0, 1.0, 1.5), 0.2, 4).unwrap();
+    let stairs = poly::stairs(5, 1.2, 0.18, 0.28).unwrap();
+    let ico = poly::icosphere(1.0, 2).unwrap();
+    let cone = poly::cone(0.5, 0.25, 1.0, 12, true).unwrap();
+    let torus = poly::torus(1.0, 0.3, 12, 8).unwrap();
+    let block = poly::rounded_box(Vec3::ONE, 0.0, 2).unwrap();
+    let moved = poly::transform(
+        &block,
+        Vec3::new(1.0005, 0.0, 0.0),
+        Quat::IDENTITY,
+        Vec3::ONE,
+    )
+    .unwrap();
+    let mut painted = rounded.clone();
+    let top = painted.group("top").unwrap();
+    painted.set_material(&top, "materials/roof.mat").unwrap();
+    painted
+        .fill_attribute(
+            AttrDomain::Face,
+            "color",
+            AttrValue::Vec3(Vec3::new(0.8, 0.3, 0.2)),
+            &top,
+        )
+        .unwrap();
+    let mut coloured_cone = cone.clone();
+    let side = coloured_cone.group("side").unwrap();
+    coloured_cone
+        .set_material(&side, "materials/metal.mat")
+        .unwrap();
+    let cases = [
+        (
+            "box",
+            poly::rounded_box(Vec3::new(1.0, 2.0, 3.0), 0.0, 2).unwrap(),
+        ),
+        ("rounded box", rounded.clone()),
+        ("icosphere", ico.clone()),
+        ("cone", cone.clone()),
+        ("cylinder", poly::cone(0.5, 0.5, 2.0, 16, false).unwrap()),
+        ("torus", torus.clone()),
+        ("stairs", stairs.clone()),
+        ("arch", poly::arch(2.0, 0.8, 0.3, 0.5, 8).unwrap()),
+        (
+            "transform",
+            poly::transform(
+                &rounded,
+                Vec3::new(1.0, 2.0, 3.0),
+                quat_from_euler_deg(Vec3::new(10.0, 20.0, 30.0)),
+                Vec3::new(1.0, 2.0, -1.0),
+            )
+            .unwrap(),
+        ),
+        ("mirror", poly::mirror(&stairs, Axis::X, 0.6, true).unwrap()),
+        (
+            "weld",
+            poly::weld(&poly::merge([&block, &moved]).unwrap(), 0.001).unwrap(),
+        ),
+        (
+            "merge",
+            poly::merge([&ico, &coloured_cone, &painted]).unwrap(),
+        ),
+        ("flip", torus.flip("").unwrap()),
+        ("material", painted),
+        (
+            "from mesh",
+            poly::from_mesh(&uv_sphere(1.0, 12, 6).unwrap()).unwrap(),
+        ),
+    ];
+    let got: Vec<(&str, String)> = cases
+        .iter()
+        .map(|(name, m)| {
+            m.validate().unwrap();
+            (
+                *name,
+                format!("{} {}", poly_hash(m), hash(&m.to_mesh().unwrap())),
+            )
+        })
+        .collect();
+    let want: [(&str, &str); 15] = [
+        ("box", "c93b2cf3a94edbb7 4cf9915e89caa76b"),
+        ("rounded box", "6bae919239e70cab 1bf7ff9af4f6b73e"),
+        ("icosphere", "17e96217908cbc0b e0d6dd46fc8d3b3c"),
+        ("cone", "59e441ea33e9a563 d40edd4374a33f8e"),
+        ("cylinder", "d67c565aabc7ad60 3f25263bcb9a1dee"),
+        ("torus", "dac23c182de296b8 247150f7c398454e"),
+        ("stairs", "765af52b137ad6ec 026bce30e153c895"),
+        ("arch", "a4f50dbac285c73e d2779f87197290ff"),
+        ("transform", "7acd7144fbc3c5bd 5d1103c83427dd8c"),
+        ("mirror", "c51f3cd810756751 852b0b69a257137c"),
+        ("weld", "fa39cff0c3cc3e44 4160741660a3bad8"),
+        ("merge", "c0426bc5c3a083b3 42db748642995633"),
+        ("flip", "b599441ab0e646c0 631f969c5279b91e"),
+        ("material", "4474104f22288550 5e14fb086927a051"),
+        ("from mesh", "4024c1b6b47cf81b 7bca241760ad1ab1"),
+    ];
+    let got: Vec<(&str, &str)> = got.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    assert_eq!(got, want, "modelling bytes changed");
+}

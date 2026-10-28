@@ -12,6 +12,7 @@ mod field;
 mod fragment;
 mod mesh;
 mod points;
+mod poly;
 mod road;
 mod scatter;
 mod shape;
@@ -28,9 +29,9 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde_json::{Value as Json, json};
 
-use crate::value::{Field, MeshValue, Output, Points, PortType, RoadPath, Shapes};
+use crate::value::{Field, MeshValue, Output, Points, PolyMesh, PortType, RoadPath, Shapes};
 
-pub use fragment::{mesh_item, sink_fragment, sink_fragment_in};
+pub use fragment::{mesh_item, polymesh_fragment, sink_fragment, sink_fragment_in};
 
 /// An input port of a node kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -573,7 +574,8 @@ impl NodeRegistry {
     }
 
     /// The registry with the built-in node kinds: the 16 of M1 (hence the
-    /// name) and the 10 polygon and road kinds of ADR-0043 §5.
+    /// name), the 10 polygon and road kinds of ADR-0043 §5 and the modelling
+    /// kinds of ADR-0062.
     pub fn m1() -> Self {
         let mut r = Self::new();
         terrain::register(&mut r);
@@ -585,6 +587,7 @@ impl NodeRegistry {
         fragment::register(&mut r);
         shape::register(&mut r);
         road::register(&mut r);
+        poly::register(&mut r);
         r
     }
 
@@ -935,6 +938,14 @@ impl NodeCtx<'_> {
         }
     }
 
+    /// The polygon mesh on `port`, if connected.
+    pub fn polymesh(&self, port: &str) -> Option<&Arc<PolyMesh>> {
+        match self.input(port) {
+            Some(Output::PolyMesh(m)) => Some(m),
+            _ => None,
+        }
+    }
+
     /// The required shapes on `port`.
     pub fn need_shapes(&self, port: &str) -> Result<&Arc<Shapes>, String> {
         self.shapes(port)
@@ -1002,6 +1013,12 @@ impl NodeCtx<'_> {
     pub fn need_points(&self, port: &str) -> Result<&Arc<Points>, String> {
         self.points(port)
             .ok_or_else(|| format!("input `{port}` has no points"))
+    }
+
+    /// The required polygon mesh on `port`.
+    pub fn need_polymesh(&self, port: &str) -> Result<&Arc<PolyMesh>, String> {
+        self.polymesh(port)
+            .ok_or_else(|| format!("input `{port}` has no polygon mesh"))
     }
 
     /// A deterministic number in `[0, 1)` for `id` and `salt`, from the node's seed.
@@ -1132,10 +1149,10 @@ mod tests {
     }
 
     #[test]
-    fn the_registry_has_twenty_eight_kinds() {
+    fn the_registry_has_forty_four_kinds() {
         let r = NodeRegistry::m1();
-        assert_eq!(r.len(), 28);
+        assert_eq!(r.len(), 44);
         let schema = r.graph_json_schema();
-        assert!(schema.pointer("/$defs/NodeDoc/allOf/27").is_some());
+        assert!(schema.pointer("/$defs/NodeDoc/allOf/43").is_some());
     }
 }
