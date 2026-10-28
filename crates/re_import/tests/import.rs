@@ -834,9 +834,15 @@ fn rojo_names_the_starter_player_containers_as_rojo_does() {
     assert_eq!(
         created,
         [
-            ("StarterPlayer.StarterCharacterScripts.Sprint", "LocalScript"),
+            (
+                "StarterPlayer.StarterCharacterScripts.Sprint",
+                "LocalScript"
+            ),
             ("StarterPlayer.StarterPlayerScripts.Client", "Folder"),
-            ("StarterPlayer.StarterPlayerScripts.Client.Hud", "LocalScript"),
+            (
+                "StarterPlayer.StarterPlayerScripts.Client.Hud",
+                "LocalScript"
+            ),
         ]
         .map(|(a, b)| (a.to_string(), b.to_string()))
     );
@@ -846,7 +852,10 @@ fn rojo_names_the_starter_player_containers_as_rojo_does() {
     assert_eq!(
         adopted,
         [
-            ("StarterPlayer.StarterCharacterScripts", "StarterCharacterScripts"),
+            (
+                "StarterPlayer.StarterCharacterScripts",
+                "StarterCharacterScripts"
+            ),
             ("StarterPlayer.StarterPlayerScripts", "StarterPlayerScripts"),
         ]
         .map(|(a, b)| (a.to_string(), b.to_string()))
