@@ -20,6 +20,12 @@
 //! and the whole drag is one undo step. [`History::seal`] ends the run (the
 //! button is released), as does any other transaction, an undo or a redo.
 //! The log still records every transaction.
+//!
+//! While the World has a [world check](re_scene::World::set_world_check),
+//! every transaction, undo, redo and dry run is checked against it after the
+//! documents, and one that leaves the World breaking it is rolled back
+//! (`RE2056`). [`History::take_stacks`] and [`History::put_stacks`] keep one
+//! undo history per edited scene (ADR-0064).
 
 use re_scene::{IdGen, World};
 use serde::{Deserialize, Serialize};
@@ -220,6 +226,21 @@ pub struct History {
     log: Vec<LogEntry>,
 }
 
+/// The undo and redo stacks of one edited world, set aside while another is
+/// edited ([`History::take_stacks`]; ADR-0064: one undo history per scene).
+#[derive(Default)]
+pub struct Stacks {
+    undo: Vec<Applied>,
+    redo: Vec<Applied>,
+}
+
+impl Stacks {
+    /// True when there is nothing to undo or redo.
+    pub fn is_empty(&self) -> bool {
+        self.undo.is_empty() && self.redo.is_empty()
+    }
+}
+
 impl History {
     /// Applies a transaction atomically: if any operation fails, the ones
     /// before it are rolled back, the world is unchanged and a `rejected`
@@ -381,6 +402,24 @@ impl History {
         }
     }
 
+    /// Takes the undo and redo stacks, leaving both empty, so that another
+    /// world can be edited with a history of its own (`scene.open`). The
+    /// log stays one.
+    pub fn take_stacks(&mut self) -> Stacks {
+        Stacks {
+            undo: std::mem::take(&mut self.undo),
+            redo: std::mem::take(&mut self.redo),
+        }
+    }
+
+    /// Puts back stacks [taken](History::take_stacks) earlier, replacing the
+    /// current ones. The caller puts them back only on the world they were
+    /// taken from, reloaded from an unchanged file (ADR-0064).
+    pub fn put_stacks(&mut self, stacks: Stacks) {
+        self.undo = stacks.undo;
+        self.redo = stacks.redo;
+    }
+
     /// True if there is a transaction to undo.
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
@@ -507,6 +546,14 @@ fn apply_all(world: &mut World, ops: &[Op]) -> Result<(Vec<Op>, Vec<Op>), TxErro
     }
     if failure.is_none() && marks.is_some() {
         failure = check_docs(world, ops).err();
+    }
+    if failure.is_none()
+        && let Err(message) = world.check_world()
+    {
+        failure = Some(TxError {
+            index: ops.len().saturating_sub(1),
+            error: OpError::WorldRule(message),
+        });
     }
     if let Some(err) = failure {
         inverse.reverse();

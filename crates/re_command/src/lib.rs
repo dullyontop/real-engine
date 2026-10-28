@@ -32,7 +32,7 @@ pub mod remote;
 
 pub use builtins::register_builtin_commands;
 pub use error::{OpError, TxError};
-pub use history::{History, LogEntry, LogKind, Origin, Transaction};
+pub use history::{History, LogEntry, LogKind, Origin, Stacks, Transaction};
 pub use op::{Op, apply};
 pub use registry::{
     AllowAll, Call, CommandAnnotations, CommandOutcome, CommandRegistry, CommandSpec, EditState,
@@ -84,6 +84,16 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::INVALID_DOCUMENT,
         title: "Document not valid",
         page: include_str!("../explain/RE2008.md"),
+    },
+    DiagInfo {
+        code: codes::DOCUMENT_FILE_KEPT,
+        title: "Document opened from a file cannot be emptied",
+        page: include_str!("../explain/RE2050.md"),
+    },
+    DiagInfo {
+        code: codes::WORLD_RULE,
+        title: "Transaction breaks the rule of what is being edited",
+        page: include_str!("../explain/RE2056.md"),
     },
 ];
 

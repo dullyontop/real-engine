@@ -872,6 +872,16 @@ pub fn apply(world: &mut World, op: &Op) -> Result<(Op, Vec<Op>), OpError> {
         } => {
             let invalid = |e: String| OpError::Invalid(format!("set_doc {doc} {pointer:?}: {e}"));
             let tokens = pointer_tokens(pointer).map_err(invalid)?;
+            // Only the whole document can become `null` (absent), and only one
+            // opened absent may: a save removes only files the session made.
+            if tokens.is_empty()
+                && value.as_ref().is_some_and(Json::is_null)
+                && world.doc(doc).is_some_and(|d| !d.opened_absent())
+            {
+                return Err(OpError::DocumentFileKept {
+                    doc: re_scene::doc_path(doc).unwrap_or_else(|_| doc.clone()),
+                });
+            }
             let (at, old) = world
                 .edit_doc(doc, |root| edit_json(root, &tokens, value.clone()))
                 .ok_or_else(|| {

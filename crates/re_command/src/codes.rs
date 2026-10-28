@@ -35,3 +35,12 @@ pub const UNDO_FAILED: Code = Code::new("RE2007");
 /// A transaction left an open document in a state its kind's validator
 /// refuses (ADR-0044), so the transaction was rolled back.
 pub const INVALID_DOCUMENT: Code = Code::new("RE2008");
+
+/// A `set_doc` would empty an open document that was opened from an existing
+/// file: a save removes only files the session made (ADR-0064).
+pub const DOCUMENT_FILE_KEPT: Code = Code::new("RE2050");
+
+/// A transaction would leave the World breaking the rule of what is being
+/// edited, such as one root and no `Procedural` while a prefab is open
+/// (ADR-0064), so it was rolled back.
+pub const WORLD_RULE: Code = Code::new("RE2056");

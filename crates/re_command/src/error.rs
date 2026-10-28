@@ -52,6 +52,20 @@ pub enum OpError {
         /// The document's project-relative path.
         doc: String,
     },
+    /// A `set_doc` would empty a document that was opened from an existing
+    /// file (ADR-0064): only a document opened absent may be emptied, so a
+    /// save removes only files the session made.
+    #[error(
+        "{doc} was opened from its file, so it cannot be emptied: a save removes only files this session made"
+    )]
+    DocumentFileKept {
+        /// The document's project-relative path.
+        doc: String,
+    },
+    /// A transaction would leave the World breaking the world check
+    /// (ADR-0064), such as the rules of a prefab being edited.
+    #[error("{0}")]
+    WorldRule(String),
 }
 
 impl From<ReflectError> for OpError {
@@ -71,6 +85,8 @@ impl OpError {
             OpError::RollbackFailed(_) => codes::UNDO_FAILED,
             OpError::InvalidDocument { .. } => codes::INVALID_DOCUMENT,
             OpError::StaleDocument { .. } => codes::UNDO_FAILED,
+            OpError::DocumentFileKept { .. } => codes::DOCUMENT_FILE_KEPT,
+            OpError::WorldRule(_) => codes::WORLD_RULE,
         }
     }
 
@@ -81,7 +97,9 @@ impl OpError {
             OpError::GeneratedEntity { id, .. } => {
                 Diagnostic::error(self.code(), self.to_string()).at(Location::entity(id.clone()))
             }
-            OpError::InvalidDocument { doc, .. } | OpError::StaleDocument { doc } => {
+            OpError::InvalidDocument { doc, .. }
+            | OpError::StaleDocument { doc }
+            | OpError::DocumentFileKept { doc } => {
                 Diagnostic::error(self.code(), self.to_string()).at(Location::file(doc.clone()))
             }
             _ => Diagnostic::error(self.code(), self.to_string()),

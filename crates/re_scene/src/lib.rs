@@ -78,7 +78,10 @@ pub use components::{
     ScriptContext, ScriptRef, SkinnedMesh, Transform, Vehicle, VehicleKind, VehicleWheel, Visible,
     WheelTester, register_builtins,
 };
-pub use docs::{DocMarks, DocValidator, OpenDoc, OpenDocs, doc_path};
+pub use docs::{
+    DocFile, DocKind, DocMarks, DocValidator, DocWriter, OpenDoc, OpenDocs, SAVED_TEXT_BUDGET,
+    WorldCheck, doc_path, pretty_json,
+};
 pub use error::SceneError;
 pub use ids::{IdGen, IdIndex, StableId, validate_id};
 pub use journal::{ChangeJournal, note_moved};
