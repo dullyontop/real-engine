@@ -48,9 +48,7 @@ struct SceneLoadRef(u64);
 impl UserData for SceneLoadRef {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
         fields.add_field_method_get("name", |lua, this| Ok(state(lua, this.0)?.name));
-        fields.add_field_method_get("progress", |lua, this| {
-            Ok(state(lua, this.0)?.progress)
-        });
+        fields.add_field_method_get("progress", |lua, this| Ok(state(lua, this.0)?.progress));
         fields.add_field_method_get("done", |lua, this| Ok(state(lua, this.0)?.done));
         fields.add_field_method_get("error", |lua, this| Ok(state(lua, this.0)?.error));
         fields.add_field_function_get("wait", |lua, _| {
@@ -164,7 +162,9 @@ fn root_id(h: &mut dyn ScriptHost, e: re_scene::Entity, what: &str) -> Result<St
     if world.ecs.get::<re_scene::Streamed>(e).is_some() {
         return Err(super::error(
             codes::SCENE_REFUSED,
-            format!("{what}: entity {id:?} is streamed, and streamed entities belong to the main scene"),
+            format!(
+                "{what}: entity {id:?} is streamed, and streamed entities belong to the main scene"
+            ),
         ));
     }
     Ok(id)
@@ -282,7 +282,10 @@ pub(crate) fn lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
 /// # Errors
 ///
 /// A context's scheduler cannot be reached.
-pub fn wake_scene_loads(runtime: &ScriptRuntime, done: &[u64]) -> std::result::Result<(), ScriptError> {
+pub fn wake_scene_loads(
+    runtime: &ScriptRuntime,
+    done: &[u64],
+) -> std::result::Result<(), ScriptError> {
     if done.is_empty() {
         return Ok(());
     }

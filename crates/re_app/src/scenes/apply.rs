@@ -365,16 +365,22 @@ mod tests {
     fn loads_add_beside_and_unloads_take_away() {
         let mut world = town();
         let kept = BTreeSet::new();
-        let hud = doc(
-            r#"{ "id": "hud" },
+        let hud = doc(r#"{ "id": "hud" },
                { "id": "hud_text", "parent": "hud" },
-               { "id": "badge", "parent": "player" }"#,
-        );
+               { "id": "badge", "parent": "player" }"#);
         let change = load(&mut world, &hud, &kept).unwrap();
         assert_eq!(change.roots, ["hud", "badge"]);
         assert_eq!(
             ids(&world),
-            ["badge", "ground", "hud", "hud_text", "lamp", "player", "player_cam"]
+            [
+                "badge",
+                "ground",
+                "hud",
+                "hud_text",
+                "lamp",
+                "player",
+                "player_cam"
+            ]
         );
         // An id the World has is refused, and nothing is added.
         let clash = doc(r#"{ "id": "extra" }, { "id": "lamp" }"#);
@@ -403,7 +409,11 @@ mod tests {
         assert_eq!(change.stood_in, ["player"]);
         assert_eq!(change.roots, ["hud"]);
         // A kept root survives the unload of a scene that lists it.
-        unload(&mut world, &["hud".to_string(), "player".to_string()], &kept);
+        unload(
+            &mut world,
+            &["hud".to_string(), "player".to_string()],
+            &kept,
+        );
         assert!(world.ids().get("player").is_some());
         assert!(world.ids().get("hud").is_none());
     }

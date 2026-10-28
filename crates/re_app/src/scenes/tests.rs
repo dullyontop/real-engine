@@ -3,8 +3,8 @@
 
 use std::collections::BTreeMap;
 
-use re_core::files::{Form, LayerKind, MemLayer, ProjectFiles, ProjectPath};
 use re_core::Severity;
+use re_core::files::{Form, LayerKind, MemLayer, ProjectFiles, ProjectPath};
 use re_proc::stream::{Lateness, StreamConfig};
 use re_scene::World;
 use re_script::{GameAccess, SceneRefusal, SceneRequestKind};
@@ -21,7 +21,11 @@ fn scene(entities: &str) -> String {
 fn files() -> ProjectFiles {
     let mut layer = MemLayer::new(LayerKind::Memory);
     let mut add = |path: &str, text: String| {
-        layer.insert(ProjectPath::new(path).unwrap(), text.into_bytes(), Form::Source);
+        layer.insert(
+            ProjectPath::new(path).unwrap(),
+            text.into_bytes(),
+            Form::Source,
+        );
     };
     add(
         "scenes/title.scene.json",
@@ -29,10 +33,15 @@ fn files() -> ProjectFiles {
     );
     add(
         "scenes/town.scene.json",
-        scene(r#"{ "id": "player" }, { "id": "square" }, { "id": "fountain", "parent": "square" }"#),
+        scene(
+            r#"{ "id": "player" }, { "id": "square" }, { "id": "fountain", "parent": "square" }"#,
+        ),
     );
     add("scenes/harbour.scene.json", scene(r#"{ "id": "pier" }"#));
-    add("scenes/hud.scene.json", scene(r#"{ "id": "hud" }, { "id": "hud_text", "parent": "hud" }"#));
+    add(
+        "scenes/hud.scene.json",
+        scene(r#"{ "id": "hud" }, { "id": "hud_text", "parent": "hud" }"#),
+    );
     add("scenes/broken.scene.json", "{ not json".to_string());
     add("scenes/clash.scene.json", scene(r#"{ "id": "menu" }"#));
     ProjectFiles::for_tests(layer)
@@ -101,7 +110,12 @@ impl Run {
     }
 
     fn ids(&self) -> Vec<String> {
-        let mut ids: Vec<String> = self.world.ids().iter().map(|(id, _)| id.to_string()).collect();
+        let mut ids: Vec<String> = self
+            .world
+            .ids()
+            .iter()
+            .map(|(id, _)| id.to_string())
+            .collect();
         ids.sort();
         ids
     }
@@ -123,8 +137,15 @@ fn a_switch_applies_at_the_end_of_the_frame_that_asked() {
     assert_eq!(run.scenes.scene_current(), "title");
     let id = run.switch("town");
     let load = run.scenes.scene_load(id).unwrap();
-    assert_eq!((load.name.as_str(), load.progress, load.done), ("town", 0.0, false));
-    assert_eq!(run.scenes.scene_current(), "title", "nothing changes before EndFrame");
+    assert_eq!(
+        (load.name.as_str(), load.progress, load.done),
+        ("town", 0.0, false)
+    );
+    assert_eq!(
+        run.scenes.scene_current(),
+        "title",
+        "nothing changes before EndFrame"
+    );
 
     let applied = run.end_frame();
     assert!(applied.changed && applied.switched);
@@ -134,7 +155,10 @@ fn a_switch_applies_at_the_end_of_the_frame_that_asked() {
     let load = run.scenes.scene_load(id).unwrap();
     assert_eq!((load.progress, load.done, load.error), (1.0, true, None));
     assert_eq!(run.scenes.take_ended(), [id]);
-    assert_eq!(run.scenes.log(), [change(0, SceneChangeKind::Switch, "town")]);
+    assert_eq!(
+        run.scenes.log(),
+        [change(0, SceneChangeKind::Switch, "town")]
+    );
 }
 
 #[test]
@@ -143,7 +167,9 @@ fn loads_go_beside_the_main_scene_and_unloads_take_them_away() {
     let hud = run.load("hud").unwrap();
     assert_eq!(
         run.load("hud"),
-        Err(SceneRefusal::Refused(r#"scene "hud" is already asked for"#.into()))
+        Err(SceneRefusal::Refused(
+            r#"scene "hud" is already asked for"#.into()
+        ))
     );
     run.end_frame();
     assert_eq!(run.error(hud), None);
@@ -151,17 +177,25 @@ fn loads_go_beside_the_main_scene_and_unloads_take_them_away() {
     assert_eq!(run.ids(), ["hud", "hud_text", "menu", "player"]);
     assert_eq!(
         run.load("hud"),
-        Err(SceneRefusal::Refused(r#"scene "hud" is already loaded"#.into()))
+        Err(SceneRefusal::Refused(
+            r#"scene "hud" is already loaded"#.into()
+        ))
     );
     assert_eq!(
         run.load("title"),
-        Err(SceneRefusal::Refused(r#"scene "title" is already loaded"#.into()))
+        Err(SceneRefusal::Refused(
+            r#"scene "title" is already loaded"#.into()
+        ))
     );
     assert_eq!(run.load("nowhere"), Err(SceneRefusal::Unknown));
 
     // Unloading the main scene, or one not loaded, is refused.
-    assert!(matches!(run.scenes.scene_unload("title"), Err(SceneRefusal::Refused(m)) if m.contains("main scene")));
-    assert!(matches!(run.scenes.scene_unload("harbour"), Err(SceneRefusal::Refused(m)) if m.contains("not loaded")));
+    assert!(
+        matches!(run.scenes.scene_unload("title"), Err(SceneRefusal::Refused(m)) if m.contains("main scene"))
+    );
+    assert!(
+        matches!(run.scenes.scene_unload("harbour"), Err(SceneRefusal::Refused(m)) if m.contains("not loaded"))
+    );
     run.scenes.scene_unload("hud").unwrap();
     run.end_frame();
     assert_eq!(run.scenes.scenes_loaded(), ["title"]);
@@ -218,7 +252,10 @@ fn a_load_that_fails_changes_nothing_and_says_why() {
     let broken = run.switch("broken");
     let applied = run.end_frame();
     let error = run.error(broken).unwrap();
-    assert!(error.starts_with(r#"scene "broken" (scenes/broken.scene.json) does not parse: "#), "{error}");
+    assert!(
+        error.starts_with(r#"scene "broken" (scenes/broken.scene.json) does not parse: "#),
+        "{error}"
+    );
     assert_eq!(applied.diagnostics.len(), 1);
     assert_eq!(applied.diagnostics[0].code, codes::SCENE_LOAD_FAILED);
     assert_eq!(run.ids(), ["menu", "player"]);
@@ -228,7 +265,11 @@ fn a_load_that_fails_changes_nothing_and_says_why() {
     let clash = run.load("clash").unwrap();
     let applied = run.end_frame();
     assert!(!applied.changed);
-    assert!(run.error(clash).unwrap().contains(r#"an entity with id "menu" already exists"#));
+    assert!(
+        run.error(clash)
+            .unwrap()
+            .contains(r#"an entity with id "menu" already exists"#)
+    );
     assert_eq!(run.scenes.scenes_loaded(), ["title"]);
     assert!(run.scenes.log().is_empty());
 }
@@ -267,7 +308,10 @@ fn a_switch_to_the_current_scene_reloads_it() {
     run.switch("title");
     run.end_frame();
     assert_eq!(run.ids(), ["menu", "player"]);
-    assert_eq!(run.scenes.log(), [change(0, SceneChangeKind::Switch, "title")]);
+    assert_eq!(
+        run.scenes.log(),
+        [change(0, SceneChangeKind::Switch, "title")]
+    );
 }
 
 #[test]
@@ -287,7 +331,8 @@ fn the_log_is_checked_against_the_replays_list() {
 
     // Another scene: reported once, at the change.
     let mut run = Run::new();
-    run.scenes.expect(Some(vec![change(0, SceneChangeKind::Switch, "town")]));
+    run.scenes
+        .expect(Some(vec![change(0, SceneChangeKind::Switch, "town")]));
     run.switch("harbour");
     let d = run.end_frame().diagnostics;
     assert_eq!(d.len(), 1);
@@ -298,17 +343,26 @@ fn the_log_is_checked_against_the_replays_list() {
 
     // A listed change that does not come: reported when its frame ends.
     let mut run = Run::new();
-    run.scenes.expect(Some(vec![change(1, SceneChangeKind::Switch, "town")]));
+    run.scenes
+        .expect(Some(vec![change(1, SceneChangeKind::Switch, "town")]));
     assert!(run.end_frame().diagnostics.is_empty());
     let d = run.end_frame().diagnostics;
     assert_eq!(d.len(), 1);
-    assert!(d[0].message.contains("which the run did not make"), "{}", d[0].message);
+    assert!(
+        d[0].message.contains("which the run did not make"),
+        "{}",
+        d[0].message
+    );
 
     // Or when the replay ends before its frame.
     let mut run = Run::new();
-    run.scenes.expect(Some(vec![change(9, SceneChangeKind::Switch, "town")]));
+    run.scenes
+        .expect(Some(vec![change(9, SceneChangeKind::Switch, "town")]));
     run.end_frame();
-    assert_eq!(run.scenes.replay_ended().unwrap().code, codes::SCENE_CHANGES_DIFFER);
+    assert_eq!(
+        run.scenes.replay_ended().unwrap().code,
+        codes::SCENE_CHANGES_DIFFER
+    );
 
     // An empty list expects no change at all; no list checks nothing.
     let mut run = Run::new();
@@ -343,11 +397,19 @@ fn a_restart_drops_requests_and_returns_to_the_scene_the_run_began_in() {
     // A run begun in a scene the list does not name restarts there.
     let mut scenes = Scenes::new(list(), "levels/test.scene.json");
     assert_eq!(scenes.scene_current(), "levels/test.scene.json");
-    assert!(scenes.scenes_listed().contains(&"levels/test.scene.json".to_string()));
+    assert!(
+        scenes
+            .scenes_listed()
+            .contains(&"levels/test.scene.json".to_string())
+    );
     scenes.restarted(4);
     assert_eq!(
         scenes.log(),
-        [change(4, SceneChangeKind::Restart, "levels/test.scene.json")]
+        [change(
+            4,
+            SceneChangeKind::Restart,
+            "levels/test.scene.json"
+        )]
     );
 }
 

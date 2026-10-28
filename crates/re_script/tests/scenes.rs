@@ -200,13 +200,25 @@ fn requests_answer_with_scene_loads_and_refusals_raise() {
         .unwrap();
     assert_eq!(
         v,
-        serde_json::json!(["town", 0, false, true, "title", ["title"], ["harbour", "title", "town"]])
+        serde_json::json!([
+            "town",
+            0,
+            false,
+            true,
+            "title",
+            ["title"],
+            ["harbour", "title", "town"]
+        ])
     );
     assert_eq!(rig.game.loads.len(), 1);
 
     let d = rig.exec_err(r#"scene.switch("towm")"#);
     assert_eq!(d.code, codes::SCENE_UNKNOWN);
-    assert!(d.message.contains(r#"did you mean "town""#), "{}", d.message);
+    assert!(
+        d.message.contains(r#"did you mean "town""#),
+        "{}",
+        d.message
+    );
     let d = rig.exec_err(r#"scene.load("dungeon")"#);
     assert_eq!(d.code, codes::SCENE_UNKNOWN);
     assert!(d.message.contains("harbour, title, town"), "{}", d.message);
@@ -279,7 +291,8 @@ fn wait_parks_until_the_game_ends_the_load() {
     assert!(rig.phase(Phase::PreRender).is_empty());
     assert_eq!(rig.output(), ["switched\ttrue\t1"]);
 
-    rig.game.finish(2, Some("scenes/harbour.scene.json does not parse"));
+    rig.game
+        .finish(2, Some("scenes/harbour.scene.json does not parse"));
     re_script::wake_scene_loads(&rig.rt, &[2]).unwrap();
     assert!(rig.phase(Phase::PreRender).is_empty());
     assert_eq!(
@@ -302,7 +315,11 @@ fn wait_parks_until_the_game_ends_the_load() {
     )
     .unwrap();
     rig.game.finish(3, None);
-    for phase in [Phase::PreRender, Phase::PreSimulation, Phase::PostSimulation] {
+    for phase in [
+        Phase::PreRender,
+        Phase::PreSimulation,
+        Phase::PostSimulation,
+    ] {
         assert!(rig.phase(phase).is_empty());
     }
     assert_eq!(rig.output(), ["no wait\ttrue"]);

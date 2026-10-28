@@ -97,10 +97,13 @@ pub enum Asset {
     Sound(String),
 }
 
+/// A component field that names an asset, and the kind of asset it names.
+type AssetField = (&'static str, &'static str, fn(String) -> Asset);
+
 /// The assets `scene`'s components name, in file order, each once. Derived
 /// meshes are left out: they come from generation, at apply.
 pub fn assets(scene: &SceneDoc) -> Vec<Asset> {
-    const FIELDS: [(&str, &str, fn(String) -> Asset); 6] = [
+    const FIELDS: [AssetField; 6] = [
         ("MeshRef", "asset", Asset::Mesh),
         ("MaterialRef", "asset", Asset::Material),
         ("SkinnedMesh", "asset", Asset::Skin),
@@ -182,7 +185,10 @@ mod tests {
 
     #[test]
     fn reads_parse_or_fail_with_the_scene_named() {
-        let files = files(&[("scenes/town.scene.json", TOWN), ("scenes/bad.scene.json", "{")]);
+        let files = files(&[
+            ("scenes/town.scene.json", TOWN),
+            ("scenes/bad.scene.json", "{"),
+        ]);
         assert_eq!(
             read(&files, "town", "scenes/town.scene.json")
                 .unwrap()
@@ -192,9 +198,19 @@ mod tests {
         );
         let d = read(&files, "bad", "scenes/bad.scene.json").unwrap_err();
         assert_eq!(d.code, codes::SCENE_LOAD_FAILED);
-        assert!(d.message.contains(r#""bad" (scenes/bad.scene.json) does not parse"#), "{}", d.message);
+        assert!(
+            d.message
+                .contains(r#""bad" (scenes/bad.scene.json) does not parse"#),
+            "{}",
+            d.message
+        );
         let d = read(&files, "scenes/gone.scene.json", "scenes/gone.scene.json").unwrap_err();
-        assert!(d.message.starts_with("cannot read scene scenes/gone.scene.json: "), "{}", d.message);
+        assert!(
+            d.message
+                .starts_with("cannot read scene scenes/gone.scene.json: "),
+            "{}",
+            d.message
+        );
 
         let job = Job::start(&files, "town", "scenes/town.scene.json");
         let doc = loop {

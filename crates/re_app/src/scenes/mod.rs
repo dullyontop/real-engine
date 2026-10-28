@@ -16,6 +16,7 @@
 
 mod apply;
 pub mod check;
+mod fresh;
 pub mod list;
 pub mod read;
 
@@ -32,6 +33,7 @@ use re_types::{SceneChange, SceneChangeKind};
 
 pub use apply::unreferenced;
 pub use check::{Existing, check};
+pub use fresh::{content_world, ensure_streamer, fork_world, fresh_world};
 pub use list::SceneList;
 
 use crate::codes;
@@ -148,6 +150,8 @@ pub struct Scenes {
     /// Loads that ended since [`Scenes::take_ended`].
     ended: Vec<u64>,
     log: Vec<SceneChange>,
+    /// Changes applied since the app opened, restarts included.
+    changes: u64,
     expected: Option<Expected>,
 }
 
@@ -189,6 +193,7 @@ impl Scenes {
             next_id: 1,
             ended: Vec::new(),
             log: Vec::new(),
+            changes: 0,
             expected: None,
         }
     }
@@ -225,9 +230,23 @@ impl Scenes {
         self.list.path(&self.main).unwrap_or(&self.start_path)
     }
 
+    /// The loaded scenes: the main scene, then the added ones in load order.
+    pub fn loaded(&self) -> Vec<String> {
+        std::iter::once(self.main.clone())
+            .chain(self.added.iter().map(|a| a.name.clone()))
+            .collect()
+    }
+
     /// The changes applied so far, in order (a recording's `scenes`).
     pub fn log(&self) -> &[SceneChange] {
         &self.log
+    }
+
+    /// How many changes were applied since the app opened, restarts and
+    /// scenes begun in ([`Scenes::begin_at`]) included: a watcher that sees it
+    /// move knows the World's content was replaced, not edited.
+    pub fn changes(&self) -> u64 {
+        self.changes
     }
 
     /// True while a request waits for its turn.
@@ -268,18 +287,23 @@ impl Scenes {
             next_id: self.next_id,
             ended: Vec::new(),
             log: Vec::new(),
+            changes: 0,
             expected: None,
         }
     }
 
     /// Begins the run again in the scene at `path` (a replay's
     /// `start.scene`, or the editor's open scene), as [`Scenes::new`] does;
-    /// the App loads that scene into a fresh World. Logs nothing.
+    /// the App loads that scene into a fresh World. Logs nothing, and the
+    /// replay's changes are still checked from here on.
     pub fn begin_at(&mut self, path: &str) {
         let list = std::mem::take(&mut self.list);
-        let next_id = self.next_id;
+        let expected = self.expected.take();
+        let (next_id, changes) = (self.next_id, self.changes);
         *self = Scenes::new(list, path);
         self.next_id = next_id;
+        self.changes = changes + 1;
+        self.expected = expected;
     }
 
     /// A restart (`world.restart()`, ADR-0059 §5) at the end of `frame`:
@@ -369,6 +393,7 @@ impl Scenes {
             }
         }
         self.log.push(change);
+        self.changes += 1;
     }
 
     /// Reports a listed change whose frame has ended without it.
@@ -384,15 +409,14 @@ impl Scenes {
     }
 
     /// At the end of a replay: a listed change the run never made is an
-    /// error (`RE0571`).
+    /// error (`RE0571`). Nothing is checked after it, so a run that goes on
+    /// past its replay changes scenes freely.
     pub fn replay_ended(&mut self) -> Option<Diagnostic> {
-        let x = self.expected.as_mut()?;
+        let x = self.expected.take()?;
         if x.failed {
             return None;
         }
-        let want = x.changes.get(x.next)?;
-        x.failed = true;
-        Some(missed(want))
+        x.changes.get(x.next).map(missed)
     }
 
     /// Advances the pending loads and applies the requests that are ready,
@@ -402,10 +426,7 @@ impl Scenes {
     pub fn end_frame(&mut self, w: &mut EndFrame<'_>) -> Applied {
         let mut out = Applied::default();
         self.advance(w);
-        loop {
-            let Some(head) = self.queue.front() else {
-                break;
-            };
+        while let Some(head) = self.queue.front() {
             if head.ready() {
                 let r = self.queue.pop_front().expect("the head is there");
                 self.apply(r, w, &mut out);
@@ -539,7 +560,9 @@ impl Scenes {
             out.diagnostics.push(
                 Diagnostic::note(
                     codes::KEPT_STANDS_IN,
-                    format!("kept entity {id:?} stands in for the entity of that id in scene {scene}"),
+                    format!(
+                        "kept entity {id:?} stands in for the entity of that id in scene {scene}"
+                    ),
                 )
                 .at(Location::entity(id.clone())),
             );
@@ -567,7 +590,10 @@ impl Scenes {
         };
         self.set_progress(r.id, 1.0);
         self.end(r.id, None);
-        self.record(SceneChange::new(w.frame, kind, r.name), &mut out.diagnostics);
+        self.record(
+            SceneChange::new(w.frame, kind, r.name),
+            &mut out.diagnostics,
+        );
     }
 
     /// Queues a request, answering with its load (none for an unload).
@@ -638,7 +664,9 @@ impl GameAccess for Scenes {
                 }
             }
         }
-        Ok(self.push(kind, name).expect("a switch or load has a load id"))
+        Ok(self
+            .push(kind, name)
+            .expect("a switch or load has a load id"))
     }
 
     fn scene_unload(&mut self, name: &str) -> Result<(), SceneRefusal> {
@@ -652,14 +680,20 @@ impl GameAccess for Scenes {
             )));
         }
         if !added.iter().any(|a| a == name) {
-            return Err(SceneRefusal::Refused(format!("scene {name:?} is not loaded")));
+            return Err(SceneRefusal::Refused(format!(
+                "scene {name:?} is not loaded"
+            )));
         }
         // Unloading a scene still loading cancels its load.
         if let Some(i) = self
             .queue
             .iter()
             .rposition(|r| r.kind == Kind::Load && r.name == name)
-            && !self.queue.iter().skip(i).any(|r| r.kind != Kind::Load && r.name == name)
+            && !self
+                .queue
+                .iter()
+                .skip(i)
+                .any(|r| r.kind != Kind::Load && r.name == name)
         {
             let r = self.queue.remove(i).expect("found just above");
             self.end(r.id, Some("cancelled by scene.unload".to_string()));
@@ -678,9 +712,7 @@ impl GameAccess for Scenes {
     }
 
     fn scenes_loaded(&self) -> Vec<String> {
-        std::iter::once(self.main.clone())
-            .chain(self.added.iter().map(|a| a.name.clone()))
-            .collect()
+        self.loaded()
     }
 
     fn scenes_listed(&self) -> Vec<String> {

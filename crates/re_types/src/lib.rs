@@ -70,7 +70,8 @@ pub use render::{
     TextureHandle, TextureRef,
 };
 pub use replay::{
-    RawReplayInput, ReplayCheck, ReplayCommand, ReplayDoc, ReplayInput, SceneChange, SceneChangeKind,
+    RawReplayInput, ReplayCheck, ReplayCommand, ReplayDoc, ReplayInput, SceneChange,
+    SceneChangeKind,
 };
 
 /// Re-export of the glam version used in every contract type (glam 0.34, ADR-0028).

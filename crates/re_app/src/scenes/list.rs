@@ -207,14 +207,20 @@ mod tests {
     fn bad_lists_are_refused() {
         let entry = project("scenes/main.scene.json");
         for (pairs, why) in [
-            (&[("Town", "scenes/town.scene.json")][..], "not a scene name"),
+            (
+                &[("Town", "scenes/town.scene.json")][..],
+                "not a scene name",
+            ),
             (&[("town", "../town.scene.json")][..], ".."),
             (&[("town", "scenes/town.json")][..], "not a scene file"),
             (
                 &[("a", "scenes/a.scene.json"), ("b", "scenes/a.scene.json")][..],
                 "the same scene",
             ),
-            (&[("main", "scenes/other.scene.json")][..], "name the entry scene"),
+            (
+                &[("main", "scenes/other.scene.json")][..],
+                "name the entry scene",
+            ),
         ] {
             let e = SceneList::new(&entry, &scenes(pairs)).unwrap_err();
             assert!(e.contains(why), "{e}");
@@ -225,9 +231,13 @@ mod tests {
 
     #[test]
     fn an_unlisted_start_scene_is_listed_under_its_path() {
-        let mut list = SceneList::new(&project("scenes/main.scene.json"), &BTreeMap::new()).unwrap();
+        let mut list =
+            SceneList::new(&project("scenes/main.scene.json"), &BTreeMap::new()).unwrap();
         assert_eq!(list.name_or_list("scenes/main.scene.json"), "main");
-        assert_eq!(list.name_or_list("scenes/test.scene.json"), "scenes/test.scene.json");
+        assert_eq!(
+            list.name_or_list("scenes/test.scene.json"),
+            "scenes/test.scene.json"
+        );
         assert_eq!(
             list.path("scenes/test.scene.json"),
             Some("scenes/test.scene.json")

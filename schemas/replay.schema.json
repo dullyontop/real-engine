@@ -58,6 +58,16 @@
         "$ref": "#/$defs/ReplayCheck"
       },
       "default": []
+    },
+    "scenes": {
+      "description": "The scene changes the run must make, in order (ADR-0059 §6): checked\nas the run applies them, never driven. Without it, nothing is checked.",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "$ref": "#/$defs/SceneChange"
+      }
     }
   },
   "additionalProperties": false,
@@ -223,6 +233,50 @@
         },
         "screenshot": {
           "description": "Capture the frame and compare it with this golden image. `{backend}` is\nreplaced by the backend the run uses (`vulkan` or `gl`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "frame"
+      ]
+    },
+    "SceneChange": {
+      "description": "One scene change a run applied (ADR-0059 §6), at the end of `frame`: the\nmain scene switched, a scene loaded beside the loaded ones or unloaded, or\na restart into the scene the run began in. Exactly one of `switch`,\n`load`, `unload` and `restart` is set, to the scene's name (its project\npath when the project's scene list does not name it).\n\n```json\n{ \"frame\": 120, \"switch\": \"town\" }\n```",
+      "type": "object",
+      "properties": {
+        "frame": {
+          "description": "The frame whose end applied the change.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "switch": {
+          "description": "The scene switched to: it replaced every loaded scene.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "load": {
+          "description": "A scene loaded beside the loaded ones.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unload": {
+          "description": "A scene unloaded.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "restart": {
+          "description": "The scene a restart (`world.restart()`) loaded.",
           "type": [
             "string",
             "null"

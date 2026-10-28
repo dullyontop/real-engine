@@ -50,7 +50,11 @@ impl Existing<'_> {
 /// # Errors
 ///
 /// The first problem, as the `SceneError` that `World::load` would give.
-pub fn check(world: &mut World, scene: &SceneDoc, existing: Existing<'_>) -> Result<(), SceneError> {
+pub fn check(
+    world: &mut World,
+    scene: &SceneDoc,
+    existing: Existing<'_>,
+) -> Result<(), SceneError> {
     if scene.format != re_scene::scene::FORMAT {
         return Err(SceneError::UnsupportedFormat(format!(
             "expected format {:?}, found {:?}",
@@ -116,10 +120,7 @@ pub fn check(world: &mut World, scene: &SceneDoc, existing: Existing<'_>) -> Res
             error: Box::new(e),
         };
         for (component, fields) in &d.components {
-            let key = world
-                .registry
-                .key(component)
-                .map_err(|e| wrap(e.into()))?;
+            let key = world.registry.key(component).map_err(|e| wrap(e.into()))?;
             let schema = world.registry.schema(key);
             for (name, doc) in fields {
                 let index = schema.field_index(name).map_err(|e| wrap(e.into()))?;
