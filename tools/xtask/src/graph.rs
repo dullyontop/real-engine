@@ -108,6 +108,11 @@ pub fn rules() -> Vec<Rule> {
             why: "re_types depends on no engine crate (not even re_core)",
         },
         Rule {
+            krate: "re_ui",
+            check: Check::WorkspaceOnly(&[]),
+            why: "re_ui depends on no engine crate (ADR-0058)",
+        },
+        Rule {
             krate: "re_reflect",
             check: Check::Reaches(NOT_SUBSYSTEMS_OR_MLUA),
             why: "re_reflect must not depend on subsystems or mlua",

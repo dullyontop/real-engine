@@ -16,7 +16,7 @@ use base64::Engine as _;
 use quick_xml::events::Event;
 use re_core::{Diagnostic, Location};
 
-use super::binary::{MAX_INSTANCES, check_cycles};
+use super::binary::{Ancestry, MAX_INSTANCES, check_ancestry};
 use super::dom::{CFrame, Dom, Font, Instance, PlaceValue};
 use crate::codes;
 
@@ -264,8 +264,14 @@ pub fn read(text: &str, file: &str) -> R<Dom> {
             .at(Location::file(file.to_string())),
         );
     }
-    check_cycles(&r.parents)
-        .map_err(|i| malformed(file, 1, format!("instance {i} is its own ancestor")))?;
+    check_ancestry(&r.parents).map_err(|e| match e {
+        Ancestry::Cycle(i) => malformed(file, 1, format!("instance {i} is its own ancestor")),
+        Ancestry::TooDeep(i) => malformed(
+            file,
+            1,
+            format!("instance {i} nests deeper than {MAX_DEPTH} levels"),
+        ),
+    })?;
     let parents = std::mem::take(&mut r.parents);
     r.dom.link(&parents);
     Ok(r.dom)

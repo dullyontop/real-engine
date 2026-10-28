@@ -2,7 +2,7 @@
 
 use oxijolt::{HeightFieldSettings, Shape, Vec3 as JVec3};
 use re_core::Diagnostic;
-use re_types::physics::ShapeDesc;
+use re_types::physics::{BodyKind, ShapeDesc};
 
 use crate::codes;
 use crate::convert::jv;
@@ -13,13 +13,40 @@ pub(crate) struct Built {
     pub(crate) warning: Option<Diagnostic>,
 }
 
-/// True for the shapes only static bodies may use (Jolt cannot collide them with each
+/// True for the shapes Jolt keeps off dynamic bodies (it cannot collide them with each
 /// other, and computes no mass for them).
 pub(crate) fn is_static_only(shape: &ShapeDesc) -> bool {
     matches!(
         shape,
         ShapeDesc::TriangleMesh { .. } | ShapeDesc::Heightfield { .. }
     )
+}
+
+/// True when a body of `kind` may not have `shape` (`RE5003`): a mesh is for static
+/// and kinematic bodies (a kinematic mesh takes its mass from the description, and
+/// Jolt never pairs it with another mesh or a heightfield, since a kinematic body
+/// collides with dynamic bodies only), a heightfield for static ones.
+pub(crate) fn refuses(kind: BodyKind, shape: &ShapeDesc) -> bool {
+    match kind {
+        BodyKind::Static => false,
+        BodyKind::Kinematic => matches!(shape, ShapeDesc::Heightfield { .. }),
+        BodyKind::Dynamic => is_static_only(shape),
+    }
+}
+
+/// How far a cast shape reaches from its origin, metres: the radius of a sphere
+/// about the origin that holds it. `None` for the shapes that cannot be cast.
+pub(crate) fn reach(shape: &ShapeDesc) -> Option<f32> {
+    Some(match shape {
+        ShapeDesc::Box { half_extents } => half_extents.length(),
+        ShapeDesc::Sphere { radius } => *radius,
+        ShapeDesc::Capsule {
+            half_height,
+            radius,
+        } => half_height.max(0.0) + radius,
+        ShapeDesc::ConvexHull { points } => points.iter().map(|p| p.length()).fold(0.0, f32::max),
+        ShapeDesc::TriangleMesh { .. } | ShapeDesc::Heightfield { .. } => return None,
+    })
 }
 
 /// The shape's name as it appears in messages.
