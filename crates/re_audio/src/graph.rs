@@ -44,11 +44,12 @@ pub const DEFAULT_SNAPSHOT: &str = "default";
 const MIN_HZ: f32 = 10.0;
 const MAX_HZ: f32 = 20_000.0;
 
-/// A tween of `seconds` (0 is at once), linear.
+/// A tween of `seconds` (0 is at once), linear. A length too long for a
+/// `Duration` never ends.
 pub(crate) fn tween(seconds: f32) -> Tween {
     Tween {
         start_time: kira::StartTime::Immediate,
-        duration: Duration::from_secs_f32(seconds.max(0.0)),
+        duration: Duration::try_from_secs_f32(seconds.max(0.0)).unwrap_or(Duration::MAX),
         easing: kira::Easing::Linear,
     }
 }
@@ -861,6 +862,20 @@ impl Graph {
         self.nodes[i]
             .volume
             .set_volume(Decibels(volume_db), tween(seconds));
+        Ok(())
+    }
+
+    /// Sets a bus's or send's own track volume, which the graph leaves at 0 dB
+    /// and no fader or snapshot touches: the player's volume
+    /// (`Audio::set_user_volume`).
+    pub(crate) fn set_user_volume(&mut self, name: &str, db: Decibels) -> Result<(), Diagnostic> {
+        let Some(&i) = self.by_name.get(name) else {
+            return Err(unknown_bus(name, "a user volume"));
+        };
+        match &mut self.nodes[i].track {
+            Track::Bus(t) => t.set_volume(db, tween(0.0)),
+            Track::Send(t) => t.set_volume(db, tween(0.0)),
+        }
         Ok(())
     }
 

@@ -112,10 +112,12 @@ pub trait HostServices {
     /// Plays a sound clip (an asset path) once, at a world position or non-spatially.
     fn play_sound(&mut self, clip: &str, at: Option<Vec3>, volume: f32) -> HostResult<()>;
 
-    /// Queues a mixer command for this frame (ADR-0041): one of
-    /// [`AudioCmd::PlayOneShotOnBus`], [`AudioCmd::SetBusVolume`],
+    /// Queues a mixer or sound command for this frame (ADR-0041, ADR-0057 §8):
+    /// one of [`AudioCmd::PlayOneShot`] and [`AudioCmd::PlayOneShotOnBus`]
+    /// (with or without an id), [`AudioCmd::SoundControl`],
+    /// [`AudioCmd::SourceControl`], [`AudioCmd::SetBusVolume`],
     /// [`AudioCmd::SetEffectParam`] and [`AudioCmd::ApplySnapshot`]. The
-    /// implementation refuses any other command.
+    /// implementation refuses any other command, and values out of range.
     fn audio_mix(&mut self, cmd: AudioCmd) -> HostResult<()>;
 
     /// A bus's or send's level over the last frame.

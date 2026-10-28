@@ -483,6 +483,7 @@ fn audio_lib(lua: &Lua, lib: &mut Lib) -> Result<()> {
                         position: at,
                         volume,
                         bus,
+                        id: None,
                     }),
                 }
                 .map_err(host_err)

@@ -16,9 +16,15 @@
 //!   [`Audio::set_graph`]. Commands tween bus volumes and effect parameters, or
 //!   apply a mixer snapshot; [`Audio::bus_levels`] meters every bus. The
 //!   headless backend runs the same graph, so tests check levels without a device.
-//! * Spatial sounds play on kira spatial tracks under their bus: their volume
-//!   falls with distance from the listener and they pan by direction. The
-//!   listener faces −Z.
+//! * Spatial sounds play on kira spatial tracks under their bus: they pan by
+//!   direction, and their volume falls with distance from the listener on the
+//!   curve their entity's `SetSourceSpatial` chooses (`natural`, `inverse`,
+//!   `linear` or `off`), which can change while they play. Doppler multiplies
+//!   a source's rate by a factor from its and the listener's motion, which
+//!   [`Audio::advance`]'s clock times. The listener faces −Z.
+//! * Commands stop, pause, resume, seek and fade an entity's sound
+//!   (`SourceControl`) or a one-shot started with an id (`SoundControl`),
+//!   ADR-0057 §8. [`Audio::set_user_volume`] sets the player's volumes.
 //!
 //! kira 0.12.5 uses glam 0.33 while the engine uses glam 0.34, so positions and
 //! rotations cross into kira only as plain arrays.
@@ -34,13 +40,14 @@ pub mod codes;
 mod graph;
 mod meter;
 mod mixer;
+mod spatial;
 mod wav;
 
 pub use capture::{CaptureBackend, CaptureSettings};
 pub use graph::{DEFAULT_SNAPSHOT, MAX_SENDS};
 pub use kira::sound::static_sound::StaticSoundData;
 pub use mixer::{Audio, MAX_RATE, linear_to_decibels, rms, sine};
-pub use re_types::audio::{AudioCmd, AudioGraphDesc, BusLevel};
+pub use re_types::audio::{AudioCmd, AudioGraphDesc, BusLevel, Rolloff, SoundOp, Spatial};
 
 use re_core::DiagInfo;
 
@@ -90,6 +97,16 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::UNKNOWN_BUS,
         title: "Unknown audio bus or snapshot",
         page: include_str!("../explain/RE7408.md"),
+    },
+    DiagInfo {
+        code: codes::INVALID_SOUND_CONTROL,
+        title: "Invalid sound control",
+        page: include_str!("../explain/RE7411.md"),
+    },
+    DiagInfo {
+        code: codes::INVALID_SPATIAL,
+        title: "Invalid spatial sound settings",
+        page: include_str!("../explain/RE7412.md"),
     },
 ];
 

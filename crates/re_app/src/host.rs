@@ -20,7 +20,7 @@ use re_types::anim::AnimValue;
 use re_types::host::{HostError, HostResult, HostServices};
 use re_types::{
     ActionFrame, AudioCmd, BodyKind, BusLevel, CharacterState, EntityId, GroupMask, PhysicsCmd,
-    RagdollMode, RagdollState, RayHit, VehicleInput, VehicleState,
+    RagdollMode, RagdollState, RayHit, SoundOp, VehicleInput, VehicleState,
 };
 
 use crate::codes::{HOST_INVALID_ARGUMENT_STR, HOST_NO_SUCH_THING_STR};
@@ -88,6 +88,39 @@ fn no_graph(entity: EntityId) -> HostError {
 
 fn invalid(msg: String) -> HostError {
     HostError::new(HOST_INVALID_ARGUMENT_STR, msg)
+}
+
+/// The checks `audio_mix` makes of a sound control (ADR-0057 §8): a fade or a
+/// seek is 0 or more, a volume 0 or more, and a rate above 0 and at most
+/// [`re_audio::MAX_RATE`].
+fn sound_op(op: &SoundOp) -> HostResult<()> {
+    let at_least_0 = |v: f64, what: &str| {
+        if v.is_finite() && v >= 0.0 {
+            Ok(())
+        } else {
+            Err(invalid(format!("{what} {v} must be 0 or more")))
+        }
+    };
+    match *op {
+        SoundOp::Start => Ok(()),
+        SoundOp::Stop { fade } | SoundOp::Pause { fade } | SoundOp::Resume { fade } => {
+            at_least_0(fade.into(), "fade")
+        }
+        SoundOp::Seek { seconds } => at_least_0(seconds, "seek"),
+        SoundOp::Volume { volume, fade } => {
+            at_least_0(volume.into(), "volume")?;
+            at_least_0(fade.into(), "fade")
+        }
+        SoundOp::Rate { rate, fade } => {
+            if !(rate.is_finite() && rate > 0.0 && rate <= re_audio::MAX_RATE) {
+                return Err(invalid(format!(
+                    "rate {rate} must be above 0 and at most {}",
+                    re_audio::MAX_RATE
+                )));
+            }
+            at_least_0(fade.into(), "fade")
+        }
+    }
 }
 
 fn finite(v: Vec3, what: &str) -> HostResult<()> {
@@ -291,6 +324,7 @@ impl HostServices for Host<'_> {
             clip: clip.to_string(),
             position: at,
             volume,
+            id: None,
         });
         Ok(())
     }
@@ -328,11 +362,25 @@ impl HostServices for Host<'_> {
             }
         };
         match &cmd {
+            AudioCmd::PlayOneShot {
+                clip,
+                position,
+                volume,
+                ..
+            } => {
+                // The same checks as `play_sound`, keeping the id.
+                return self.play_sound(clip, *position, *volume).map(|()| {
+                    if let Some(last) = self.audio_cmds.last_mut() {
+                        *last = cmd;
+                    }
+                });
+            }
             AudioCmd::PlayOneShotOnBus {
                 clip,
                 position,
                 volume,
                 bus,
+                ..
             } => {
                 bus_only(bus)?;
                 // The same checks as an unrouted one-shot.
@@ -341,6 +389,9 @@ impl HostServices for Host<'_> {
                         *last = cmd;
                     }
                 });
+            }
+            AudioCmd::SoundControl { op, .. } | AudioCmd::SourceControl { op, .. } => {
+                sound_op(op)?;
             }
             AudioCmd::SetBusVolume {
                 bus,
@@ -576,6 +627,63 @@ impl re_script::StreamAccess for WorldStream {
             } else {
                 s.unpin(key);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sound_controls_are_checked_as_scripts_check_them() {
+        for op in [
+            SoundOp::Start,
+            SoundOp::Stop { fade: 0.0 },
+            SoundOp::Pause { fade: 1.0 },
+            SoundOp::Resume { fade: 0.5 },
+            SoundOp::Seek { seconds: 0.0 },
+            SoundOp::Volume {
+                volume: 2.0,
+                fade: 0.0,
+            },
+            SoundOp::Rate {
+                rate: 16.0,
+                fade: 3.0,
+            },
+        ] {
+            assert!(sound_op(&op).is_ok(), "{op:?}");
+        }
+        for op in [
+            SoundOp::Stop { fade: -1.0 },
+            SoundOp::Pause { fade: f32::NAN },
+            SoundOp::Resume {
+                fade: f32::INFINITY,
+            },
+            SoundOp::Seek { seconds: -1.0 },
+            SoundOp::Volume {
+                volume: -0.5,
+                fade: 0.0,
+            },
+            SoundOp::Volume {
+                volume: 1.0,
+                fade: -2.0,
+            },
+            SoundOp::Rate {
+                rate: 0.0,
+                fade: 0.0,
+            },
+            SoundOp::Rate {
+                rate: 16.5,
+                fade: 0.0,
+            },
+            SoundOp::Rate {
+                rate: 1.0,
+                fade: f32::NAN,
+            },
+        ] {
+            let e = sound_op(&op).unwrap_err();
+            assert_eq!(e.code, HOST_INVALID_ARGUMENT_STR, "{op:?}");
         }
     }
 }
