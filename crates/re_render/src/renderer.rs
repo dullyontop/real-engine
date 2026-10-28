@@ -119,7 +119,8 @@ pub struct FrameStats {
     pub draw_calls: u32,
     /// Draw items drawn.
     pub items_drawn: u32,
-    /// Draw items skipped because a handle was stale.
+    /// Draw items, instance sets and parts of sets skipped because a handle
+    /// was stale.
     pub items_skipped: u32,
     /// Draw items left out because their bounds are outside the view.
     pub items_culled: u32,

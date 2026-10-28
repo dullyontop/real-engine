@@ -46,9 +46,12 @@ fn set_position(position: vec3<f32>, p: Placement) -> vec3<f32> {
     return (set_part.set_matrix * vec4<f32>(root, 1.0)).xyz;
 }
 
-// A normal of the part's mesh, in the render origin's space (not unit length).
+// A normal of the part's mesh, in the render origin's space (not unit
+// length). A copy mirrored by a negative scale turns it round, as an item's
+// inverse transpose does.
 fn set_normal(normal: vec3<f32>, p: Placement) -> vec3<f32> {
     let part_n = mat3x3<f32>(set_part.part_normal_0.xyz, set_part.part_normal_1.xyz, set_part.part_normal_2.xyz);
     let set_n = mat3x3<f32>(set_part.set_normal_0.xyz, set_part.set_normal_1.xyz, set_part.set_normal_2.xyz);
-    return set_n * quat_rotate(normalize(p.rotation), part_n * normal);
+    let mirrored = select(1.0, -1.0, p.position_scale.w < 0.0);
+    return set_n * quat_rotate(normalize(p.rotation), part_n * normal) * mirrored;
 }
