@@ -30,6 +30,7 @@ pub fn catalog() -> Vec<&'static DiagInfo> {
         re_geom::DIAGNOSTICS,
         re_compat::DIAGNOSTICS,
         re_net::DIAGNOSTICS,
+        re_app::ui::DIAGNOSTICS,
         #[cfg(feature = "tooling")]
         re_script_check::DIAGNOSTICS,
         #[cfg(feature = "tooling")]
@@ -116,6 +117,8 @@ mod tests {
         let problems = re_core::validate_catalog(crate::DIAGNOSTICS, 900..=999);
         assert!(problems.is_empty(), "{problems:?}");
         let problems = re_core::validate_catalog(re_app::DIAGNOSTICS, re_app::CODE_RANGE);
+        assert!(problems.is_empty(), "{problems:?}");
+        let problems = re_core::validate_catalog(re_app::ui::DIAGNOSTICS, 7700..=7799);
         assert!(problems.is_empty(), "{problems:?}");
     }
 

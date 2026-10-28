@@ -1,0 +1,393 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ThemeFile",
+  "description": "A theme file (`*.theme.json`, ADR-0058): named styles for native UI\nnodes. A style sets any of the visual fields of `UiPanel`, `UiText`,\n`UiBar` and `UiScroll`, may extend another style (`base`), and has a\npartial style for each state (`focused`, `hover`, `pressed`, `disabled`).\n\n```json\n{ \"format\": \"real-engine/theme\", \"version\": 1,\n  \"styles\": {\n    \"button\": { \"base\": \"button\",\n                \"panel\": { \"color\": [0.02, 0.02, 0.03, 0.95], \"corner\": 8.0 },\n                \"hover\": { \"panel\": { \"color\": [0.05, 0.05, 0.07, 0.95] } } },\n    \"button.danger\": { \"base\": \"button\", \"panel\": { \"color\": [0.6, 0.02, 0.02] } } } }\n```\n\nA project's theme (`[ui] theme` in `real.toml`) lies over the engine's,\nand a root's `UiRoot.theme` takes the project's place for that root: a\nstyle replaces the engine's style of its name, unless its `base` is its\nown name, which extends that style instead. Colours are linear, as in\nscene files.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "An optional JSON Schema reference, ignored.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "format": {
+      "description": "Always [`ThemeFile::FORMAT`].",
+      "type": "string"
+    },
+    "version": {
+      "description": "The file format version, [`ThemeFile::VERSION`].",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "styles": {
+      "description": "The styles by name, such as `button` or `button.primary`.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/StyleFile"
+      },
+      "default": {}
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "version"
+  ],
+  "$defs": {
+    "StyleFile": {
+      "description": "A style as a theme file writes it.",
+      "type": "object",
+      "properties": {
+        "base": {
+          "description": "The style this one extends: a style of this theme or of the themes\nunder it. This style's own name extends the style of that name in the\nthemes under it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "panel": {
+          "$ref": "#/$defs/PanelPatch"
+        },
+        "text": {
+          "$ref": "#/$defs/TextPatch"
+        },
+        "bar": {
+          "$ref": "#/$defs/BarPatch"
+        },
+        "scroll": {
+          "$ref": "#/$defs/ScrollPatch"
+        },
+        "focused": {
+          "description": "Over the style while its node has keyboard or gamepad focus.",
+          "$ref": "#/$defs/Patch"
+        },
+        "hover": {
+          "description": "Over the style while the pointer is over its node.",
+          "$ref": "#/$defs/Patch"
+        },
+        "pressed": {
+          "description": "Over the style while its node is pressed.",
+          "$ref": "#/$defs/Patch"
+        },
+        "disabled": {
+          "description": "Over the style while its node is a disabled button.",
+          "$ref": "#/$defs/Patch"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PanelPatch": {
+      "description": "A style's `UiPanel` fields.",
+      "type": "object",
+      "properties": {
+        "color": {
+          "description": "The fill (alpha 0: none).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Color"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "corner": {
+          "description": "The corner radius in points.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "outline": {
+          "description": "The outline's width in points (0: none).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "outline_color": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Color"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gradient": {
+          "description": "The colour the fill blends to across the box (alpha 0: none).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Color"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gradient_angle_deg": {
+          "description": "The direction of the blend in degrees, 0 left to right, clockwise.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Color": {
+      "description": "A linear RGBA colour, as scene files write colours: 3 or 4 numbers (3 is opaque).",
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 4
+    },
+    "TextPatch": {
+      "description": "A style's `UiText` fields: all but the text and whether it is rich.",
+      "type": "object",
+      "properties": {
+        "font": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Font"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "weight": {
+          "description": "CSS-style: 400 regular, 700 bold.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "size": {
+          "description": "The size in points.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "color": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Color"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "align_x": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Align"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "align_y": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Align"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wrap": {
+          "description": "Wraps at the box's width.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "fit": {
+          "description": "Takes the largest size that fits the box.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "truncate": {
+          "description": "Ends text that does not fit with an ellipsis.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "line_height": {
+          "description": "Line spacing, 1 for the font's own.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "outline_color": {
+          "description": "A one-point outline (alpha 0: none).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Color"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Font": {
+      "description": "A font family, as `UiText.font` names it.",
+      "oneOf": [
+        {
+          "description": "Source Sans 3, for body text.",
+          "type": "string",
+          "const": "Sans"
+        },
+        {
+          "description": "Montserrat, for headings.",
+          "type": "string",
+          "const": "Display"
+        },
+        {
+          "description": "Roboto Mono, for code and numbers.",
+          "type": "string",
+          "const": "Mono"
+        }
+      ]
+    },
+    "Align": {
+      "description": "Where text sits along one axis of its box, as `UiText.align_x` and\n`align_y` name it.",
+      "oneOf": [
+        {
+          "description": "Left or top.",
+          "type": "string",
+          "const": "Start"
+        },
+        {
+          "description": "In the middle.",
+          "type": "string",
+          "const": "Center"
+        },
+        {
+          "description": "Right or bottom.",
+          "type": "string",
+          "const": "End"
+        }
+      ]
+    },
+    "BarPatch": {
+      "description": "A style's `UiBar` fields: all but the value.",
+      "type": "object",
+      "properties": {
+        "direction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BarDirection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "color": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Color"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "BarDirection": {
+      "description": "The edge a bar fills from, as `UiBar.direction` names it.",
+      "oneOf": [
+        {
+          "description": "From the left edge to the right.",
+          "type": "string",
+          "const": "Right"
+        },
+        {
+          "description": "From the right edge to the left.",
+          "type": "string",
+          "const": "Left"
+        },
+        {
+          "description": "From the bottom edge up.",
+          "type": "string",
+          "const": "Up"
+        },
+        {
+          "description": "From the top edge down.",
+          "type": "string",
+          "const": "Down"
+        }
+      ]
+    },
+    "ScrollPatch": {
+      "description": "A style's `UiScroll` fields: the scroll bar's.",
+      "type": "object",
+      "properties": {
+        "bar": {
+          "description": "The scroll bar's width in points.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "bar_color": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Color"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Patch": {
+      "description": "What a style or one of its states sets: some fields of each visual\ncomponent.",
+      "type": "object",
+      "properties": {
+        "panel": {
+          "$ref": "#/$defs/PanelPatch"
+        },
+        "text": {
+          "$ref": "#/$defs/TextPatch"
+        },
+        "bar": {
+          "$ref": "#/$defs/BarPatch"
+        },
+        "scroll": {
+          "$ref": "#/$defs/ScrollPatch"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

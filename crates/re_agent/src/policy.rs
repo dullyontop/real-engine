@@ -61,6 +61,7 @@ pub const DEFAULT_SCOPES: &[&str] = &[
     "anims/**",
     "prefabs/**",
     "materials/**",
+    "ui/**",
     "assets/**",
 ];
 

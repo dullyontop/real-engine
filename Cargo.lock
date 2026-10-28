@@ -3832,6 +3832,7 @@ dependencies = [
  "re_scene",
  "re_script",
  "re_types",
+ "re_ui",
  "schemars",
  "serde",
  "serde_json",
@@ -4246,6 +4247,9 @@ dependencies = [
  "glam 0.34.1",
  "libm",
  "re_render",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

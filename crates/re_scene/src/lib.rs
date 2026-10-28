@@ -75,8 +75,9 @@ pub use components::{
     AnimPlayer, Animator, AudioListener, AudioRolloff, AudioSource, BodyKind, BoneAttachment,
     Camera, CharacterController, Collider, ColliderShape, GlobalTransform, HudAnchor, HudText,
     Light, LightKind, MaterialRef, MeshRef, Name, Note, Ragdoll, RagdollControl, RigidBody,
-    ScriptContext, ScriptRef, SkinnedMesh, Transform, Vehicle, VehicleKind, VehicleWheel, Visible,
-    WheelTester, register_builtins,
+    ScriptContext, ScriptRef, SkinnedMesh, Transform, UiAlign, UiAutoSize, UiBar, UiBarDirection,
+    UiButton, UiFont, UiImage, UiLayout, UiNode, UiPanel, UiRoot, UiScroll, UiSpace, UiText,
+    UiTextInput, Vehicle, VehicleKind, VehicleWheel, Visible, WheelTester, register_builtins,
 };
 pub use docs::{DocMarks, DocValidator, OpenDoc, OpenDocs, doc_path};
 pub use error::SceneError;

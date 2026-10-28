@@ -4,8 +4,9 @@
 //! Backgrounds are rectangles (rounded by [`Look::corner`], outlined by the
 //! border or a stroke), or a mesh when a gradient colours them. Text is the
 //! laid-out galley, with its stroke drawn as offset copies under it. An
-//! image is a placeholder or a host's texture. The shapes rotate with the
-//! node; a rotated node draws unclipped.
+//! image is a placeholder or a host's texture, and a bar a fill over part of
+//! the box. The shapes rotate with the node; a rotated node draws unclipped.
+//! An item's opacity fades every shape it paints.
 
 use egui::epaint::{
     ClippedShape, CornerRadius, Mesh, RectShape, Shape, Stroke, StrokeKind, TextShape, Vertex,
@@ -15,6 +16,17 @@ use glam::{Affine2, Vec2};
 
 use crate::layout::Item;
 use crate::tree::{Gradient, Image, Look, NodeId, Rgba, StrokeMode, UiTree};
+
+/// Multiplies a shape's alpha by `k` (0 to 1).
+fn fade(shape: &mut Shape, k: f32) {
+    match shape {
+        Shape::Text(t) => t.opacity_factor *= k,
+        Shape::Vec(shapes) => shapes.iter_mut().for_each(|s| fade(s, k)),
+        other => egui::epaint::shape_transform::adjust_colors(other, move |c| {
+            *c = c.gamma_multiply(k);
+        }),
+    }
+}
 
 /// What input found that changes the look.
 #[derive(Clone, Copy, Debug, Default)]
@@ -148,8 +160,21 @@ impl<'a> Painter<'a> {
         });
     }
 
-    /// Paints one item.
+    /// Paints one item; one at no opacity paints nothing.
     pub fn item(&mut self, it: &Item, looks: &Looks) {
+        if it.opacity <= 0.0 {
+            return;
+        }
+        let start = self.shapes.len();
+        self.shapes_of(it, looks);
+        if it.opacity < 1.0 {
+            for s in &mut self.shapes[start..] {
+                fade(&mut s.shape, it.opacity);
+            }
+        }
+    }
+
+    fn shapes_of(&mut self, it: &Item, looks: &Looks) {
         let tree = self.tree;
         let n = tree.node(it.node);
         let look = &n.look;
@@ -181,6 +206,22 @@ impl<'a> Painter<'a> {
                         RectShape::filled(rect, radius(corner), bg.egui()).with_angle(angle),
                     ),
                 ),
+            }
+        }
+        if let Some(bar) = n.bar
+            && bar.color.0[3] > 0.0
+        {
+            let (min, size) = bar.fill(it.min, it.size);
+            if size.x > 0.0 && size.y > 0.0 {
+                let center = it.rot.transform_point2(min + size * 0.5);
+                let fill = Rect::from_center_size(pos(center), egui::vec2(size.x, size.y));
+                let r = corner.min(size.x * 0.5).min(size.y * 0.5);
+                self.push(
+                    it.clip,
+                    Shape::Rect(
+                        RectShape::filled(fill, radius(r), bar.color.egui()).with_angle(angle),
+                    ),
+                );
             }
         }
         // The border (a rounded corner hides it) or a stroke.

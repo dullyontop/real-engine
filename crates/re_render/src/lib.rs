@@ -59,7 +59,7 @@ pub use frame::MAX_POINT_LIGHTS;
 pub use gpu::{Gpu, GpuErrors, backends_from_env, parse_backends};
 pub use renderer::{
     DrawTime, FrameReport, FrameStats, RenderStats, Renderer, RendererSettings, ResourceStats,
-    ShaderReload, ShadowProbe,
+    ShaderReload, ShadowProbe, decode_blocks,
 };
 pub use ui::UiFrame;
 

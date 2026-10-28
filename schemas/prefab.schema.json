@@ -203,6 +203,33 @@
               },
               "AudioListener": {
                 "$ref": "#/$defs/AudioListener"
+              },
+              "UiRoot": {
+                "$ref": "#/$defs/UiRoot"
+              },
+              "UiNode": {
+                "$ref": "#/$defs/UiNode"
+              },
+              "UiPanel": {
+                "$ref": "#/$defs/UiPanel"
+              },
+              "UiText": {
+                "$ref": "#/$defs/UiText"
+              },
+              "UiImage": {
+                "$ref": "#/$defs/UiImage"
+              },
+              "UiButton": {
+                "$ref": "#/$defs/UiButton"
+              },
+              "UiBar": {
+                "$ref": "#/$defs/UiBar"
+              },
+              "UiScroll": {
+                "$ref": "#/$defs/UiScroll"
+              },
+              "UiTextInput": {
+                "$ref": "#/$defs/UiTextInput"
               }
             },
             "additionalProperties": false
@@ -1261,6 +1288,603 @@
           "type": "boolean",
           "default": true,
           "description": "Whether this listener can be the one that hears."
+        }
+      },
+      "additionalProperties": false
+    },
+    "UiRoot": {
+      "type": "object",
+      "description": "Makes this entity the root of a native UI tree (ADR-0058): its\nchildren with a [`UiNode`] are the tree's nodes. On the screen the root\nfills the view; in the world it is a box at this entity's position that\nfaces the camera, as wide and tall as its own `UiNode`'s size.",
+      "properties": {
+        "space": {
+          "enum": [
+            "Screen",
+            "World"
+          ],
+          "default": "Screen",
+          "description": "On the screen or in the world."
+        },
+        "order": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "default": 0,
+          "description": "Screen roots draw by order, lowest first, then by stable id."
+        },
+        "focus": {
+          "type": "boolean",
+          "default": false,
+          "description": "Takes keyboard and gamepad focus and navigation while shown."
+        },
+        "input": {
+          "type": "boolean",
+          "default": true,
+          "description": "False lets the pointer pass through to the game, as for a HUD."
+        },
+        "reference_height": {
+          "type": "number",
+          "default": 0.0,
+          "description": "The view height in the root's units: 0 makes a unit a point, 720\nlays out for a 720-point-high view and scales to the real one."
+        },
+        "theme": {
+          "type": "string",
+          "default": "",
+          "description": "A theme file for this root in place of the project's `[ui] theme`\n(empty: the project's)."
+        },
+        "world_height": {
+          "type": "number",
+          "default": 1.0,
+          "description": "World roots: the metres the root's height spans."
+        },
+        "offset": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "World roots: where the root's centre is from this entity, in metres."
+        },
+        "max_distance": {
+          "type": "number",
+          "default": 0.0,
+          "description": "World roots: hidden further than this from the camera, in metres\n(0: no limit)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "UiNode": {
+      "type": "object",
+      "description": "A box in a native UI tree (ADR-0058): its place, size and layout. Its\nparent is the entity's parent, which has a `UiNode` or a [`UiRoot`] (a\nnode under any other entity is not drawn); its children are its\nchildren with a `UiNode`, in child order. Sizes and positions are a\nfraction of the parent's box (`_scale`) plus points.",
+      "properties": {
+        "x": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Left edge from the parent's, in points."
+        },
+        "y": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Top edge from the parent's, in points."
+        },
+        "x_scale": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Left edge from the parent's, as a fraction of its width."
+        },
+        "y_scale": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Top edge from the parent's, as a fraction of its height."
+        },
+        "width": {
+          "type": "number",
+          "default": 100.0,
+          "description": "Width in points, added to `width_scale`'s."
+        },
+        "height": {
+          "type": "number",
+          "default": 100.0,
+          "description": "Height in points, added to `height_scale`'s."
+        },
+        "width_scale": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Width as a fraction of the parent's."
+        },
+        "height_scale": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Height as a fraction of the parent's."
+        },
+        "anchor_x": {
+          "type": "number",
+          "default": 0.0,
+          "description": "The point of the box placed at the position: 0 left, 1 right."
+        },
+        "anchor_y": {
+          "type": "number",
+          "default": 0.0,
+          "description": "The point of the box placed at the position: 0 top, 1 bottom."
+        },
+        "auto_size": {
+          "enum": [
+            "None",
+            "Width",
+            "Height",
+            "Both"
+          ],
+          "default": "None",
+          "description": "Which axes grow to fit the text and the children."
+        },
+        "padding_left": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Space inside the left edge, in points."
+        },
+        "padding_top": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Space inside the top edge, in points."
+        },
+        "padding_right": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Space inside the right edge, in points."
+        },
+        "padding_bottom": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Space inside the bottom edge, in points."
+        },
+        "min_width": {
+          "type": "number",
+          "default": 0.0,
+          "description": "The smallest width in points (0: none)."
+        },
+        "min_height": {
+          "type": "number",
+          "default": 0.0,
+          "description": "The smallest height in points (0: none)."
+        },
+        "max_width": {
+          "type": "number",
+          "default": 0.0,
+          "description": "The largest width in points (0: none)."
+        },
+        "max_height": {
+          "type": "number",
+          "default": 0.0,
+          "description": "The largest height in points (0: none)."
+        },
+        "aspect": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Width over height, kept inside the size given (0: none)."
+        },
+        "layout": {
+          "enum": [
+            "None",
+            "Row",
+            "Column",
+            "Grid"
+          ],
+          "default": "None",
+          "description": "How the children are placed."
+        },
+        "gap": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Space between the children of a row, column or grid, in points."
+        },
+        "align_x": {
+          "enum": [
+            "Start",
+            "Center",
+            "End"
+          ],
+          "default": "Start",
+          "description": "Where a row, column or grid sits across the box."
+        },
+        "align_y": {
+          "enum": [
+            "Start",
+            "Center",
+            "End"
+          ],
+          "default": "Start",
+          "description": "Where a row, column or grid sits down the box."
+        },
+        "cell_width": {
+          "type": "number",
+          "default": 100.0,
+          "description": "A grid's cell width in points."
+        },
+        "cell_height": {
+          "type": "number",
+          "default": 100.0,
+          "description": "A grid's cell height in points."
+        },
+        "max_cells": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "default": 0,
+          "description": "A grid's cells per line (0: as many as fit)."
+        },
+        "order": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "default": 0,
+          "description": "The place among its siblings in a row, column or grid, lowest\nfirst; ties keep child order."
+        },
+        "z": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "default": 0,
+          "description": "Drawn over siblings with a lower z."
+        },
+        "visible": {
+          "type": "boolean",
+          "default": true,
+          "description": "False hides the box and everything under it."
+        },
+        "clip": {
+          "type": "boolean",
+          "default": false,
+          "description": "Cuts off what the children draw outside the box."
+        },
+        "scale": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Scales the box and everything under it about its centre."
+        },
+        "rotation_deg": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Turns the box and everything under it about its centre, in degrees."
+        },
+        "opacity": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Multiplies the alpha of the box and everything under it, 0 to 1.\nNo style sets it, so it fades any node."
+        },
+        "style": {
+          "type": "string",
+          "default": "",
+          "description": "The theme's style that gives the box its look (empty: none)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "UiPanel": {
+      "type": "object",
+      "description": "Fills a [`UiNode`]'s box, with rounded corners, an outline or a\ngradient.",
+      "properties": {
+        "color": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 4,
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Linear fill colour (alpha 0: no fill)."
+        },
+        "corner": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Corner radius in points."
+        },
+        "outline": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Outline width in points (0: none)."
+        },
+        "outline_color": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 4,
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear outline colour."
+        },
+        "gradient": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 4,
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "The linear colour the fill blends to across the box (alpha 0: none)."
+        },
+        "gradient_angle_deg": {
+          "type": "number",
+          "default": 0.0,
+          "description": "The blend's direction in degrees: 0 left to right, clockwise."
+        }
+      },
+      "additionalProperties": false
+    },
+    "UiText": {
+      "type": "object",
+      "description": "Text in a [`UiNode`]'s box.",
+      "properties": {
+        "text": {
+          "type": "string",
+          "default": "",
+          "description": "The text; `\\n` breaks a line."
+        },
+        "font": {
+          "enum": [
+            "Sans",
+            "Display",
+            "Mono"
+          ],
+          "default": "Sans",
+          "description": "The family."
+        },
+        "weight": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "default": 400,
+          "description": "CSS-style weight: 400 regular, 700 bold."
+        },
+        "size": {
+          "type": "number",
+          "default": 18.0,
+          "description": "Size in points."
+        },
+        "color": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 4,
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear colour."
+        },
+        "align_x": {
+          "enum": [
+            "Start",
+            "Center",
+            "End"
+          ],
+          "default": "Start",
+          "description": "Where the text sits across the box."
+        },
+        "align_y": {
+          "enum": [
+            "Start",
+            "Center",
+            "End"
+          ],
+          "default": "Start",
+          "description": "Where the text sits down the box."
+        },
+        "wrap": {
+          "type": "boolean",
+          "default": false,
+          "description": "Wraps at the box's width."
+        },
+        "fit": {
+          "type": "boolean",
+          "default": false,
+          "description": "Takes the largest size that fits the box, in place of `size`."
+        },
+        "truncate": {
+          "type": "boolean",
+          "default": false,
+          "description": "Ends text that does not fit with an ellipsis."
+        },
+        "rich": {
+          "type": "boolean",
+          "default": false,
+          "description": "Reads `<b>`, `<font color=\"#rrggbb\">`, `<font size=\"n\">` and the\nXML escapes."
+        },
+        "line_height": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Line spacing: 1 is the font's own."
+        },
+        "outline_color": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 4,
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "description": "Linear colour of a one-point outline (alpha 0: none)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "UiImage": {
+      "type": "object",
+      "description": "A texture over a [`UiNode`]'s box.",
+      "properties": {
+        "image": {
+          "type": "string",
+          "default": "",
+          "description": "The texture asset, e.g. `ui/icons/coin.png`."
+        },
+        "tint": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 4,
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear colour the texture is multiplied by."
+        }
+      },
+      "additionalProperties": false
+    },
+    "UiButton": {
+      "type": "object",
+      "description": "Makes a [`UiNode`] a button: it takes the pointer, focus and presses,\nand raises its events (ADR-0058).",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "False shows the style's disabled state and takes no presses."
+        },
+        "auto_color": {
+          "type": "boolean",
+          "default": true,
+          "description": "Darkens the panel on hover and press when the style gives no colour\nfor those states."
+        }
+      },
+      "additionalProperties": false
+    },
+    "UiBar": {
+      "type": "object",
+      "description": "Fills part of a [`UiNode`]'s box from one edge: a progress or health\nbar.",
+      "properties": {
+        "value": {
+          "type": "number",
+          "default": 0.0,
+          "description": "The part filled, 0 to 1."
+        },
+        "direction": {
+          "enum": [
+            "Right",
+            "Left",
+            "Up",
+            "Down"
+          ],
+          "default": "Right",
+          "description": "The edge it fills from."
+        },
+        "color": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 4,
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "Linear fill colour."
+        }
+      },
+      "additionalProperties": false
+    },
+    "UiScroll": {
+      "type": "object",
+      "description": "Makes a [`UiNode`] a scrolling view of a content area larger than its\nbox.",
+      "properties": {
+        "scroll_x": {
+          "type": "number",
+          "default": 0.0,
+          "description": "How far the content is scrolled right, in points. Layout keeps the\nview inside the content without writing this back."
+        },
+        "scroll_y": {
+          "type": "number",
+          "default": 0.0,
+          "description": "How far the content is scrolled down, in points."
+        },
+        "content_width": {
+          "type": "number",
+          "default": 0.0,
+          "description": "The content's width in points (0: grows to fit the children)."
+        },
+        "content_height": {
+          "type": "number",
+          "default": 0.0,
+          "description": "The content's height in points (0: grows to fit the children)."
+        },
+        "bar": {
+          "type": "number",
+          "default": 6.0,
+          "description": "The scroll bar's width in points."
+        },
+        "bar_color": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 4,
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            0.30000001192092896
+          ],
+          "description": "Linear colour of the scroll bar."
+        }
+      },
+      "additionalProperties": false
+    },
+    "UiTextInput": {
+      "type": "object",
+      "description": "Makes a [`UiNode`] with a [`UiText`] a text field: its text is the\n`UiText`'s.",
+      "properties": {
+        "placeholder": {
+          "type": "string",
+          "default": "",
+          "description": "Shown, faded, while the text is empty."
+        },
+        "max_length": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "default": 0,
+          "description": "The most characters it takes (0: no limit)."
+        },
+        "clear_on_focus": {
+          "type": "boolean",
+          "default": false,
+          "description": "Empties the text when the field takes focus."
         }
       },
       "additionalProperties": false

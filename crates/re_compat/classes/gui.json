@@ -1011,8 +1011,8 @@
           },
           "default": false,
           "status": "partial",
-          "note": "Only the bold and font colour tags; other tags are drawn as text.",
-          "doc": "When true, <b>\u2026</b> makes text bold and <font color=\"#rrggbb\">\u2026</font> (or rgb(r,g,b)) colours it."
+          "note": "Only <b> and the <font> tag's color and size; <font>'s other attributes are ignored, and other tags are drawn as text.",
+          "doc": "When true, <b>\u2026</b> makes text bold and <font color=\"#rrggbb\">\u2026</font> (or rgb(r,g,b)) colours it; <font size=\"n\"> sets its size in pixels (1 to 100), scaled as the text is."
         },
         {
           "name": "TextStrokeColor3",
@@ -1346,8 +1346,8 @@
           },
           "default": false,
           "status": "partial",
-          "note": "Only the bold and font colour tags; other tags are drawn as text.",
-          "doc": "When true, <b>\u2026</b> makes text bold and <font color=\"#rrggbb\">\u2026</font> (or rgb(r,g,b)) colours it."
+          "note": "Only <b> and the <font> tag's color and size; <font>'s other attributes are ignored, and other tags are drawn as text.",
+          "doc": "When true, <b>\u2026</b> makes text bold and <font color=\"#rrggbb\">\u2026</font> (or rgb(r,g,b)) colours it; <font size=\"n\"> sets its size in pixels (1 to 100), scaled as the text is."
         },
         {
           "name": "TextStrokeColor3",
@@ -1652,8 +1652,8 @@
           },
           "default": false,
           "status": "partial",
-          "note": "Only the bold and font colour tags; other tags are drawn as text.",
-          "doc": "When true, <b>\u2026</b> makes text bold and <font color=\"#rrggbb\">\u2026</font> (or rgb(r,g,b)) colours it."
+          "note": "Only <b> and the <font> tag's color and size; <font>'s other attributes are ignored, and other tags are drawn as text.",
+          "doc": "When true, <b>\u2026</b> makes text bold and <font color=\"#rrggbb\">\u2026</font> (or rgb(r,g,b)) colours it; <font size=\"n\"> sets its size in pixels (1 to 100), scaled as the text is."
         },
         {
           "name": "TextStrokeColor3",

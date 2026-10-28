@@ -8,12 +8,20 @@ publish.workspace = true
 
 # A runtime crate that reaches no engine crate (ADR-0058; `cargo xtask
 # check-graph`), only third-party crates already in the runtime: egui for text
-# layout and shapes, which re_render's UI pass paints, and glam on libm for
-# maths that is the same on every platform.
+# layout and shapes, which re_render's UI pass paints, glam on libm for maths
+# that is the same on every platform, and serde for theme files.
 [dependencies]
 egui.workspace = true
 glam.workspace = true
 libm.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars = { workspace = true, optional = true }
+
+[features]
+# Derives `schemars::JsonSchema` for the theme file, so that `real schema`
+# writes `schemas/theme.schema.json`.
+schemars = ["dep:schemars"]
 
 [dev-dependencies]
 # The native panel's images paint through re_render.

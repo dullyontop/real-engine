@@ -76,6 +76,8 @@ pub struct Item {
     pub key: (i64, u64),
     /// Whether it takes input.
     pub interactable: bool,
+    /// The alpha factor of the node's opacity and its ancestors'.
+    pub opacity: f32,
 }
 
 impl Item {
@@ -224,6 +226,7 @@ impl<'a> Layout<'a> {
             0.0,
             r.clip,
             true,
+            self.tree.opacity_of(r.node),
             r,
         );
         let mut items = std::mem::take(&mut self.items);
@@ -379,6 +382,7 @@ impl<'a> Layout<'a> {
         angle: f32,
         clip: Option<egui::Rect>,
         shown: bool,
+        opacity: f32,
         root: &Root,
     ) -> Vec2 {
         let dry = visit.is_none();
@@ -498,6 +502,7 @@ impl<'a> Layout<'a> {
             self.seq += 1;
             let z = if root.global_z { n.z } else { 0 };
             let interactable = visible && root.input && n.interactable;
+            let opacity_k = opacity * tree.opacity_of(k.id);
             let slot = visible.then_some(self.items.len());
             if visible {
                 self.items.push(Item {
@@ -513,6 +518,7 @@ impl<'a> Layout<'a> {
                     canvas: None,
                     key: (z, self.seq),
                     interactable,
+                    opacity: opacity_k,
                 });
             }
             // The content box of the children.
@@ -553,6 +559,7 @@ impl<'a> Layout<'a> {
                     angle_k,
                     child_clip,
                     visible,
+                    opacity_k,
                     root,
                 );
             } else {
@@ -565,6 +572,7 @@ impl<'a> Layout<'a> {
                     angle_k,
                     child_clip,
                     visible,
+                    opacity_k,
                     root,
                 );
             }
@@ -582,6 +590,7 @@ impl<'a> Layout<'a> {
             0.0,
             None,
             false,
+            1.0,
             root,
         )
     }

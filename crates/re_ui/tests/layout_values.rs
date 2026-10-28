@@ -806,6 +806,48 @@ fn text_sizes_wraps_truncates_and_runs() {
     );
 }
 
+/// `<font size>` runs: at the text's size, on a node scaled by 2 (the run
+/// scales with it), and in text scaled to fit its box (the run keeps its
+/// ratio to the fitted size).
+#[test]
+fn rich_text_sizes() {
+    let mut t = UiTree::new();
+    let sized = "Small <font size=\"28\">big</font> small";
+    let plain = t.add(Node {
+        size: px(300.0, 40.0),
+        text: Some(TextStyle {
+            rich: true,
+            ..text(sized, 14.0)
+        }),
+        ..node("sized run")
+    });
+    let scaled = t.add(Node {
+        position: px(0.0, 50.0),
+        size: px(300.0, 40.0),
+        scale: Some(2.0),
+        text: Some(TextStyle {
+            rich: true,
+            ..text(sized, 14.0)
+        }),
+        ..node("sized run, scaled node")
+    });
+    let fitted = t.add(Node {
+        position: px(0.0, 140.0),
+        size: px(200.0, 60.0),
+        text: Some(TextStyle {
+            rich: true,
+            scaled: true,
+            ..text("A <font size='28' color='#ff0000'>B</font>", 14.0)
+        }),
+        ..node("sized run, scaled to fit")
+    });
+    let root = t.add(Node {
+        children: vec![plain, scaled, fitted],
+        ..node("screen")
+    });
+    check("rich_text_sizes", 1.0, &t, &[screen(root, VIEW)]);
+}
+
 /// The same text at a pixels per point of 1.5, where egui rounds glyphs to
 /// physical pixels.
 #[test]

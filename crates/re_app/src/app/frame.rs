@@ -14,13 +14,13 @@ use re_types::{PhysicsCmd, ReplayDoc};
 use re_script::ContextKind;
 
 use crate::codes;
-use crate::hud;
 use crate::sync::anim;
 use crate::sync::anim_skin;
 use crate::sync::audio;
 use crate::sync::physics;
 use crate::sync::ragdoll;
 use crate::sync::render::{self, RenderInputs};
+use crate::ui::hud;
 
 use super::{App, RunReport, ScreenshotRequest, script_levels};
 
@@ -380,8 +380,8 @@ impl App {
     }
 
     /// Sync: assets uploaded, and the World propagated and read into the
-    /// render snapshot, the HUD and the audio commands. A network client sends
-    /// its frame here.
+    /// render snapshot, the HUD, the native UI (built and laid out) and the
+    /// audio commands. A network client sends its frame here.
     fn sync_phase(&mut self, f: u64) {
         let t = Instant::now();
         self.world.propagate();
@@ -410,8 +410,20 @@ impl App {
             }
             None => &mut self.world,
         };
+        let origin = inputs.origin;
         self.snapshot = render::build(shown, &inputs);
         self.hud = hud::collect(shown);
+        let view = crate::ui::View {
+            size_px: self.view_size,
+            pixels_per_point: self.view_ppp,
+        };
+        self.ui.sync(
+            shown,
+            &self.snapshot.camera,
+            origin,
+            view,
+            &mut self.diagnostics,
+        );
         // A network client sends its frame once its world is propagated, as
         // the in-process pass reads the client world after the Sync phase:
         // the compat simulation moves welded parts without change detection,

@@ -10,7 +10,7 @@ max_tier = "edit"
 # agent's screenshot outside .real/out/...). `**` matches any number of
 # directories. `.real/` and `.git/` are always refused, and `deny` ignores case.
 [scopes]
-allow = ["scripts/**", "scenes/**", "graphs/**", "anims/**", "prefabs/**", "materials/**", "assets/**"]
+allow = ["scripts/**", "scenes/**", "graphs/**", "anims/**", "prefabs/**", "materials/**", "ui/**", "assets/**"]
 deny = []
 
 [budgets]

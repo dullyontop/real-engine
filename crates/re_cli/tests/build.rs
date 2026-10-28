@@ -258,6 +258,56 @@ fn animation_graphs_are_packed_by_default() {
     assert!(packed.contains(&"anims/hero.animgraph.json"), "{packed:?}");
 }
 
+/// UI themes in `ui/` are packed by default, and a `[ui] theme` outside the
+/// packed folders stops the build, as a file a scene names does (ADR-0058).
+#[test]
+fn ui_themes_are_packed_by_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("island");
+    std::fs::create_dir_all(&project).unwrap();
+    copy_project(&example("island"), &project);
+    for folder in ["ui", "art"] {
+        std::fs::create_dir_all(project.join(folder)).unwrap();
+        std::fs::write(
+            project.join(folder).join("game.theme.json"),
+            r#"{ "format": "real-engine/theme", "version": 1, "styles": {} }"#,
+        )
+        .unwrap();
+    }
+    let toml = project.join("real.toml");
+    let config = std::fs::read_to_string(&toml).unwrap();
+    let with_theme = |path: &str| {
+        std::fs::write(&toml, format!("{config}\n[ui]\ntheme = \"{path}\"\n")).unwrap();
+    };
+    let out = dir.path().join("out");
+    with_theme("art/game.theme.json");
+    let o = real(&[
+        "build",
+        "--project",
+        project.to_str().unwrap(),
+        "--out",
+        out.to_str().unwrap(),
+        "--archive-only",
+    ]);
+    assert!(!o.status.success());
+    let t = text(&o);
+    assert!(
+        t.contains("RE0957") && t.contains("`real.toml` names `art/game.theme.json`"),
+        "{t}"
+    );
+
+    with_theme("ui/game.theme.json");
+    let report = build_archive(&project, &out);
+    let packed: Vec<&str> = report["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["path"].as_str().unwrap())
+        .collect();
+    assert!(packed.contains(&"ui/game.theme.json"), "{packed:?}");
+    assert!(!packed.contains(&"art/game.theme.json"), "{packed:?}");
+}
+
 #[test]
 fn out_must_not_hold_other_files() {
     let dir = tempfile::tempdir().unwrap();

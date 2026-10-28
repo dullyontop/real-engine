@@ -1,0 +1,31 @@
+(root) at (678.60114, 538.53015) size (160.0, 40.0) rotation 0.0
+sign at (678.60114, 538.53015) size (193.00562, 48.251404) rotation 0.0
+sign_text at (678.60114, 538.53015) size (193.00562, 48.251404) rotation 0.0 text (39.0047, 25.698734) fits
+(root) at (0.0, 0.0) size (568.8889, 320.0) rotation 0.0
+sheet at (0.0, 0.0) size (1280.0, 720.0) rotation 0.0
+panel at (27.0, 27.0) size (486.0, 666.0) rotation 0.0 content (192.0, 254.0)
+heading at (54.0, 54.0) size (432.0, 72.0) rotation 0.0 text (175.162, 31.555555) fits
+body at (54.0, 139.5) size (432.0, 58.5) rotation 0.0 text (188.35202, 25.777779) fits
+picture at (54.0, 211.5) size (90.0, 90.0) rotation 0.0
+play at (54.0, 315.0) size (432.0, 58.5) rotation 0.0 text (34.711334, 25.777779) fits
+save at (54.0, 387.0) size (432.0, 58.5) rotation 0.0 text (37.768448, 25.777779) fits
+quit at (54.0, 459.0) size (432.0, 58.5) rotation 0.0 text (34.449554, 25.777779) fits
+health at (54.0, 531.0) size (432.0, 22.5) rotation 0.0
+name at (54.0, 567.0) size (432.0, 58.5) rotation 0.0 text (79.992004, 25.777779) fits
+shelf at (531.0, 18.0) size (531.0, 288.0) rotation 0.0
+list at (540.0, 27.0) size (513.0, 270.0) rotation 0.0 canvas (513.0, 567.0) content (222.0, 252.0)
+row1 at (540.0, -63.0) size (499.5, 63.0) rotation 0.0 text (45.233997, 25.777779) fits
+row2 at (540.0, 9.0) size (499.5, 63.0) rotation 0.0 text (45.233997, 25.777779) fits
+row3 at (540.0, 81.0) size (499.5, 63.0) rotation 0.0 text (45.233997, 25.777779) fits
+row4 at (540.0, 153.0) size (499.5, 63.0) rotation 0.0 text (45.233997, 25.777779) fits
+row5 at (540.0, 225.0) size (499.5, 63.0) rotation 0.0 text (45.233997, 25.777779) fits
+row6 at (540.0, 297.0) size (499.5, 63.0) rotation 0.0 text (45.233997, 25.777779) fits
+row7 at (540.0, 369.0) size (499.5, 63.0) rotation 0.0 text (45.233997, 25.777779) fits
+row8 at (540.0, 441.0) size (499.5, 63.0) rotation 0.0 text (45.233997, 25.777779) fits
+card at (540.0, 319.5) size (513.0, 126.0) rotation 0.0
+card_text at (540.0, 319.5) size (513.0, 126.0) rotation 0.0 text (178.88177, 36.88889) fits
+tag at (837.0, 459.0) size (216.0, 67.5) rotation -6.0
+tag_text at (837.0, 459.0) size (216.0, 67.5) rotation -6.0 text (60.001953, 26.222221) fits
+(root) at (0.0, 0.0) size (1280.0, 720.0) rotation 0.0
+hud at (0.0, 0.0) size (1280.0, 720.0) rotation 0.0
+score at (1128.0, 680.0) size (140.0, 28.0) rotation 0.0 text (107.0, 27.0) fits

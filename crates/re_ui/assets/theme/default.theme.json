@@ -1,0 +1,111 @@
+{
+  "format": "real-engine/theme",
+  "version": 1,
+  "styles": {
+    "bar": {
+      "panel": { "color": [0.004, 0.0052, 0.008, 0.85], "corner": 4 },
+      "bar": { "direction": "Right", "color": [0.0685, 0.7305, 0.2159, 1] }
+    },
+    "body": {
+      "text": {
+        "font": "Sans",
+        "weight": 400,
+        "size": 18,
+        "color": [0.5583, 0.5972, 0.6724, 1],
+        "align_x": "Start",
+        "align_y": "Start",
+        "wrap": true,
+        "line_height": 1.2
+      }
+    },
+    "button": {
+      "panel": { "color": [0.0242, 0.0319, 0.0561, 1], "corner": 8 },
+      "text": {
+        "font": "Sans",
+        "weight": 600,
+        "size": 18,
+        "color": [0.9047, 0.9216, 0.956, 1],
+        "align_x": "Center",
+        "align_y": "Center"
+      },
+      "focused": { "panel": { "outline": 2, "outline_color": [0.1441, 0.3763, 1, 1] } },
+      "hover": { "panel": { "color": [0.0369, 0.0513, 0.1022, 1] } },
+      "pressed": { "panel": { "color": [0.016, 0.0212, 0.0395, 1] } },
+      "disabled": {
+        "panel": { "color": [0.013, 0.0168, 0.0273, 1] },
+        "text": { "color": [0.147, 0.1714, 0.227, 1] }
+      }
+    },
+    "button.primary": {
+      "base": "button",
+      "panel": { "color": [0.0284, 0.159, 0.8308, 1] },
+      "focused": { "panel": { "outline_color": [0.9047, 0.9216, 0.956, 1] } },
+      "hover": { "panel": { "color": [0.0561, 0.2195, 0.9131, 1] } },
+      "pressed": { "panel": { "color": [0.0176, 0.107, 0.5841, 1] } }
+    },
+    "heading": {
+      "text": {
+        "font": "Display",
+        "weight": 600,
+        "size": 26,
+        "color": [0.807, 0.8308, 0.8796, 1],
+        "align_x": "Start",
+        "align_y": "Center"
+      }
+    },
+    "input": {
+      "panel": {
+        "color": [0.004, 0.0052, 0.008, 1],
+        "corner": 6,
+        "outline": 1,
+        "outline_color": [0.0423, 0.0545, 0.0887, 1]
+      },
+      "text": {
+        "font": "Sans",
+        "weight": 400,
+        "size": 18,
+        "color": [0.9047, 0.9216, 0.956, 1],
+        "align_x": "Start",
+        "align_y": "Center"
+      },
+      "focused": { "panel": { "outline": 2, "outline_color": [0.1441, 0.3763, 1, 1] } },
+      "disabled": { "text": { "color": [0.147, 0.1714, 0.227, 1] } }
+    },
+    "list": {
+      "panel": { "color": [0, 0, 0, 0] },
+      "scroll": { "bar": 6, "bar_color": [1, 1, 1, 0.28] }
+    },
+    "panel": {
+      "panel": {
+        "color": [0.0075, 0.0103, 0.0176, 0.94],
+        "corner": 12,
+        "outline": 1,
+        "outline_color": [1, 1, 1, 0.08]
+      }
+    },
+    "row": {
+      "panel": { "color": [1, 1, 1, 0.035], "corner": 6 },
+      "text": {
+        "font": "Sans",
+        "weight": 400,
+        "size": 18,
+        "color": [0.807, 0.8308, 0.8796, 1],
+        "align_x": "Start",
+        "align_y": "Center"
+      },
+      "focused": { "panel": { "outline": 2, "outline_color": [0.1441, 0.3763, 1, 1] } },
+      "hover": { "panel": { "color": [1, 1, 1, 0.08] } },
+      "pressed": { "panel": { "color": [1, 1, 1, 0.12] } }
+    },
+    "title": {
+      "text": {
+        "font": "Display",
+        "weight": 700,
+        "size": 40,
+        "color": [0.9047, 0.9216, 0.956, 1],
+        "align_x": "Center",
+        "align_y": "Center"
+      }
+    }
+  }
+}

@@ -2,59 +2,15 @@
 //! looking at its adornee. The UI core lays out what is under it
 //! ([`re_ui::Layout`]).
 
-use glam::{Quat, Vec2, Vec3};
+use glam::{Vec2, Vec3};
 use re_scene::{Entity, GlobalTransform};
 
 use super::props::Scope;
 use crate::instance::tree;
 
-/// The camera billboards are placed by.
-#[derive(Clone, Copy, Debug)]
-pub struct GuiCamera {
-    /// Where the camera is, in studs.
-    pub position: Vec3,
-    /// Its orientation; it looks along its -Z axis.
-    pub rotation: Quat,
-    /// The vertical field of view in radians.
-    pub fov_y: f32,
-}
-
-impl GuiCamera {
-    /// The screen point of `p` in a `viewport`-pixel view and its distance in
-    /// front of the camera, `None` behind it.
-    pub fn project(&self, p: Vec3, viewport: Vec2) -> Option<(Vec2, f32)> {
-        let v = self.rotation.inverse() * (p - self.position);
-        let depth = -v.z;
-        if depth <= 0.05 {
-            return None;
-        }
-        let f = self.focal(viewport);
-        Some((
-            Vec2::new(
-                viewport.x * 0.5 + f * v.x / depth,
-                viewport.y * 0.5 - f * v.y / depth,
-            ),
-            depth,
-        ))
-    }
-
-    /// Pixels per stud at one stud in front of the camera.
-    pub fn focal(&self, viewport: Vec2) -> f32 {
-        viewport.y * 0.5 / libm::tanf(self.fov_y.clamp(0.01, 3.1) * 0.5)
-    }
-
-    /// The unit direction through screen point `q` of a `viewport`-pixel
-    /// view.
-    pub fn ray(&self, q: Vec2, viewport: Vec2) -> Vec3 {
-        let f = self.focal(viewport);
-        let local = Vec3::new(
-            (q.x - viewport.x * 0.5) / f,
-            -(q.y - viewport.y * 0.5) / f,
-            -1.0,
-        );
-        (self.rotation * local).normalize()
-    }
-}
+/// The camera billboards are placed by: the UI core's, which places native
+/// world roots too (ADR-0058).
+pub use re_ui::project::Camera as GuiCamera;
 
 /// The world position a billboard is drawn at, before its offsets.
 pub(crate) fn adornee_position(s: &Scope, bb: Entity) -> Option<Vec3> {

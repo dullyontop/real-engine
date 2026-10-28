@@ -21,6 +21,7 @@ re_audio.workspace = true
 re_anim.workspace = true
 re_script.workspace = true
 re_compat.workspace = true
+re_ui = { workspace = true, features = ["schemars"] }
 re_net.workspace = true
 re_proc.workspace = true
 re_geom.workspace = true

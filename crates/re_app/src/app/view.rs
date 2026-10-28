@@ -10,8 +10,9 @@ use re_script::ContextKind;
 
 use crate::codes;
 use crate::gfx::{self, Graphics};
-use crate::hud::{self, HudLine};
 use crate::sync::render::{self, RenderAssets, RenderInputs};
+use crate::ui::View;
+use crate::ui::hud::{self, HudLine};
 
 use super::{App, ScreenshotRequest};
 
@@ -30,6 +31,9 @@ impl App {
     /// its renderer the shader files of the project ([`crate::shaders`]).
     pub fn set_graphics(&mut self, graphics: Graphics) {
         self.render_assets = RenderAssets::default();
+        // The UI host's context lays out and paints every UI the game draws:
+        // a new one for the new renderer, which then gets every texture whole.
+        self.ui.attach();
         self.graphics = Some(graphics);
         self.install_shaders();
     }
@@ -49,6 +53,7 @@ impl App {
     /// Takes the GPU side away (meshes are uploaded again by the next owner).
     pub fn take_graphics(&mut self) -> Option<Graphics> {
         self.render_assets = RenderAssets::default();
+        self.ui.detach();
         self.graphics.take()
     }
 
@@ -102,13 +107,25 @@ impl App {
             shadows: self.config.render.shadows,
             origin: self.physics.origin(),
         };
+        let origin = inputs.origin;
         self.snapshot = render::build(&mut self.world, &inputs);
         self.hud = hud::collect(&mut self.world);
         let size = [self.config.render.width, self.config.render.height];
         let image = if self.compat.is_some() {
             self.capture_compat(size)?
         } else {
-            gfx.capture(size, &self.snapshot, &self.hud)?
+            let view = View {
+                size_px: size,
+                pixels_per_point: 1.0,
+            };
+            self.ui.sync(
+                &mut self.world,
+                &self.snapshot.camera,
+                origin,
+                view,
+                &mut self.diagnostics,
+            );
+            gfx.capture(size, &self.snapshot, &mut self.ui, &self.hud)?
         };
         let gfx = self.graphics.as_mut().expect("ensured");
         self.perf.draw(gfx.take_draw_time());
@@ -137,18 +154,26 @@ impl App {
                 "the app has no GPU side to draw with",
             )
         })?;
+        self.view_size = size_px;
+        self.view_ppp = pixels_per_point;
         let drawn = if self.compat.is_some() {
-            self.view_size = size_px;
-            self.view_ppp = pixels_per_point;
             gfx.draw_compat(
                 target,
                 size_px,
                 pixels_per_point,
                 &mut self.compat_view,
+                &mut self.ui,
                 &self.hud,
             )
         } else {
-            gfx.draw(target, size_px, pixels_per_point, &self.snapshot, &self.hud)
+            gfx.draw(
+                target,
+                size_px,
+                pixels_per_point,
+                &self.snapshot,
+                &mut self.ui,
+                &self.hud,
+            )
         };
         self.perf.draw(gfx.take_draw_time());
         drawn
@@ -174,10 +199,10 @@ impl App {
         passes: u32,
         build: bool,
     ) {
-        let Some(gfx) = &self.graphics else {
+        if self.graphics.is_none() {
             return;
-        };
-        let ctx = gfx.egui().clone();
+        }
+        let ctx = self.ui.ctx().clone();
         if !self.compat_view.fonts {
             re_compat::gui::install_fonts(&ctx);
             self.compat_view.fonts = true;
@@ -232,6 +257,12 @@ impl App {
         };
         let mut ui = Vec::new();
         let mut textured = None;
+        // Native roots draw around the compat GUI, in the same pass.
+        let mut native = self.ui.take_frame();
+        let view = View {
+            size_px,
+            pixels_per_point,
+        };
         self.compat_call(ContextKind::Client, |vm, h| {
             vm.run(h, |lua| {
                 for _ in 0..passes {
@@ -239,7 +270,9 @@ impl App {
                     let out = ctx.run_ui(raw.clone(), |ui| {
                         match re_compat::gui::step(lua, ui.ctx(), &gui) {
                             Ok(o) => {
-                                re_compat::gui::paint(ui.ctx(), o.shapes);
+                                let (world, screen) = native.shapes(ui.ctx(), view);
+                                let shapes = world.into_iter().chain(o.shapes).chain(screen);
+                                re_compat::gui::paint(ui.ctx(), shapes.collect());
                                 hud::draw(ui.ctx(), &hud_lines);
                                 textured = Some((o.surfaces, o.viewports, o.diagnostics));
                             }
@@ -254,9 +287,16 @@ impl App {
                 Ok(())
             })
         });
+        self.ui.put_frame(native);
         if let Some((surfaces, viewports, mut diagnostics)) = textured {
             self.diagnostics.append(&mut diagnostics);
             self.compat_view.set_textured(surfaces, viewports);
+        }
+        // The UI host's own passes' texture updates go first.
+        if let Some(first) = ui.first_mut() {
+            let mut delta = self.ui.take_pending();
+            delta.append(std::mem::take(&mut first.textures_delta));
+            first.textures_delta = delta;
         }
         for out in ui {
             self.compat_view.set_ui(out);
@@ -283,7 +323,7 @@ impl App {
             self.compat_render(size, 1.0, 2, !same);
         }
         let gfx = self.graphics.as_mut().expect("checked by the callers");
-        let image = gfx.capture_compat(size, &mut self.compat_view, &self.hud);
+        let image = gfx.capture_compat(size, &mut self.compat_view, &mut self.ui, &self.hud);
         if let Some(ui) = again {
             self.compat_view.set_ui(ui);
         } else if self.compat_view.has_frame() && (window.is_some() || same) {
@@ -313,7 +353,7 @@ impl App {
             self.capture_compat(size)
         } else {
             let gfx = self.graphics.as_mut().expect("checked");
-            gfx.capture(size, &self.snapshot, &self.hud)
+            gfx.capture(size, &self.snapshot, &mut self.ui, &self.hud)
         };
         if let Some(gfx) = self.graphics.as_mut() {
             self.perf.draw(gfx.take_draw_time());

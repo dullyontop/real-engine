@@ -135,6 +135,9 @@ pub fn dump(tree: &UiTree, roots: &[Vec<Item>], visits: &[Visit]) -> String {
             if let Some(c) = it.canvas {
                 let _ = write!(line, " canvas {}", v(c));
             }
+            if it.opacity != 1.0 {
+                let _ = write!(line, " opacity {}", f(it.opacity));
+            }
             s += &line;
             s.push('\n');
             if let Some(t) = &it.text {

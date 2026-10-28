@@ -41,6 +41,11 @@ pub fn all() -> Vec<(&'static str, Json)> {
             to_json(schemars::schema_for!(re_types::ReplayDoc)),
         ),
         ("scene.schema.json", scene),
+        // The UI's theme files (ADR-0058).
+        (
+            "theme.schema.json",
+            to_json(schemars::schema_for!(re_app::ui::theme::ThemeFile)),
+        ),
         (
             "verify-report.schema.json",
             to_json(schemars::schema_for!(re_app::VerifyReport)),

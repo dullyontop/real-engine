@@ -53,7 +53,6 @@ use crate::codes;
 use crate::config::AppConfig;
 use crate::gfx::Graphics;
 use crate::host::{Host, Pending};
-use crate::hud::HudLine;
 use crate::media::Media;
 use crate::perf::{PerfCounts, PerfRecorder, PerfReport};
 use crate::procedural;
@@ -63,6 +62,7 @@ use crate::sync::audio::AudioSync;
 use crate::sync::physics::{PhysicsSync, ShapeLibrary};
 use crate::sync::ragdoll::RagdollSync;
 use crate::sync::render::RenderAssets;
+use crate::ui::hud::HudLine;
 use crate::verify::VerifyStage;
 
 use self::frame::HalfFrame;
@@ -168,6 +168,9 @@ pub struct App {
     render_assets: RenderAssets,
     snapshot: RenderSnapshot,
     hud: Vec<HudLine>,
+    /// The native UI (ADR-0058): built and laid out at Sync, painted with
+    /// the HUD.
+    ui: crate::ui::UiHost,
     watcher: Option<AssetWatcher>,
     /// The project's and the engine directory's shader files (ADR-0038).
     shaders: crate::shaders::ShaderFiles,
@@ -407,6 +410,19 @@ impl App {
     /// the [`render_origin`](Self::render_origin).
     pub fn snapshot(&self) -> &RenderSnapshot {
         &self.snapshot
+    }
+
+    /// The native UI (ADR-0058): the tree and layout values of the last
+    /// Sync.
+    pub fn ui(&self) -> &crate::ui::UiHost {
+        &self.ui
+    }
+
+    /// The native UI, to put a node in a state ([`UiHost::set_state`]).
+    ///
+    /// [`UiHost::set_state`]: crate::ui::UiHost::set_state
+    pub fn ui_mut(&mut self) -> &mut crate::ui::UiHost {
+        &mut self.ui
     }
 
     /// The audio commands of the last frame.
