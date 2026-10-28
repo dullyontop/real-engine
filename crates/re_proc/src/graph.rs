@@ -63,8 +63,9 @@ pub struct InputEdge {
 /// A validated graph: every node kind exists, parameters match their
 /// schemas, edges connect existing ports of matching types, required inputs
 /// are connected and there is no cycle. Graph params are bound: each node
-/// param bound to one holds its value (ADR-0061 §2).
-#[derive(Clone, Debug, PartialEq)]
+/// param bound to one holds its value (ADR-0061 §2). The default is an
+/// empty graph, for building one field by field in tests.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ProcGraph {
     /// The graph's name.
     pub id: GraphId,
