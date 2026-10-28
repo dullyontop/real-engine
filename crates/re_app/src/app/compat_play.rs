@@ -112,6 +112,7 @@ impl App {
                 skins: &mut self.skin_sync,
                 time_scale: &mut self.time_scale,
             },
+            game: None,
         };
         let diags = f(vm, &mut host);
         let diags = c.keep(kind, diags);

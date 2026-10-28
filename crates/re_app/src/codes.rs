@@ -113,6 +113,23 @@ pub const OPEN_DOC_CHANGED_ON_DISK: Code = Code::new("RE0528");
 /// (ADR-0040).
 pub const RAGDOLL_UNAVAILABLE: Code = Code::new("RE0529");
 
+/// A scene load failed: the file cannot be read or parsed, or the scene does
+/// not load beside what stays (ADR-0059 §4). Nothing changed.
+pub const SCENE_LOAD_FAILED: Code = Code::new("RE0570");
+
+/// The scene changes of a run differ from the ones its replay lists
+/// (ADR-0059 §6).
+pub const SCENE_CHANGES_DIFFER: Code = Code::new("RE0571");
+
+/// `[scenes]` in `real.toml` is wrong: a bad name, a path that is not a
+/// scene file, two names for one path, or an entry scene name that clashes
+/// (ADR-0059 §1).
+pub const SCENES_INVALID: Code = Code::new("RE0572");
+
+/// A kept entity stood in for the entity of a scene that has its id (a
+/// note; ADR-0059 §4).
+pub const KEPT_STANDS_IN: Code = Code::new("RE0578");
+
 /// A game archive (`game.rpak`) cannot be read: not an archive, truncated, or
 /// its index is damaged (ADR-0037).
 pub const PACKAGE_UNREADABLE: Code = Code::new("RE0600");

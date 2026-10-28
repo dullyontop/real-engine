@@ -227,9 +227,10 @@ Sync           propagate GlobalTransform; interpolate between steps;
                sync::render::build → RenderSnapshot; sync::audio → Vec<AudioCmd>
 Render         Renderer::render(device, queue, view, &snapshot); egui overlay through paint_ui;
                Audio::apply(&audio_cmds)
-EndFrame       apply scripts' host requests (HUD text, mouse behaviour, regeneration, screenshots,
-               restart); regenerate changed sources and release the derived assets they dropped;
-               PerfReport sample
+EndFrame       apply scripts' host requests (HUD text, mouse behaviour, regeneration, screenshots);
+               regenerate changed sources and release the derived assets they dropped; then a
+               restart, or the scene switches, loads and unloads that are ready (ADR-0059), and
+               the script threads waiting on them woken for the next frame; PerfReport sample
 ```
 
 The phase order matches the order Roblox-style scripts expect: render-step work happens before simulation, "stepped" before physics, and "heartbeat" after physics (ADR-0009). This makes the M2 mapping direct.
@@ -684,7 +685,7 @@ Inside `re_app`'s range, `RE0600`–`RE0619` are package reading (ADR-0037) and 
 my-game/
   real.toml                  project config (TOML)
   .luaurc                    require aliases, shared by the runtime and the type checker
-  scenes/main.scene.json     entities, components, overrides of generated entities
+  scenes/*.scene.json        entities, components, overrides of generated entities: the entry scene and the scenes `[scenes]` names
   prefabs/*.prefab.json      reusable entity trees
   materials/*.material.json  PBR-lite parameters + texture asset refs
   graphs/*.graph.json        ProcGraph IR
@@ -713,6 +714,9 @@ my-game/
 [project]
 name = "island"
 entry_scene = "scenes/main.scene.json"
+
+[scenes]                      # the scenes scripts load by name (M4, ADR-0059); the entry scene is listed too,
+harbour = "scenes/harbour.scene.json"   # under its file stem (here `main`) unless a name here has its path
 
 [sim]
 fixed_hz = 60
@@ -917,6 +921,12 @@ Rules (verified by the core spike's round-trip tests, ADR-0016):
 ```
 
 The `seed` is the run's seed: native scripts' `math.random` starts from it (it takes the place of `[scripts] seed`), as compat scripts' `Random` and `math.random` start from `[compat] seed`.
+
+A replay may also list the scene changes the run must make (`scenes`, M4, ADR-0059 §6), in order: each entry has the `frame` whose end applied it and one of `switch`, `load`, `unload` and `restart`, naming the scene. The run checks each change as it applies it and never drives one; another scene, another frame, an unlisted change or a listed change that never happens is `RE0571`. A replay without the list checks nothing. `real run --json` reports the changes a run made in the same form:
+
+```json
+"scenes": [ { "frame": 240, "switch": "town" }, { "frame": 300, "load": "hud" } ]
+```
 
 A replay may also carry `raw` rows (`RawReplayInput`) for layers that read keys rather than actions. Each row has one change: a `key`, `mouse_button` or `pad_button` with `down`, or a `mouse_move`, `mouse_position` or `wheel`. Buttons use the `real.toml` names without the device prefix, and `raw` is left out when empty, so action-only replays are unchanged:
 

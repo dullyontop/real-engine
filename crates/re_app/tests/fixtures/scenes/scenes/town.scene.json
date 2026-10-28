@@ -1,0 +1,33 @@
+{
+  "format": "real-engine/scene",
+  "version": 1,
+  "entities": [
+    { "id": "camera", "name": "Camera", "components": {
+        "Camera": { "active": true },
+        "Transform": { "translation": [0.0, 12.0, 20.0], "rotation": [-0.3420, 0.0, 0.0, 0.9397] } } },
+    { "id": "ground", "name": "Ground", "components": {
+        "Collider": { "shape": "Box", "half_extents": [30.0, 0.5, 30.0] },
+        "MeshRef": { "asset": "builtin:cube" },
+        "Transform": { "translation": [0.0, -0.5, 0.0], "scale": [60.0, 1.0, 60.0] } } },
+    { "id": "player", "name": "Town player", "components": {
+        "CharacterController": { "height": 1.8, "radius": 0.4 },
+        "MeshRef": { "asset": "builtin:capsule" },
+        "ScriptRef": { "path": "scripts/player.luau" },
+        "Transform": { "translation": [5.0, 1.0, 5.0] } } },
+    { "id": "crates", "name": "Crates", "components": {
+        "Transform": { "translation": [3.0, 0.0, -4.0] } } },
+    { "id": "crate_a", "name": "Crate A", "parent": "crates", "components": {
+        "Collider": { "shape": "Box", "half_extents": [0.5, 0.5, 0.5] },
+        "MeshRef": { "asset": "builtin:cube" },
+        "RigidBody": { "kind": "Dynamic", "mass": 1.0 },
+        "Transform": { "translation": [0.0, 3.0, 0.0] } } },
+    { "id": "crate_b", "name": "Crate B", "parent": "crates", "components": {
+        "Collider": { "shape": "Box", "half_extents": [0.5, 0.5, 0.5] },
+        "MeshRef": { "asset": "builtin:cube" },
+        "RigidBody": { "kind": "Dynamic", "mass": 1.0 },
+        "Transform": { "translation": [0.3, 5.0, 0.2] } } },
+    { "id": "sun", "name": "Sun", "components": {
+        "Light": { "kind": "Directional", "intensity": 1.3 },
+        "Transform": { "rotation": [-0.4, 0.2, 0.1, 0.9] } } }
+  ]
+}
