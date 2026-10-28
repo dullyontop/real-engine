@@ -47,7 +47,6 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_BUILD_JOBS: 2
 
 jobs:
   build-package-windows:
@@ -64,9 +63,7 @@ jobs:
       - name: Install the pinned toolchain
         shell: bash
         run: bash tools/ci/rust-toolchain.sh
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: ./.github/actions/cargo-cache
       - run: cargo build --locked --release -p re_cli
       - name: real build the island, the plaza and the valley
         shell: bash
@@ -120,9 +117,7 @@ jobs:
       - name: Install the pinned toolchain
         shell: bash
         run: bash tools/ci/rust-toolchain.sh
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: ./.github/actions/cargo-cache
       - run: cargo build --locked --release -p re_cli
       - name: real build the island, the plaza and the valley
         run: |
@@ -165,9 +160,7 @@ jobs:
       - name: Install the pinned toolchain
         shell: bash
         run: bash tools/ci/rust-toolchain.sh
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: ./.github/actions/cargo-cache
       - name: Install luau-lsp 1.70.1
         shell: bash
         run: |
@@ -209,7 +202,7 @@ jobs:
             # (vulkan and gl blessed on Linux, dx12 on Windows, metal on macOS).
             jq -e '.ok == true' "$report" > /dev/null || status=1
             if [ "$project" = plaza ]; then
-              # As in verify-plaza: at least two replays played by a server and a
+              # As in ci.yml's verify: at least two replays played by a server and a
               # client over loopback, each ending where the in-process run did
               # (ADR-0050 §7; M3_PLAN, definition of done item 7).
               jq -r '.stages[] | select(.name == "net") | .data.runs[]? | "networked \(.replay) over \(.transport): \(.frames) frames, same=\(.same)"' "$report"
@@ -238,9 +231,7 @@ jobs:
       - name: Install the pinned toolchain
         shell: bash
         run: bash tools/ci/rust-toolchain.sh
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: ./.github/actions/cargo-cache
       - name: Install luau-lsp 1.70.1
         run: |
           curl -fsSL -o "$RUNNER_TEMP/luau-lsp.zip" https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-macos.zip
@@ -279,7 +270,7 @@ jobs:
             # (vulkan and gl blessed on Linux, dx12 on Windows, metal on macOS).
             jq -e '.ok == true' "$report" > /dev/null || status=1
             if [ "$project" = plaza ]; then
-              # As in verify-plaza: at least two replays played by a server and a
+              # As in ci.yml's verify: at least two replays played by a server and a
               # client over loopback, each ending where the in-process run did
               # (ADR-0050 §7; M3_PLAN, definition of done item 7).
               jq -r '.stages[] | select(.name == "net") | .data.runs[]? | "networked \(.replay) over \(.transport): \(.frames) frames, same=\(.same)"' "$report"
@@ -318,9 +309,7 @@ jobs:
         shell: bash
         run: bash tools/ci/rust-toolchain.sh
       - if: runner.os != 'Linux'
-        uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+        uses: ./.github/actions/cargo-cache
       - name: State hashes of every replay
         shell: bash
         run: |

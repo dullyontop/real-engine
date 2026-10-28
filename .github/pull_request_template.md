@@ -22,8 +22,7 @@ WP<!-- number from the milestone plan -->, PR "<!-- name from the plan, if it ha
 
 ## Acceptance output
 
-<!-- Paste the output of the WP's acceptance commands, run in the reference container
-     with `export CARGO_BUILD_JOBS=2`. -->
+<!-- Paste the output of the WP's acceptance commands, run in the reference container. -->
 
 ```text
 

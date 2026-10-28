@@ -1,7 +1,7 @@
 # Valley
 
 The M3 example (`docs/M3_PLAN.md`, WP28): a procedural valley to walk and
-drive through. CI checks it with `verify-valley`, and packs it and plays its
+drive through. CI checks it in the `verify` job, and packs it and plays its
 replays from the package (`build-package`). The Platforms workflow, which CI
 runs too while the repository is public, does the same on Windows and macOS
 (`build-package-windows` and `build-package-macos`) and compares its

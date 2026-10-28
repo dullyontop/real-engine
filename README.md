@@ -75,10 +75,9 @@ All crate versions are pinned exactly and checked against crates.io. See [DEPEND
 
 ## Building the workspace
 
-You need Rust 1.99.1, which `rust-toolchain.toml` pins and rustup installs on first use (the MSRV is 1.95). The pin moves by PR after each stable Rust release: the PR sets `channel` to the new release and fixes whatever the new compiler and clippy ask for. Its run starts every check, and main's push after it saves new cargo caches, so between bumps no cache key changes with Rust (ADR-0023's amendment for WP31 PR "toolchain").
+You need Rust 1.99.1, which `rust-toolchain.toml` pins and rustup installs on first use (the MSRV is 1.95). The pin moves by PR after each stable Rust release: the PR sets `channel` to the new release and fixes whatever the new compiler and clippy ask for. Its run starts every check, and main's push after it saves new cargo caches, so between bumps no cache key changes with Rust (ADR-0023's amendment for WP31 PR "toolchain"). On a machine with less than 8 GB of memory, `export CARGO_BUILD_JOBS=2` first, so that linking the test binaries does not run out of memory.
 
 ```sh
-export CARGO_BUILD_JOBS=2
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --locked --exclude re_render --exclude re_app --exclude re_cli --exclude re_editor --exclude re_web
@@ -89,7 +88,7 @@ cargo deny check         # needs cargo-deny 0.20.2: cargo install cargo-deny --v
                          # (or, on Linux x86_64, its release build: eval "$(tools/ci/cargo-deny.sh)")
 ```
 
-CI (`.github/workflows/ci.yml`) runs these checks, `real verify` on the island, the plaza and the valley (with assertions on the JSON) and windowed smoke runs under Xvfb, plus a build with Rust 1.95.0, the browser build and the packaged Linux games. While the repository is public, it also runs `.github/workflows/platforms.yml`: the whole suite on Windows and macOS, their packaged games and the cross-platform `state_hash` check. Those 17 checks are the merge rule (ADR-0023 and its amendment for the public repository). A `changes` job runs only the checks a change needs: a draft PR runs nothing, a change to documentation alone runs `fmt`, and a push to main runs the release and platform checks only when it changes a build input (ADR-0023's amendment of 2026-10-28). A private repository's CI minutes are billed, so there CI skips `platforms.yml`, which is then started by hand before a release and for changes that touch one platform (ADR-0023's amendment of 2026-10-27). The type-check tests need luau-lsp 1.70.1 on `PATH` ([DEPENDENCIES.md](docs/DEPENDENCIES.md), "External tools").
+CI (`.github/workflows/ci.yml`) runs these checks, `real verify` on the island, the plaza, the valley and the town (with assertions on the JSON) and windowed smoke runs under Xvfb, all in one job that builds release `real` once, plus a build with Rust 1.95.0, the browser build and the packaged Linux games. While the repository is public, it also runs `.github/workflows/platforms.yml`: the whole suite on Windows and macOS, their packaged games and the cross-platform `state_hash` check. Those 14 checks are the merge rule (ADR-0023 and its amendments for the public repository and for WP31 PR "one build"). A `changes` job runs only the checks a change needs: a draft PR runs nothing, a change to documentation alone runs `fmt`, and a push to main runs the release and platform checks only when it changes a build input (ADR-0023's amendment of 2026-10-28). A private repository's CI minutes are billed, so there CI skips `platforms.yml`, which is then started by hand before a release and for changes that touch one platform (ADR-0023's amendment of 2026-10-27). The type-check tests need luau-lsp 1.70.1 on `PATH` ([DEPENDENCIES.md](docs/DEPENDENCIES.md), "External tools").
 
 ## Running the renderer tests
 
@@ -105,8 +104,6 @@ sudo apt-get install -y build-essential pkg-config libvulkan-dev mesa-vulkan-dri
 `mesa-vulkan-drivers` provides lavapipe, a software Vulkan driver. The EGL and Mesa GL packages are for the GL backend (llvmpipe). This is the renderer's subset; the full engine list is in [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md#system-packages).
 
 ```sh
-export CARGO_BUILD_JOBS=2
-
 # Headless tests on Vulkan (lavapipe), then on GL (llvmpipe)
 cargo test --locked -p re_render -- --test-threads=1
 RE_BACKENDS=gl cargo test --locked -p re_render -- --test-threads=1

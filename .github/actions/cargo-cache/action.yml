@@ -1,0 +1,28 @@
+name: Cargo cache
+description: >
+  Swatinem/rust-cache for every job that builds Rust, on any runner. It is
+  restored on every run and saved only on main (ADR-0023's amendment of
+  2026-10-28), so PR runs never fill the repository's 10 GB of caches, and its
+  key names the root Cargo.toml's build profiles (tools/ci/cargo-key.sh), which
+  rust-cache does not hash, so a profile change starts new caches (ADR-0023's
+  amendment for WP31 PR "one build").
+inputs:
+  shared-key:
+    description: >
+      A name for the job's cargo cache, which jobs that build exactly the same
+      thing can share. Empty, the job has its own cache.
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: The key of the build profiles
+      id: key
+      shell: bash
+      run: echo "prefix=$(bash tools/ci/cargo-key.sh)" >> "$GITHUB_OUTPUT"
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: ${{ steps.key.outputs.prefix }}
+        shared-key: ${{ inputs.shared-key }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}

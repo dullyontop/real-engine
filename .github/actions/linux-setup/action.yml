@@ -2,14 +2,15 @@ name: Linux setup
 description: >
   System packages from docs/DEPENDENCIES.md ("System packages"), the Rust
   toolchain rust-toolchain.toml pins, with rustfmt and clippy, and the cargo
-  cache. The packages apt downloads and the cargo cache are restored on every
-  run and saved only on main (ADR-0023's amendment of 2026-10-28), so PR runs
-  never fill the repository's 10 GB of caches.
+  cache (.github/actions/cargo-cache). The packages apt downloads and the cargo
+  cache are restored on every run and saved only on main (ADR-0023's amendment
+  of 2026-10-28), so PR runs never fill the repository's 10 GB of caches.
 inputs:
   cargo-cache:
     description: >
-      A cargo cache key shared by the jobs that build exactly the same thing
-      (the release `real` on ubuntu-latest). Empty, the job has its own cache.
+      A name for the job's cargo cache, which jobs that build exactly the same
+      thing can share (`release`: release `real` on ubuntu-latest, in
+      `verify`). Empty, the job has its own cache.
     required: false
     default: ""
   free-disk:
@@ -86,10 +87,9 @@ runs:
       # be part of the cargo cache's key.
       run: bash tools/ci/rust-toolchain.sh
     - name: Cache cargo
-      uses: Swatinem/rust-cache@v2
+      uses: ./.github/actions/cargo-cache
       with:
         shared-key: ${{ inputs.cargo-cache }}
-        save-if: ${{ github.ref == 'refs/heads/main' }}
     - name: Wait for the disk space
       if: inputs.free-disk == 'true'
       shell: bash
