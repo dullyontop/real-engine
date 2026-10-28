@@ -585,13 +585,17 @@ impl HostServices for Host<'_> {
     }
 }
 
-/// The [`ScriptHost`](re_script::ScriptHost) of a running game: the World and
-/// the [`Host`] services. Scripts get no command registry while the game runs.
+/// The [`ScriptHost`](re_script::ScriptHost) of a running game: the World, the
+/// [`Host`] services and the game's scenes. Scripts get no command registry
+/// while the game runs.
 pub struct PlayHost<'a> {
     /// The world scripts read and write.
     pub world: &'a mut re_scene::World,
     /// The services.
     pub services: Host<'a>,
+    /// The game's scenes, for the `scene` library (ADR-0059); `None` for a
+    /// compat game's contexts, which keep their own model.
+    pub game: Option<&'a mut crate::scenes::Scenes>,
 }
 
 impl re_script::ScriptHost for PlayHost<'_> {
@@ -607,6 +611,11 @@ impl re_script::ScriptHost for PlayHost<'_> {
             .ecs
             .contains_resource::<re_proc::stream::Streamer>()
             .then_some(&WorldStream as &'static dyn re_script::StreamAccess)
+    }
+    fn game(&mut self) -> Option<&mut dyn re_script::GameAccess> {
+        self.game
+            .as_deref_mut()
+            .map(|g| g as &mut dyn re_script::GameAccess)
     }
 }
 

@@ -128,12 +128,7 @@ pub(crate) fn client_frame(lua: &Lua, link: &NetLink) -> Result<()> {
     let mut visible: Vec<(f64, Entity)> = Vec::new();
     if let (Some(ch), true) = (character, enabled) {
         let all = with_world(lua, |w| {
-            w.ecs
-                .query::<(Entity, &crate::class::ClassMarker)>()
-                .iter(&w.ecs)
-                .filter(|(_, m)| m.class == "ProximityPrompt")
-                .map(|(e, _)| e)
-                .collect::<Vec<_>>()
+            c.instances_exactly(w, "ProximityPrompt")
                 .into_iter()
                 .filter(|e| {
                     tree::alive(w, *e) && boolean(c.get_property(w, *e, "Enabled").ok(), true)

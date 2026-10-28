@@ -189,6 +189,7 @@ impl App {
                 time_scale: &mut self.time_scale,
                 drawn: &self.drawn,
             },
+            game: Some(&mut self.scenes),
         };
         let out = f(scripts, &mut host);
         self.collect_script_output();

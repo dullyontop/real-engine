@@ -113,6 +113,7 @@ impl App {
                 time_scale: &mut self.time_scale,
                 drawn: &self.drawn,
             },
+            game: None,
         };
         let diags = f(vm, &mut host);
         let diags = c.keep(kind, diags);

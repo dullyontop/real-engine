@@ -15,8 +15,8 @@
 //! * [`definitions`]: `engine.d.luau`, generated from the API registrations;
 //!   [`write_definitions`] puts it at `.real/types/engine.d.luau` in a project.
 //!
-//! Diagnostic codes: `RE3000`–`RE3079` and the compatibility block `RE9xxx`
-//! (ARCHITECTURE §7); see [`codes`].
+//! Diagnostic codes: `RE3000`–`RE3079`, `RE3100`–`RE3999` and the compatibility
+//! block `RE9xxx` (ARCHITECTURE §7); see [`codes`].
 
 #![warn(missing_docs)]
 
@@ -48,6 +48,8 @@ pub mod sched {
     };
 }
 
+pub use api::game::{GameAccess, SceneLoadState, SceneRefusal, SceneRequestKind};
+pub use api::scene::wake_scene_loads;
 pub use api::{DEFINITIONS_PATH, definitions, write_definitions};
 pub use budget::untimed;
 pub use compile::{
@@ -163,6 +165,16 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE3071.md"),
     },
     DiagInfo {
+        code: codes::SCENE_UNKNOWN,
+        title: "Unknown scene",
+        page: include_str!("../explain/RE3100.md"),
+    },
+    DiagInfo {
+        code: codes::SCENE_REFUSED,
+        title: "Scene request refused",
+        page: include_str!("../explain/RE3101.md"),
+    },
+    DiagInfo {
         code: codes::UNSUPPORTED_MEMBER,
         title: "Unsupported API member",
         page: include_str!("../explain/RE9001.md"),
@@ -173,13 +185,18 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
 mod catalog {
     #[test]
     fn diagnostics_catalog_is_valid() {
-        // re_script owns two blocks; check each against its own range. Of the
-        // compatibility block it keeps RE9001 only (docs/M2_PLAN.md).
+        // re_script owns three blocks; check each against its own range:
+        // RE3000-RE3079, RE3100-RE3999 (re_script_check has RE3080-RE3099;
+        // M4 shares the block out by work package, docs/M4_PLAN.md) and, of
+        // the compatibility block, RE9001 only (docs/M2_PLAN.md).
         let (script, compat): (Vec<_>, Vec<_>) = super::DIAGNOSTICS
             .iter()
             .copied()
             .partition(|d| d.code.number() < 9000);
-        let mut problems = re_core::validate_catalog(&script, 3000..=3079);
+        let (low, high): (Vec<_>, Vec<_>) =
+            script.into_iter().partition(|d| d.code.number() < 3100);
+        let mut problems = re_core::validate_catalog(&low, 3000..=3079);
+        problems.extend(re_core::validate_catalog(&high, 3100..=3999));
         problems.extend(re_core::validate_catalog(&compat, 9001..=9001));
         assert!(problems.is_empty(), "{problems:#?}");
     }

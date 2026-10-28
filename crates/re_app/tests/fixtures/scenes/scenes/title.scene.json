@@ -1,0 +1,24 @@
+{
+  "format": "real-engine/scene",
+  "version": 1,
+  "entities": [
+    { "id": "camera", "name": "Camera", "components": {
+        "Camera": { "active": true },
+        "Transform": { "translation": [0.0, 8.0, 14.0], "rotation": [-0.2588, 0.0, 0.0, 0.9659] } } },
+    { "id": "director", "name": "Director", "components": {
+        "HudText": { "text": "" },
+        "ScriptRef": { "path": "scripts/director.luau" } } },
+    { "id": "floor", "name": "Floor", "components": {
+        "Collider": { "shape": "Box", "half_extents": [10.0, 0.5, 10.0] },
+        "MeshRef": { "asset": "builtin:cube" },
+        "Transform": { "translation": [0.0, -0.5, 0.0], "scale": [20.0, 1.0, 20.0] } } },
+    { "id": "player", "name": "Player", "components": {
+        "CharacterController": { "height": 1.8, "radius": 0.4 },
+        "MeshRef": { "asset": "builtin:capsule" },
+        "ScriptRef": { "path": "scripts/player.luau" },
+        "Transform": { "translation": [0.0, 1.0, 0.0] } } },
+    { "id": "sun", "name": "Sun", "components": {
+        "Light": { "kind": "Directional", "intensity": 1.0 },
+        "Transform": { "rotation": [-0.5, 0.3, 0.1, 0.8] } } }
+  ]
+}

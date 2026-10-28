@@ -205,6 +205,31 @@ pub fn apply_overrides(
     (out, warnings)
 }
 
+/// `doc` with the overrides stored as `text` (`GraphSource.params`) applied,
+/// and the `RE4011` warnings for those it ignored: all of them when `text`
+/// does not parse, else each one whose node, parameter or value the graph
+/// does not have ([`apply_overrides`]).
+pub(crate) fn overridden(
+    doc: &GraphDoc,
+    text: &str,
+    registry: &NodeRegistry,
+    source_id: &str,
+) -> (GraphDoc, Vec<Diagnostic>) {
+    match parse_overrides(text) {
+        Ok(o) => apply_overrides(doc, &o, registry, source_id),
+        Err(e) => (
+            doc.clone(),
+            vec![
+                Diagnostic::warning(
+                    codes::UNKNOWN_OVERRIDE,
+                    format!("{source_id}: {e}; overrides ignored"),
+                )
+                .at(Location::entity(source_id.to_string())),
+            ],
+        ),
+    }
+}
+
 /// Checks one override strictly (for `graph.set_param` and `graph.generate`):
 /// `RE4011` for an unknown node or parameter, `RE4005` for a refused value.
 pub(crate) fn validate_override(
@@ -216,6 +241,47 @@ pub(crate) fn validate_override(
 ) -> Result<(), Diagnostic> {
     check_override(doc, registry, node, param, value)
         .map_err(|(code, e)| Diagnostic::error(code, e))
+}
+
+/// `RE4031` for the graph `doc` that the builder script `builder` returned,
+/// when some of its nodes have the builder's positional ids (`n<position>`,
+/// what `g:node` gives a node without an id): inserting a node renumbers the
+/// later ones, which reshuffles their seeds and orphans their overrides.
+pub fn positional_ids(doc: &GraphDoc, builder: &str) -> Option<Diagnostic> {
+    const SHOWN: usize = 5;
+    let ids: Vec<&str> = doc
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(i, n)| n.id == format!("n{}", i + 1))
+        .map(|(_, n)| n.id.as_str())
+        .collect();
+    if ids.is_empty() {
+        return None;
+    }
+    let mut list = ids
+        .iter()
+        .take(SHOWN)
+        .map(|id| format!("`{id}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if ids.len() > SHOWN {
+        list.push_str(", …");
+    }
+    let (count, have) = match ids.len() {
+        1 => ("1 node".to_string(), "has an id from its position"),
+        n => (format!("{n} nodes"), "have ids from their position"),
+    };
+    Some(
+        Diagnostic::note(
+            codes::POSITIONAL_IDS,
+            format!("builder `{builder}`: {count} {have} ({list})"),
+        )
+        .at(Location::file(builder))
+        .with_hint(
+            "give each node an id as the fourth argument, as in g:node(kind, params, inputs, \"trees\"), so inserting a node keeps the others' seeds and overrides",
+        ),
+    )
 }
 
 fn no_graph(source_id: &str, why: &str) -> Diagnostic {
@@ -246,19 +312,7 @@ fn run(ctx: &GenContext) -> Result<SceneFragment, Diagnostic> {
         .ok_or_else(|| no_graph(source, "the GraphStore has no entry for it"))??;
     let registry = store.evaluator().registry();
     let text: String = ctx.param("params")?;
-    let (doc, mut warnings) = match parse_overrides(&text) {
-        Ok(o) => apply_overrides(&doc, &o, registry, source),
-        Err(e) => (
-            GraphDoc::clone(&doc),
-            vec![
-                Diagnostic::warning(
-                    codes::UNKNOWN_OVERRIDE,
-                    format!("{source}: {e}; overrides ignored"),
-                )
-                .at(Location::entity(source.to_string())),
-            ],
-        ),
-    };
+    let (doc, mut warnings) = overridden(&doc, &text, registry, source);
     let graph = match ProcGraph::from_doc(&doc, registry) {
         Ok(g) => g,
         Err(problems) => {

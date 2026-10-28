@@ -1,6 +1,7 @@
 //! [`AppConfig`]: a project's `real.toml` (ARCHITECTURE §8) plus the runtime
 //! options a caller sets (headless or windowed, the frame size).
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use re_core::{Diagnostic, Location};
@@ -71,6 +72,10 @@ pub struct AppConfig {
     /// `[package]`: how `real build` packs the game (ADR-0037).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package: Option<crate::package::PackageConfig>,
+    /// `[scenes]`: the scenes a game can load, by name, besides the entry
+    /// scene (ADR-0059 §1; [`crate::scenes::SceneList`]).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub scenes: BTreeMap<String, String>,
     /// Runtime option: run without a window. Headless runs use a fixed frame
     /// time of one simulation step.
     #[serde(skip)]
@@ -98,6 +103,7 @@ impl Default for AppConfig {
             compat: None,
             net: crate::net::NetConfig::default(),
             package: None,
+            scenes: BTreeMap::new(),
             headless: true,
             persist_edits: false,
         }
@@ -436,7 +442,20 @@ impl AppConfig {
         self.stream
             .validate()
             .map_err(|d| d.at(Location::file(CONFIG_FILE)))?;
+        self.scene_list()?;
         Ok(())
+    }
+
+    /// The scenes the game can load: `[scenes]` and the entry scene
+    /// (ADR-0059 §1).
+    ///
+    /// # Errors
+    ///
+    /// `RE0572` when `[scenes]` is wrong.
+    pub fn scene_list(&self) -> Result<crate::scenes::SceneList, Diagnostic> {
+        crate::scenes::SceneList::new(&self.project, &self.scenes).map_err(|msg| {
+            Diagnostic::error(codes::SCENES_INVALID, msg).at(Location::file(CONFIG_FILE))
+        })
     }
 
     /// The `real.toml` text for a new project named `name` (what `real new` writes).

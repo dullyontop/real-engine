@@ -20,10 +20,12 @@ use crate::vm::ContextKind;
 
 pub(crate) mod anim;
 pub mod entity;
+pub mod game;
 pub(crate) mod json;
 pub(crate) mod libs;
 pub mod math;
 pub mod proc;
+pub(crate) mod scene;
 pub(crate) mod stream;
 pub mod value;
 pub(crate) mod world;
@@ -153,6 +155,7 @@ pub(crate) fn install(lua: &Lua, globals: &Table, kind: ContextKind) -> Result<V
         math::COLOR_DECL.to_string(),
         libs::CONNECTION_DECL.to_string(),
         proc::GRAPH_DECLS.to_string(),
+        scene::SCENE_LOAD_DECL.to_string(),
     ];
     for (name, table, decl) in libs::all(lua, kind)? {
         globals.raw_set(name, table)?;

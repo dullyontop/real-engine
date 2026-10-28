@@ -1,5 +1,5 @@
-//! Opening a project into an [`App`], the copy of it that `play.run` plays
-//! (ADR-0021), and `world.restart()`.
+//! Opening a project into an [`App`], and the copy of it that `play.run` plays
+//! (ADR-0021).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -10,7 +10,7 @@ use re_core::{Diagnostic, FixedClock, Location, TaskPool};
 use re_input::{ActionMap, RawInput};
 use re_physics::{Physics, PhysicsConfig};
 use re_scene::World;
-use re_types::{ActionFrame, AudioCmd, RenderSnapshot, ReplayDoc};
+use re_types::{ActionFrame, RenderSnapshot, ReplayDoc};
 
 use re_audio::Audio;
 use re_render::Image;
@@ -21,6 +21,7 @@ use crate::host::Pending;
 use crate::media::Media;
 use crate::perf::PerfRecorder;
 use crate::procedural;
+use crate::scenes::{self, Scenes};
 use crate::sync::anim::AnimSync;
 use crate::sync::anim_skin::SkinSync;
 use crate::sync::audio::AudioSync;
@@ -31,7 +32,7 @@ use crate::sync::render::RenderAssets;
 
 use super::physics_step::load_collider_sources;
 use super::scripts::ScriptOutput;
-use super::{App, RunReport, rel, script_levels};
+use super::{App, RunReport, script_levels};
 
 impl App {
     /// Opens the project at `project` with `config` (usually
@@ -75,7 +76,7 @@ impl App {
             }
             d
         })?;
-        let (world, problems) = load_world(&files, &config)?;
+        let (world, problems) = scenes::fresh_world(&files, &config, &config.project.entry_scene)?;
         let mut commands = CommandRegistry::new();
         re_command::register_builtin_commands(&mut commands);
         crate::commands::register(&mut commands);
@@ -97,8 +98,9 @@ impl App {
         commands: Arc<CommandRegistry<App>>,
     ) -> Result<App, Diagnostic> {
         let mut world = world;
-        ensure_streamer(&mut world, &config)?;
+        scenes::ensure_streamer(&mut world, &config.stream)?;
         let compat_config = crate::compat::compat_config(&config)?;
+        let scenes = Scenes::new(config.scene_list()?, &config.project.entry_scene);
         let graph_inputs = procedural::inputs(&mut world);
         let physics = Physics::new(physics_config(&config), TaskPool::global())?;
         let clock = FixedClock::new(config.sim.fixed_hz, config.sim.max_steps_per_frame);
@@ -152,6 +154,8 @@ impl App {
             ragdoll_sync: RagdollSync::new(),
             ground: None,
             graph_inputs,
+            scenes,
+            start_world: None,
             restarts: 0,
             link_tried: Default::default(),
             scripts: None,
@@ -188,12 +192,15 @@ impl App {
     /// then its `steps` ([`App::play_steps`], whose results it returns).
     /// Scripts run in fresh VMs and start again from their entry points, on top
     /// of the copied World state (in-VM state cannot be copied). A `[compat]`
-    /// game that already started copies the entry scene instead, since its
-    /// World is split between the server and the client.
+    /// game that already started copies the scene the run began in instead,
+    /// since its World is split between the server and the client.
     ///
-    /// The copy is [`World::fork`] with a fresh physics world built from it and
-    /// given the live bodies' motion ([`Physics::motion_state`]), so it carries on
-    /// from the live state; contacts start fresh. Audio goes to a silent mixer.
+    /// The copy is [`crate::scenes::fork_world`] with a fresh physics world
+    /// built from it and given the live bodies' motion
+    /// ([`Physics::motion_state`]), so it carries on from the live state, with
+    /// the same scenes loaded and entities kept; contacts start fresh, and
+    /// nothing the live run asked to load is loading in the copy. Audio goes
+    /// to a silent mixer.
     /// With `screenshot`, the last frame is captured (the live app's GPU side is
     /// lent to the copy). Nothing from the copy reaches the live World.
     ///
@@ -210,22 +217,17 @@ impl App {
         // A compat game that already started has split its World into the
         // server's and the client's; the copy starts again from the scene.
         let restarted = self.compat.is_some();
-        let (mut world, problems) = if restarted {
-            load_world(&self.files, &self.config)?
+        let (world, problems) = if restarted {
+            let (mut world, problems) =
+                scenes::fresh_world(&self.files, &self.config, self.scenes.start_path())?;
+            if let Some(store) = self.world.ecs.get_resource::<re_proc::GraphStore>() {
+                world.ecs.insert_resource(store.clone());
+            }
+            (world, problems)
         } else {
-            (self.world.fork(), Vec::new())
+            // Streaming carries on from the live state too.
+            (scenes::fork_world(&self.world), Vec::new())
         };
-        if let Some(store) = self.world.ecs.get_resource::<re_proc::GraphStore>() {
-            world.ecs.insert_resource(store.clone());
-        }
-        // Streaming carries on from the live state too.
-        if !restarted
-            && let Some(streamer) = self.world.ecs.get_resource::<re_proc::stream::Streamer>()
-        {
-            world
-                .ecs
-                .insert_resource(streamer.forked(&self.world, &world));
-        }
         let mut copy = App::with_world(
             self.files.clone(),
             self.config.clone(),
@@ -235,7 +237,10 @@ impl App {
         )?;
         copy.alpha = self.alpha;
         copy.shaders = self.shaders.clone();
-        if !restarted {
+        if restarted {
+            copy.scenes.begin_at(self.scenes.start_path());
+        } else {
+            copy.scenes = self.scenes.fork();
             copy.stream_tick = self.stream_tick;
         }
         copy.diagnostics.extend(problems);
@@ -302,85 +307,9 @@ impl App {
     pub fn open_project(project: &Path) -> Result<App, Diagnostic> {
         App::open(project, AppConfig::load(project)?)
     }
-
-    /// Reloads the entry scene into a fresh World (what `world.restart()` asks
-    /// for): physics, audio and the undo history start over; the frame counter
-    /// and the replay keep going.
-    pub fn restart(&mut self) {
-        match load_world(&self.files, &self.config) {
-            Ok((world, problems)) => {
-                self.world = world;
-                if let Err(d) = ensure_streamer(&mut self.world, &self.config) {
-                    self.diagnostics.push(d);
-                }
-                self.diagnostics.extend(problems);
-                self.ground = None;
-                self.link_tried.clear();
-                self.graph_inputs = procedural::inputs(&mut self.world);
-                self.restarts += 1;
-                self.history = History::default();
-                match Physics::new(physics_config(&self.config), TaskPool::global()) {
-                    Ok(p) => self.physics = p,
-                    Err(d) => self.diagnostics.push(d),
-                }
-                self.physics_sync = PhysicsSync::new();
-                self.drawn.clear();
-                self.physics_cmds.clear();
-                self.origin_refused = None;
-                self.audio_cmds.push(AudioCmd::StopAll);
-                self.audio_sync = AudioSync::new();
-                self.anim_sync = AnimSync::new();
-                self.skin_sync = SkinSync::new();
-                self.ragdoll_sync = RagdollSync::new();
-                self.script_errors.clear();
-                // The compat contexts start again on the next frame, offline:
-                // a network session does not survive a restart.
-                if let Some(net) = &mut self.net {
-                    net.close();
-                    self.stopped = true;
-                }
-                self.net = None;
-                self.compat = None;
-                self.compat_failed = false;
-                // The new client VM numbers its meshes from the start.
-                match &mut self.graphics {
-                    Some(g) => self.compat_view.release_all(g.renderer_mut()),
-                    None => {
-                        self.compat_view = crate::compat_view::CompatView::new(&self.config.render)
-                    }
-                }
-                if self.compat_config.is_some() {
-                    // A cursor the old scripts held or hid is let go.
-                    self.mouse_behavior = Some((re_types::input::MouseLock::Free, true));
-                }
-                if let Some(scripts) = &mut self.scripts
-                    && let Err(e) = scripts.reset()
-                {
-                    self.diagnostics.push(e.to_diagnostic());
-                }
-                // The fresh game VM is attached in place of the old one.
-                self.attach_debugger();
-                self.clock.reset();
-                self.time_scale = 1.0;
-                self.stream_tick = 0;
-                self.edit_frame();
-            }
-            Err(d) => self.diagnostics.push(d),
-        }
-    }
 }
 
-/// Gives `world` its streaming manager with `[stream]`, so `stream.load` works
-/// before the first step.
-fn ensure_streamer(world: &mut World, config: &AppConfig) -> Result<(), Diagnostic> {
-    if !world.ecs.contains_resource::<re_proc::stream::Streamer>() {
-        let streamer = re_proc::stream::Streamer::new(config.stream.clone())?;
-        world.ecs.insert_resource(streamer);
-    }
-    Ok(())
-}
-
-fn physics_config(config: &AppConfig) -> PhysicsConfig {
+pub(super) fn physics_config(config: &AppConfig) -> PhysicsConfig {
     PhysicsConfig {
         gravity: config.sim.gravity.into(),
         ..PhysicsConfig::default()
@@ -391,47 +320,4 @@ fn headless_audio(files: &ProjectFiles) -> Audio {
     let mut audio = Audio::headless();
     audio.set_files(files.clone());
     audio
-}
-
-/// An empty World with the components the project's content may use: in a
-/// compat project, the class layer's components too.
-pub(crate) fn content_world(config: &AppConfig) -> Result<World, Diagnostic> {
-    let mut world = World::new();
-    if config.compat.is_some() {
-        // A compat scene's instances carry the class layer's components.
-        let setup = crate::compat::setup()?;
-        setup.classes.register_components(&mut world).map_err(|e| {
-            Diagnostic::error(
-                codes::ENTRY_SCENE_FAILED,
-                format!("the compat classes do not register: {e}"),
-            )
-        })?;
-    }
-    Ok(world)
-}
-
-/// A fresh World with the entry scene loaded and the graphs of its procedural
-/// sources in its store (they generate on the first `regenerate_changed`), with
-/// the problems making those graphs.
-fn load_world(
-    files: &ProjectFiles,
-    config: &AppConfig,
-) -> Result<(World, Vec<Diagnostic>), Diagnostic> {
-    let rel_path = &config.project.entry_scene;
-    let fail = |msg: String| Diagnostic::error(codes::ENTRY_SCENE_FAILED, msg).at(rel(rel_path));
-    let text = files
-        .read_str(rel_path)
-        .map_err(|e| fail(format!("cannot read the entry scene {rel_path}: {e}")))?;
-    let doc = re_scene::scene::from_json(&text).map_err(|e| {
-        fail(format!("the entry scene {rel_path} does not parse")).with_related(e.to_diagnostic())
-    })?;
-    let mut world = content_world(config).map_err(|e| fail(e.message.clone()))?;
-    procedural::install(&mut world, files);
-    let mut problems = procedural::declare_generators(&mut world, files, config.proc.limits());
-    world.load(&doc).map_err(|e| {
-        fail(format!("the entry scene {rel_path} does not load")).with_related(e.to_diagnostic())
-    })?;
-    world.propagate_all();
-    problems.extend(procedural::load_graphs(&mut world, files, None));
-    Ok((world, problems))
 }
