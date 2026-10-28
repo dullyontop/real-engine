@@ -839,6 +839,45 @@ fn generator_failed(source_id: &str, message: String, cause: Option<Diagnostic>)
 /// Runs `source`'s generator and applies its output as a diff. On error the
 /// previous output is left in place.
 pub(crate) fn regenerate(world: &mut World, source: Entity) -> Result<RegenReport, SceneError> {
+    // Run first, so a failing generator leaves the previous output in place.
+    let (src_id, generator, nodes) = generate_nodes(world, source)?;
+    apply_output(world, source, &src_id, &generator, Scope::Whole, &nodes)
+}
+
+/// What `source` generates now, computed and not applied: its generator run
+/// against the World as it is, then its structural overrides (ADR-0043 §3),
+/// as a regeneration computes them before it changes anything. Field and
+/// deletion overrides are not applied, so each node holds what the source
+/// makes without them, and a deleted key is still there (`proc.revert`
+/// reads it to put generated values back). The cells of a streamed source
+/// are generated per cell and are not part of it.
+///
+/// Nothing in the World changes; a generator that keeps state of its own
+/// (a graph store's caches and reports) may update it.
+///
+/// # Errors
+///
+/// What a regeneration would report: an unknown generator or version, a
+/// failing generator, or an output that is not well formed.
+pub fn generated_fragment(world: &World, source: Entity) -> Result<SceneFragment, SceneError> {
+    let (src_id, generator, nodes) = generate_nodes(world, source)?;
+    check_output(&src_id, &generator, &nodes)?;
+    let overrides = world
+        .ecs
+        .get::<Overrides>(source)
+        .cloned()
+        .unwrap_or_default();
+    let streamed = world.ecs.get::<crate::stream::Streamed>(source).is_some();
+    let (restructured, _) = restructure(world, &overrides, Scope::Whole, streamed, &nodes);
+    Ok(restructured.unwrap_or(nodes))
+}
+
+/// Runs `source`'s generator against the World as it is: the source's id, the
+/// generator's name and its output.
+fn generate_nodes(
+    world: &World,
+    source: Entity,
+) -> Result<(String, String, SceneFragment), SceneError> {
     let src_id = world
         .id_of(source)
         .ok_or_else(|| SceneError::Invalid("procedural source needs a stable id".into()))?
@@ -874,26 +913,22 @@ pub(crate) fn regenerate(world: &mut World, source: Entity) -> Result<RegenRepor
         ));
     }
 
-    // Run first, so a failing generator leaves the previous output in place.
-    let nodes = {
-        let ctx = GenContext {
-            world,
-            source,
-            source_id: &src_id,
-            seed: p.seed,
-            version: p.version,
-            params_component: &info.params_component,
-        };
-        (info.run)(&ctx).map_err(|d| {
-            generator_failed(
-                &src_id,
-                format!("generator {}: {}", p.generator, d.message),
-                Some(d),
-            )
-        })?
+    let ctx = GenContext {
+        world,
+        source,
+        source_id: &src_id,
+        seed: p.seed,
+        version: p.version,
+        params_component: &info.params_component,
     };
-
-    apply_output(world, source, &src_id, &p.generator, Scope::Whole, &nodes)
+    let nodes = (info.run)(&ctx).map_err(|d| {
+        generator_failed(
+            &src_id,
+            format!("generator {}: {}", p.generator, d.message),
+            Some(d),
+        )
+    })?;
+    Ok((src_id, p.generator, nodes))
 }
 
 /// Which part of a source's output a fragment replaces.
@@ -964,90 +999,14 @@ pub(crate) fn apply_output(
     // The current output, by key.
     let mut existing = current_output(world, source, scope);
 
-    // Structural overrides (ADR-0043 §3) apply to the generator's output
-    // before anything else; generators may not use their key prefixes.
-    if let Some(n) = nodes.iter().find(|n| !structure::is_generator_key(&n.key)) {
-        return Err(generator_failed(
-            &src_id,
-            format!(
-                "node {:?}: generator keys may not have a segment starting with `+` or `~` (kept for structural overrides)",
-                n.key
-            ),
-            None,
-        ));
-    }
-    // The generator's own output must be well formed before structural
-    // overrides rearrange it, so an override never hides a broken output.
-    let mut seen_raw: HashSet<&str> = HashSet::with_capacity(nodes.len());
-    for node in nodes {
-        if node.key.is_empty() {
-            return Err(generator_failed(
-                &src_id,
-                format!("generator {generator} produced an empty key"),
-                None,
-            ));
-        }
-        if !seen_raw.insert(node.key.as_str()) {
-            return Err(generator_failed(
-                &src_id,
-                format!("generator {generator} produced key {:?} twice", node.key),
-                None,
-            ));
-        }
-        if let Some(k) = &node.parent_key
-            && (k == &node.key || !seen_raw.contains(k.as_str()))
-        {
-            return Err(generator_failed(
-                &src_id,
-                format!(
-                    "node {:?}: parent key {k:?} not generated before it",
-                    node.key
-                ),
-                None,
-            ));
-        }
-    }
+    check_output(&src_id, generator, nodes)?;
     let overrides = world
         .ecs
         .get::<Overrides>(source)
         .cloned()
         .unwrap_or_default();
-    let structural: Vec<&OverrideDoc> = overrides
-        .0
-        .iter()
-        .filter(|o| o.structural_kind().is_some())
-        .collect();
-    let mut structured = structure::Applied::default();
-    let restructured;
-    let nodes: &[GenNode] = if structural.is_empty() || !matches!(scope, Scope::Whole) {
-        nodes
-    } else if streamed {
-        for o in &structural {
-            structured.failed.push((
-                o.target().to_string(),
-                format!(
-                    "{} override on {:?} not applied: structural overrides are not applied on a streamed source",
-                    o.structural_kind().expect("structural"),
-                    o.target()
-                ),
-            ));
-        }
-        nodes
-    } else {
-        let files = world
-            .ecs
-            .get_resource::<structure::SceneFiles>()
-            .map(|f| f.0.clone());
-        let ids = world.ids();
-        let registry = &world.registry;
-        let (fragment, applied) =
-            structure::apply_structure(nodes.to_vec(), &structural, &mut |with, key| {
-                structure::resolve(with, key, registry, files.as_ref(), &|id| ids.get(id))
-            });
-        structured = applied;
-        restructured = fragment;
-        &restructured
-    };
+    let (restructured, structured) = restructure(world, &overrides, scope, streamed, nodes);
+    let nodes: &[GenNode] = restructured.as_deref().unwrap_or(nodes);
 
     // Validate and resolve everything before changing anything.
     let mut prepared = Vec::with_capacity(nodes.len());
@@ -1358,6 +1317,99 @@ pub(crate) fn apply_output(
             .collect();
     }
     Ok(report)
+}
+
+/// Checks a generator's own output before structural overrides rearrange
+/// it, so an override never hides a broken output: generators may not use
+/// the structural key prefixes (ADR-0043 §3), and every key is non-empty,
+/// unique and comes after its parent's.
+fn check_output(src_id: &str, generator: &str, nodes: &[GenNode]) -> Result<(), SceneError> {
+    if let Some(n) = nodes.iter().find(|n| !structure::is_generator_key(&n.key)) {
+        return Err(generator_failed(
+            src_id,
+            format!(
+                "node {:?}: generator keys may not have a segment starting with `+` or `~` (kept for structural overrides)",
+                n.key
+            ),
+            None,
+        ));
+    }
+    let mut seen_raw: HashSet<&str> = HashSet::with_capacity(nodes.len());
+    for node in nodes {
+        if node.key.is_empty() {
+            return Err(generator_failed(
+                src_id,
+                format!("generator {generator} produced an empty key"),
+                None,
+            ));
+        }
+        if !seen_raw.insert(node.key.as_str()) {
+            return Err(generator_failed(
+                src_id,
+                format!("generator {generator} produced key {:?} twice", node.key),
+                None,
+            ));
+        }
+        if let Some(k) = &node.parent_key
+            && (k == &node.key || !seen_raw.contains(k.as_str()))
+        {
+            return Err(generator_failed(
+                src_id,
+                format!(
+                    "node {:?}: parent key {k:?} not generated before it",
+                    node.key
+                ),
+                None,
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `nodes` with the structural overrides among `overrides` applied (ADR-0043
+/// §3), as a regeneration of `scope` applies them, or `None` when none
+/// apply; and what applying them found. They apply to a whole output only,
+/// and never on a streamed source.
+fn restructure(
+    world: &World,
+    overrides: &Overrides,
+    scope: Scope,
+    streamed: bool,
+    nodes: &[GenNode],
+) -> (Option<SceneFragment>, structure::Applied) {
+    let structural: Vec<&OverrideDoc> = overrides
+        .0
+        .iter()
+        .filter(|o| o.structural_kind().is_some())
+        .collect();
+    let mut applied = structure::Applied::default();
+    if structural.is_empty() || !matches!(scope, Scope::Whole) {
+        return (None, applied);
+    }
+    if streamed {
+        for o in &structural {
+            applied.failed.push((
+                o.target().to_string(),
+                format!(
+                    "{} override on {:?} not applied: structural overrides are not applied on a streamed source",
+                    o.structural_kind().expect("structural"),
+                    o.target()
+                ),
+            ));
+        }
+        return (None, applied);
+    }
+    let files = world
+        .ecs
+        .get_resource::<structure::SceneFiles>()
+        .map(|f| f.0.clone());
+    let ids = world.ids();
+    let registry = &world.registry;
+    let (fragment, applied) =
+        structure::apply_structure(nodes.to_vec(), &structural, &mut |with, key| {
+            structure::resolve(with, key, registry, files.as_ref(), &|id| ids.get(id))
+        });
+    (Some(fragment), applied)
 }
 
 /// Puts `parent`'s children in the order a fresh load and generation gives:

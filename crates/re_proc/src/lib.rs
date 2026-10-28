@@ -67,7 +67,7 @@ pub mod value;
 pub use canon::version_stamp;
 pub use commands::{
     ConvertBuilderArgs, DEFAULT_GENERATE_ENTITIES, DEFAULT_GENERATE_MS, GenerateArgs,
-    MigrationReportArgs, RegenerateArgs, ReportArgs, SetParamArgs, register_commands,
+    MigrationReportArgs, RegenerateArgs, ReportArgs, RevertArgs, SetParamArgs, register_commands,
 };
 pub use edit::{AddNodeArgs, ConnectArgs, MoveNodesArgs, RemoveNodeArgs, SetDefaultArgs};
 pub use eval::{
@@ -222,6 +222,16 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::GRAPH_FILE_TAKEN,
         title: "Graph file exists or is open",
         page: include_str!("../explain/RE4091.md"),
+    },
+    DiagInfo {
+        code: codes::NOTHING_TO_REVERT,
+        title: "No such override to revert",
+        page: include_str!("../explain/RE4092.md"),
+    },
+    DiagInfo {
+        code: codes::KEY_NOT_GENERATED,
+        title: "The source does not generate the key",
+        page: include_str!("../explain/RE4093.md"),
     },
     DiagInfo {
         code: codes::LUAU_DECLARATION,

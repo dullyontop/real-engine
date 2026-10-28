@@ -262,3 +262,52 @@ fn a_replacement_keeps_inserts_under_it_and_reports_those_it_drops() {
     assert!(report.orphans.is_empty(), "{:#?}", report.orphans);
     assert_eq!(children(&w, "src/a"), ["src/+lamp"]);
 }
+
+#[test]
+fn the_generated_fragment_has_the_structure_and_none_of_the_other_overrides() {
+    let mut w = world(
+        "a,a:x,b,c",
+        json!([
+            { "target": "c", "moved": { "parent": "x" } },
+            { "insert": "lamp", "parent": "c", "components": { "Transform": {} } },
+            { "target": "b", "component": "Transform", "field": "scale", "value": [2, 2, 2] },
+            { "target": "a", "deleted": true }
+        ]),
+    );
+    let report = w.regenerate_changed();
+    assert!(report.diagnostics.is_empty(), "{:#?}", report.diagnostics);
+    let hash = w.state_hash();
+    let src = w.entity("src").unwrap();
+    let fragment = re_scene::procedural::generated_fragment(&w, src).unwrap();
+    let shape: Vec<(String, Option<String>)> = fragment
+        .iter()
+        .map(|n| (n.key.clone(), n.parent_key.clone()))
+        .collect();
+    let at = |k: &str, p: Option<&str>| (k.to_string(), p.map(str::to_string));
+    // The deleted `a` and its subtree are there, and the move and the insert
+    // are applied (a moved entity follows its new parent).
+    assert_eq!(
+        shape,
+        [
+            at("a", None),
+            at("x", Some("a")),
+            at("c", Some("x")),
+            at("+lamp", Some("c")),
+            at("b", None),
+        ]
+    );
+    // `b` is what the generator makes: no scale, though an override sets one.
+    let b = fragment.iter().find(|n| n.key == "b").unwrap();
+    assert_eq!(b.components, [("Transform".to_string(), vec![])]);
+    // Nothing changed.
+    assert_eq!(w.state_hash(), hash);
+    assert!(w.entity("src/a").is_err(), "still deleted");
+    assert!(w.regenerate_changed().is_empty());
+
+    // A generator that fails is reported as a regeneration reports it.
+    let mut w = world("a,b,a", json!([]));
+    w.regenerate_changed();
+    let src = w.entity("src").unwrap();
+    let e = re_scene::procedural::generated_fragment(&w, src).unwrap_err();
+    assert_eq!(e.to_diagnostic().code.to_string(), "RE1207");
+}

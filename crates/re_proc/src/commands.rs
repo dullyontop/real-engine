@@ -4,7 +4,7 @@
 
 mod editor;
 
-pub use editor::ConvertBuilderArgs;
+pub use editor::{ConvertBuilderArgs, RevertArgs};
 
 use std::path::Path;
 

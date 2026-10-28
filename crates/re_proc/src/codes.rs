@@ -94,6 +94,16 @@ pub const NOT_A_BUILDER_SOURCE: Code = Code::new("RE4090");
 /// the World with content.
 pub const GRAPH_FILE_TAKEN: Code = Code::new("RE4091");
 
+/// `proc.revert` finds no such override to revert: the entity is not
+/// generated, or its source keeps no field override (of that component or
+/// field) for it, or no deletion override for the key.
+pub const NOTHING_TO_REVERT: Code = Code::new("RE4092");
+
+/// `proc.revert`: the source does not generate the key now, so there is
+/// nothing to put back (the key left its output, its parent is deleted or
+/// suppressed, or it is part of a stream cell).
+pub const KEY_NOT_GENERATED: Code = Code::new("RE4093");
+
 /// A Luau node script under `scripts/generators/` does not declare a valid
 /// node kind: it fails to compile or run, does not return `proc.node{...}`,
 /// or its kind is malformed or taken (ADR-0043 §4).
