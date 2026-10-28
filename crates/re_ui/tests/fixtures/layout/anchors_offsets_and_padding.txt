@@ -1,0 +1,20 @@
+visit #8 screen (root) at (0.0, 0.0) size (400.0, 300.0) rotation 0.0
+visit #0 half at (95.0, 110.0) size (210.0, 80.0) rotation 0.0
+visit #1 corner at (340.0, 20.0) size (50.0, 40.0) rotation 0.0
+visit #3 hidden at (0.0, 0.0) size (10.0, 10.0) rotation 0.0
+visit #2 under hidden at (0.0, 0.0) size (5.0, 5.0) rotation 0.0
+visit #6 padded at (20.0, 200.0) size (120.0, 80.0) rotation 0.0
+visit #4 fill at (32.0, 204.0) size (102.0, 56.0) rotation 0.0
+visit #5 inset at (124.0, 250.0) size (10.0, 10.0) rotation 0.0
+visit #7 inert at (300.0, 250.0) size (30.0, 30.0) rotation 0.0
+visit #10 offset root (root) at (30.0, 40.0) size (100.0, 50.0) rotation 0.0
+visit #9 offset kid at (40.0, 50.0) size (50.0, 20.0) rotation 0.0
+root 0: 6 drawn
+item #0 half at (95.0, 110.0) size (210.0, 80.0) scale 1.0 order (0, 1) input
+item #1 corner at (340.0, 20.0) size (50.0, 40.0) scale 1.0 order (0, 2) input
+item #6 padded at (20.0, 200.0) size (120.0, 80.0) scale 1.0 order (0, 5) input padding [12.0, 4.0, 6.0, 20.0]
+item #4 fill at (32.0, 204.0) size (102.0, 56.0) scale 1.0 order (0, 6) input
+item #5 inset at (124.0, 250.0) size (10.0, 10.0) scale 1.0 order (0, 7) input
+item #7 inert at (300.0, 250.0) size (30.0, 30.0) scale 1.0 order (0, 8)
+root 1: 1 drawn
+item #9 offset kid at (40.0, 86.0) size (50.0, 20.0) scale 1.0 order (0, 9)
