@@ -209,6 +209,64 @@ fn a_walking_character_touches_parts() {
     assert_eq!(p.out(), ["picked up by Dummy", "left HumanoidRootPart"]);
 }
 
+#[test]
+fn touching_a_team_change_spawn_puts_the_player_on_its_team() {
+    let mut p = settled("R15");
+    let mut host = re_script::host::WorldHost {
+        world: &mut p.world,
+        services: &mut p.services,
+    };
+    let (player, d) = re_compat::players::add_player(
+        &p.vm,
+        &mut host,
+        &re_compat::players::PlayerSpec::numbered(1),
+    );
+    assert!(d.is_empty(), "{d:#?}");
+    player.unwrap();
+    // Two green team-change spawns in the character's way: a disabled one,
+    // then an enabled one. Touched runs after the team changed.
+    p.run(
+        "local green = Instance.new('Team')
+         green.Name = 'Green'
+         green.TeamColor = BrickColor.new('Bright green')
+         green.AutoAssignable = false
+         green.Parent = game:GetService('Teams')
+         local player = game.Players.Player1
+         player.Character = workspace.Dummy
+         print(player.Neutral, player.Team)
+         for i, enabled in {false, true} do
+             local s = Instance.new('SpawnLocation')
+             s.Name = if enabled then 'Gate' else 'Off'
+             s.Anchored = true
+             s.CanCollide = false
+             s.Enabled = enabled
+             s.Neutral = false
+             s.TeamColor = BrickColor.new('Bright green')
+             s.AllowTeamChangeOnTouch = true
+             s.Size = Vector3.new(4, 4, 1)
+             s.CFrame = CFrame.new(0, 2, -4 * i)
+             s.Parent = workspace
+             local said = false
+             s.Touched:Connect(function()
+                 if not said then
+                     said = true
+                     print(s.Name, player.Neutral, player.Team, player.TeamColor)
+                 end
+             end)
+         end
+         workspace.Dummy.Humanoid:Move(Vector3.new(0, 0, -1))",
+    );
+    p.frames(60);
+    assert_eq!(
+        p.out(),
+        [
+            "true nil",
+            "Off true nil White",
+            "Gate false Green Bright green"
+        ]
+    );
+}
+
 fn controllers(p: &mut Place) -> usize {
     re_compat::physics::with_physics(&mut p.world, |ph| ph.character_count()).unwrap()
 }

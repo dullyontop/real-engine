@@ -26,10 +26,11 @@ use super::{Msg, PromptAction};
 use crate::enums::EnumItem;
 
 /// The version of the wire types. A change to any of them bumps it.
-pub const WIRE_VERSION: u32 = 2;
+pub const WIRE_VERSION: u32 = 3;
 
 /// The datatypes a [`NetValue::Data`] can name.
 const DATATYPES: &[&str] = &[
+    "BrickColor",
     "CFrame",
     "Color3",
     "Vector2",

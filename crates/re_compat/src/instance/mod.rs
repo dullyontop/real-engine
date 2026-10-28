@@ -483,6 +483,9 @@ fn newindex(lua: &Lua, this: &InstanceRef, key: &str, value: LuaValue) -> Result
             if key == "Enabled" || key == "Disabled" {
                 crate::runtime::scripts::enabled_written(lua, this.entity)?;
             }
+            if key == "TeamColor" {
+                crate::players::teams::team_color_written(lua, this.entity)?;
+            }
             signal::events::after_write(lua)
         }
         Resolved::Method(_) | Resolved::Event => Err(compat_error(CompatError::NotAProperty {

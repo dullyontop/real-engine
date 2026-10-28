@@ -486,6 +486,96 @@ fn a_model_file_imports_under_workspace_with_its_properties() {
     assert!(again.removed.is_empty(), "{}", again.render_human());
 }
 
+fn rgb(w: &World, id: &str) -> [u8; 3] {
+    match prop(w, id, "Color") {
+        Value::Color(c) => [c.r, c.g, c.b].map(|x| (x * 255.0).round() as u8),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The colour number of a BrickColor property.
+fn brick(w: &World, id: &str, name: &str) -> i64 {
+    match prop(w, id, name) {
+        Value::Record(_, fields) => match fields.as_slice() {
+            [Value::Int(n)] => *n,
+            other => panic!("{other:?}"),
+        },
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn brick_colours_import_as_part_colours_and_team_colours() {
+    // Older files save a part's colour as a BrickColor (binary) or an int
+    // (XML); a part that also saved an exact colour keeps that one.
+    let binary_parts = vec![
+        inst("Model", None, vec![("Name", s("Old"))]),
+        inst(
+            "Part",
+            Some(0),
+            vec![("Name", s("Brick")), ("BrickColor", V::BrickColor(21))],
+        ),
+        inst(
+            "WedgePart",
+            Some(0),
+            vec![
+                ("Name", s("Both")),
+                ("Color3uint8", V::Color3uint8([10, 20, 30])),
+                ("BrickColor", V::BrickColor(21)),
+            ],
+        ),
+        inst(
+            "SpawnLocation",
+            Some(0),
+            vec![
+                ("Name", s("Gate")),
+                ("TeamColor", V::BrickColor(28)),
+                ("Neutral", V::Bool(false)),
+                ("AllowTeamChangeOnTouch", V::Bool(true)),
+            ],
+        ),
+    ];
+    let xml_parts = vec![
+        inst("Model", None, vec![("Name", s("Older"))]),
+        inst(
+            "Part",
+            Some(0),
+            vec![("Name", s("Int")), ("BrickColor", V::Int32(23))],
+        ),
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("game");
+    let r = registry();
+    let a = dir.path().join("Old.rbxm");
+    std::fs::write(&a, binary(&binary_parts, Compression::Lz4)).unwrap();
+    let first = import(&a, &project, &r, &ImportOptions::default()).unwrap();
+    assert!(first.ok(), "{}", first.render_human());
+    let b = dir.path().join("Older.rbxmx");
+    std::fs::write(&b, xml(&xml_parts)).unwrap();
+    let second = import(&b, &project, &r, &ImportOptions::default()).unwrap();
+    assert!(second.ok(), "{}", second.render_human());
+    for d in first.diagnostics.iter().chain(&second.diagnostics) {
+        assert!(!d.message.contains("BrickColor"), "{d:?}");
+        assert!(!d.message.contains("TeamColor"), "{d:?}");
+    }
+
+    let w = load(&project);
+    // Bright red, Bright blue and Dark green.
+    assert_eq!(
+        rgb(&w, &id_of(&first, "Workspace.Old.Brick")),
+        [196, 40, 28]
+    );
+    assert_eq!(rgb(&w, &id_of(&first, "Workspace.Old.Both")), [10, 20, 30]);
+    assert_eq!(
+        rgb(&w, &id_of(&second, "Workspace.Older.Int")),
+        [13, 105, 172]
+    );
+    let gate = id_of(&first, "Workspace.Old.Gate");
+    assert_eq!(brick(&w, &gate, "TeamColor"), 28);
+    assert_eq!(prop(&w, &gate, "Neutral"), Value::Bool(false));
+    assert_eq!(prop(&w, &gate, "AllowTeamChangeOnTouch"), Value::Bool(true));
+}
+
 #[test]
 fn a_model_goes_under_the_parent_path_and_owns_only_its_roots() {
     let dir = tempfile::tempdir().unwrap();

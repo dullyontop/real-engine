@@ -24,6 +24,10 @@
 //!   `CharacterRemoving` from what replication brings ([`client_frame`]).
 //! * Chat comes from the host ([`say`]): `Player.Chatted` fires on both
 //!   sides and a matching `TextChatCommand` triggers.
+//! * Teams: a player who joins is put on a team ([`teams`]), and a
+//!   character loads at a random enabled `SpawnLocation` the player may use
+//!   (neutral, or of the player's team), drawn from the VM's engine stream
+//!   [`SPAWN_STREAM`] so a run with the same seed picks the same spawns.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -43,6 +47,12 @@ use crate::runtime::{Bindings, CompatVm, compat_error, lua_error, state, with_wo
 use crate::scene::spawn_instance;
 use crate::services::core::{ensure_service, find_service};
 use crate::signal::{self, events};
+
+pub mod teams;
+
+/// The engine stream (`datatypes::random`) the spawn a character loads at is
+/// drawn from, when several are eligible.
+pub const SPAWN_STREAM: u64 = 2;
 
 /// Who joins ([`add_player`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -216,12 +226,13 @@ fn check_player(lua: &Lua, player: Entity, what: &str) -> std::result::Result<()
 /// Adds a player; a `remote` one is a network player, whose client's message
 /// queue exists before `PlayerAdded` fires.
 pub(crate) fn add_player_lua(lua: &Lua, spec: &PlayerSpec, remote: bool) -> Result<Entity> {
-    let c = classes(lua)?;
+    let (c, g) = (classes(lua)?, game(lua)?);
     let players = players_service(lua)?;
     let player = with_world(lua, |w| -> std::result::Result<Entity, CompatError> {
         let p = spawn_instance(w, &c, "Player", None, &spec.name, Some(players))?;
         set_own(w, "Player", p, "UserId", Value::Int(spec.user_id))?;
         set_own(w, "Player", p, "DisplayName", Value::Str(spec.name.clone()))?;
+        teams::auto_assign(w, g, p)?;
         spawn_instance(w, &c, "Backpack", None, "Backpack", Some(p))?;
         if let Some(link) = w.ecs.get_resource::<NetLink>().cloned() {
             let mut s = link.lock();
@@ -287,6 +298,7 @@ pub(crate) fn remove_player_lua(lua: &Lua, player: Entity) -> Result<()> {
         "PlayerRemoving",
         MultiValue::from_iter([push(lua, player)?]),
     )?;
+    teams::left(lua, player)?;
     if let Some(ch) = with_world(lua, |w| character_of(w, player))? {
         signal::fire(
             lua,
@@ -322,11 +334,14 @@ fn net_link(lua: &Lua) -> Result<Option<NetLink>> {
     with_world(lua, |w| w.ecs.get_resource::<NetLink>().cloned())
 }
 
-/// The server's per-frame work: loads the characters of players that
-/// joined, and respawns characters that died (a `Humanoid` child whose
-/// `Health` is 0) after `Players.RespawnTime`, while `CharacterAutoLoads` is
-/// on.
+/// The server's per-frame work: fires the team changes ([`teams::frame`]),
+/// loads the characters of players that joined, and respawns characters
+/// that died (a `Humanoid` child whose `Health` is 0) after
+/// `Players.RespawnTime`, while `CharacterAutoLoads` is on.
 pub(crate) fn server_frame(lua: &Lua) -> Result<()> {
+    let g = game(lua)?;
+    let all = with_world(lua, |w| players_in(w, g))?;
+    teams::frame(lua, &all)?;
     let due = std::mem::take(&mut pending(lua).0);
     let (c, players) = (classes(lua)?, players_service(lua)?);
     let (auto, respawn) = with_world(lua, |w| {
@@ -348,7 +363,6 @@ pub(crate) fn server_frame(lua: &Lua) -> Result<()> {
             load_character(lua, p)?;
         }
     }
-    let g = game(lua)?;
     let dead: Vec<(Entity, Entity)> = with_world(lua, |w| {
         players_in(w, g)
             .into_iter()
@@ -414,26 +428,29 @@ fn place_fn(lua: &Lua) -> Result<Function> {
     Ok(f)
 }
 
-/// The spawn a player's character loads at: the player's `RespawnLocation`
-/// when set, else the first enabled `SpawnLocation` in `Workspace` (in tree
-/// order) that is neutral or matches the player's team.
-fn spawn_for(w: &World, c: &ClassRegistry, workspace: Entity, player: Entity) -> Option<Entity> {
+/// The spawns a player's character may load at: the player's
+/// `RespawnLocation` when set, else every enabled `SpawnLocation` in
+/// `Workspace` (in tree order) that is neutral or of the player's team.
+fn spawns_for(w: &World, c: &ClassRegistry, workspace: Entity, player: Entity) -> Vec<Entity> {
     if let Some(Value::Entity(Some(r))) = get_own(w, "Player", player, "RespawnLocation")
         && tree::alive(w, r)
     {
-        return Some(r);
+        return vec![r];
     }
     let neutral = matches!(
         get_own(w, "Player", player, "Neutral"),
         Some(Value::Bool(true)) | None
     );
     let team = prop(w, c, player, "TeamColor");
-    tree::descendants(w, workspace).into_iter().find(|s| {
-        tree::class(w, *s) == Some("SpawnLocation")
-            && prop_bool(w, c, *s, "Enabled", true)
-            && (prop_bool(w, c, *s, "Neutral", true)
-                || (!neutral && team.is_some() && prop(w, c, *s, "TeamColor") == team))
-    })
+    tree::descendants(w, workspace)
+        .into_iter()
+        .filter(|s| {
+            tree::class(w, *s) == Some("SpawnLocation")
+                && prop_bool(w, c, *s, "Enabled", true)
+                && (prop_bool(w, c, *s, "Neutral", true)
+                    || (!neutral && team.is_some() && prop(w, c, *s, "TeamColor") == team))
+        })
+        .collect()
 }
 
 fn clone_children_into(w: &mut World, from: Entity, into: Entity) {
@@ -494,15 +511,23 @@ pub fn load_character(lua: &Lua, player: Entity) -> Result<Entity> {
     };
     let workspace =
         with_world(lua, |w| ensure_service(w, &c, g, "Workspace"))?.map_err(compat_error)?;
-    let spawn = with_world(lua, |w| {
+    let spawns = with_world(lua, |w| {
         tree::set_name(w, model, &name);
         if let Some(sp) = find_service(w, g, "StarterPlayer")
             && let Some(scripts) = tree::find_child(w, sp, "StarterCharacterScripts", false)
         {
             clone_children_into(w, scripts, model);
         }
-        spawn_for(w, &c, workspace, player)
+        spawns_for(w, &c, workspace, player)
     })?;
+    // Roblox picks one of the eligible spawns at random; one is no draw.
+    let spawn = match spawns.len() {
+        0 | 1 => spawns.first().copied(),
+        n => {
+            let i = crate::datatypes::engine_integer(lua, SPAWN_STREAM, 0, n as i64 - 1);
+            spawns.get(i as usize).copied()
+        }
+    };
     if let Some(spawn) = spawn {
         let placed: MultiValue = place_fn(lua)?.call((push(lua, model)?, push(lua, spawn)?))?;
         let _ = placed;
@@ -580,8 +605,8 @@ fn default_character(lua: &Lua) -> Result<Option<Entity>> {
     }
 }
 
-/// The client's per-frame work: player and character events from what
-/// replication brought, and the local player's `PlayerScripts` and
+/// The client's per-frame work: player, team and character events from
+/// what replication brought, and the local player's `PlayerScripts` and
 /// `PlayerGui`.
 pub(crate) fn client_frame(lua: &Lua, link: &NetLink) -> Result<()> {
     if link.side != Side::Client {
@@ -676,7 +701,9 @@ pub(crate) fn client_frame(lua: &Lua, link: &NetLink) -> Result<()> {
                 MultiValue::from_iter([push(lua, *p)?]),
             )?;
         }
+        teams::left(lua, *p)?;
     }
+    teams::frame(lua, &now)?;
     for (p, old, new) in changes {
         if let Some(old) = old {
             signal::fire(
@@ -1057,7 +1084,7 @@ pub(crate) fn offline(class: &'static str, member: &'static str) -> Arc<crate::r
 
 type Imp = fn(&Lua, Entity, MultiValue) -> Result<MultiValue>;
 
-/// Registers `Players` and `Player`.
+/// Registers `Players`, `Player`, `Team` and `Teams`.
 pub fn register(b: &mut Bindings) {
     let plain: &[(&str, &str, Imp)] = &[
         ("Players", "GetPlayers", get_players),
@@ -1077,6 +1104,7 @@ pub fn register(b: &mut Bindings) {
     for (class, name, f) in plain {
         b.method(class, name, Arc::new(*f));
     }
+    teams::register(b);
     for (class, name) in [
         ("Players", "GetUserIdFromNameAsync"),
         ("Players", "GetNameFromUserIdAsync"),

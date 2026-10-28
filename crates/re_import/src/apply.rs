@@ -516,7 +516,13 @@ fn plan_here(
             continue;
         }
         let Ok(e) = world.entity(id) else { continue };
+        // A part saved with both an exact Color and a BrickColor keeps the
+        // exact one.
+        let exact = n.place.iter().any(|(p, _)| p == "Color");
         for (prop, v) in &n.place {
+            if exact && prop == "BrickColor" {
+                continue;
+            }
             let result = settable(classes, &n.class, prop).and_then(|ty| {
                 let value = place_value(v, &ty, classes, &|node| {
                     mapped.get(&node).and_then(|id| world.entity(id).ok())
@@ -788,6 +794,13 @@ fn place_value(
         ("Vector2", P::Vector2([x, y])) => record("Vector2", &[("X", f(*x)), ("Y", f(*y))])?,
         ("Color3", P::Color3(c)) => color(*c),
         ("Color3", P::Color3uint8(c)) => color(c.map(|b| f32::from(b) / 255.0)),
+        // Older files save a part's colour as an int named BrickColor.
+        ("BrickColor", P::BrickColor(n)) => {
+            record("BrickColor", &[("Number", Value::Int(i64::from(*n)))])?
+        }
+        ("BrickColor", P::Int32(n)) => {
+            record("BrickColor", &[("Number", Value::Int(i64::from(*n)))])?
+        }
         ("CFrame", P::CFrame(c) | P::OptionalCFrame(Some(c))) => cframe(c)?,
         ("UDim", P::UDim(s, o)) => record(
             "UDim",

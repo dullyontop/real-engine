@@ -336,7 +336,7 @@ pub fn accessors() -> Vec<(&'static str, &'static str, Accessor)> {
     );
     out.extend(crate::physics::accessors());
     out.extend(crate::gui::accessors());
-    out.extend(crate::physics::accessors());
+    out.extend(crate::players::teams::accessors());
     out.extend(crate::render::accessors());
     out
 }

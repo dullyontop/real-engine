@@ -154,6 +154,15 @@
           "doc": "The part's colour."
         },
         {
+          "name": "BrickColor",
+          "type": "BrickColor",
+          "storage": {
+            "kind": "builtin"
+          },
+          "status": "implemented",
+          "doc": "The brick colour nearest to Color; setting it sets Color to that brick colour."
+        },
+        {
           "name": "Transparency",
           "type": "number",
           "storage": {
@@ -721,9 +730,8 @@
       "name": "SpawnLocation",
       "superclass": "Part",
       "creatable": true,
-      "status": "partial",
-      "note": "The properties are stored; spawning characters here belongs to the character work.",
-      "doc": "A part where characters appear.",
+      "status": "implemented",
+      "doc": "A part where characters appear. A character loads at a random enabled spawn the player may use: a neutral one, or one whose TeamColor is the player's when the player is on a team; it stands on top of it, with a ForceField for Duration seconds.",
       "properties": [
         {
           "name": "Enabled",
@@ -743,7 +751,19 @@
           },
           "default": true,
           "status": "implemented",
-          "doc": "When true any player may spawn here."
+          "doc": "When true any player may spawn here; when false only players whose TeamColor matches."
+        },
+        {
+          "name": "TeamColor",
+          "type": "BrickColor",
+          "storage": {
+            "kind": "own"
+          },
+          "default": [
+            194
+          ],
+          "status": "implemented",
+          "doc": "The team that may spawn here when Neutral is false."
         },
         {
           "name": "AllowTeamChangeOnTouch",
@@ -752,9 +772,8 @@
             "kind": "own"
           },
           "default": false,
-          "status": "partial",
-          "note": "Stored; touching the spawn does not change a player's team yet.",
-          "doc": "When true touching it moves a player to its team."
+          "status": "implemented",
+          "doc": "When true (and Enabled), a player whose character touches it takes its TeamColor and its Neutral."
         },
         {
           "name": "Duration",

@@ -44,6 +44,7 @@ mod datatypes {
             "vector2.luau",
             "cframe.luau",
             "color.luau",
+            "brickcolor.luau",
             "udim.luau",
             "sequences.luau",
             "misc.luau",
@@ -89,6 +90,7 @@ mod datatypes {
             "vector2.luau",
             "cframe.luau",
             "color.luau",
+            "brickcolor.luau",
             "udim.luau",
             "sequences.luau",
             "misc.luau",
@@ -110,6 +112,8 @@ mod datatypes {
             f:SetAttribute("F", cf)
             f:SetAttribute("U", UDim2.new(0.5, 10, 1, -4))
             f:SetAttribute("R", NumberRange.new(1, 2))
+            f:SetAttribute("B", BrickColor.new("Bright red"))
+            assert(typeof(f:GetAttribute("B")) == "BrickColor" and f:GetAttribute("B").Number == 21)
             assert(f:GetAttribute("C") == Color3.new(1, 0.5, 0))
             assert(f:GetAttribute("F"):FuzzyEq(cf))
             assert(f:GetAttribute("U") == UDim2.new(0.5, 10, 1, -4))
@@ -146,6 +150,39 @@ mod datatypes {
             .eval()
             .unwrap();
         assert!(is_item.call::<bool>(back).unwrap());
+    }
+
+    /// `BrickColor.random` follows the run seed, from a stream of its own
+    /// that leaves the scripts' generators alone.
+    #[test]
+    fn brick_color_random_follows_the_run_seed() {
+        let draw = |seed: u64, bricks: bool| -> Vec<String> {
+            let src = format!(
+                r#"
+                local out = {{}}
+                local r = Random.new()
+                for _ = 1, 8 do
+                    if {bricks} then
+                        table.insert(out, BrickColor.random().Name)
+                    end
+                    table.insert(out, tostring(r:NextInteger(1, 1000)))
+                    table.insert(out, tostring(math.random(1, 1000)))
+                end
+                return out
+                "#
+            );
+            vm(seed).load(&src).eval().unwrap()
+        };
+        let (a, b, c) = (draw(5, true), draw(5, true), draw(6, true));
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        let numbers = |v: &[String]| -> Vec<String> {
+            v.iter()
+                .filter(|x| x.parse::<f64>().is_ok())
+                .cloned()
+                .collect()
+        };
+        assert_eq!(numbers(&a), draw(5, false));
     }
 
     #[test]

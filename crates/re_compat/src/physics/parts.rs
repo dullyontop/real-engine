@@ -1,6 +1,6 @@
 //! The members scripts use on parts and models: `BasePart`'s frame, mass and
-//! assembly properties, its impulses and joint helpers, `PVInstance`'s pivot,
-//! and the `Model` helpers.
+//! assembly properties, its brick colour, its impulses and joint helpers,
+//! `PVInstance`'s pivot, and the `Model` helpers.
 //!
 //! Property reads see the simulation as of the last step (plus velocities
 //! and impulses scripts asked for since); methods about assemblies sync the
@@ -12,14 +12,14 @@ use std::sync::Arc;
 use glam::{Quat, Vec3};
 use mlua::{Lua, MultiValue, Value as LuaValue, Vector};
 use re_physics::Pose;
-use re_reflect::Value;
+use re_reflect::{Color, Value};
 use re_scene::ecs as bevy_ecs;
 use re_scene::ecs::component::Component;
 use re_scene::{Entity, World};
 use re_script::codes::BAD_ARGUMENT;
 use re_types::physics::BodyKind;
 
-use super::layout::Layout;
+use super::layout::{Field, Layout};
 use super::pose::{
     cframe_value, from_orientation, from_rotation, orientation_of, pose_of, rotation_of,
     set_world_pose, world_pose,
@@ -27,7 +27,7 @@ use super::pose::{
 use super::sim::{CustomPhysics, Impulse, PartSnap, Sim};
 use super::{read_sim, with_sim};
 use crate::class::{Accessor, ClassMarker};
-use crate::datatypes::{CFrame, PhysicalProperties};
+use crate::datatypes::{BrickColor, CFrame, PhysicalProperties, brick_of, brick_value};
 use crate::error::CompatError;
 use crate::instance::methods_api::{args, ret};
 use crate::instance::{push, push_list, tree};
@@ -322,6 +322,26 @@ pub(crate) fn accessors() -> Vec<(&'static str, &'static str, Accessor)> {
                         f.dirty.push(e);
                     }
                     Ok(())
+                },
+            ),
+        ),
+        (
+            "BasePart",
+            "BrickColor",
+            accessor(
+                |w, e| {
+                    let b = match Field::find(w, "BasePart", "Color").and_then(|f| f.get(w, e)) {
+                        Some(Value::Color(c)) => BrickColor::nearest(c.r, c.g, c.b),
+                        _ => BrickColor::default(),
+                    };
+                    brick_value(b).map_err(|err| bad(err.to_string()))
+                },
+                |w, e, v| {
+                    let b = brick_of(&v).ok_or_else(|| bad("BrickColor must be a BrickColor"))?;
+                    let c = b.color();
+                    Field::find(w, "BasePart", "Color")
+                        .ok_or_else(|| bad("not a part"))?
+                        .set(w, e, Value::Color(Color::rgba(c.r, c.g, c.b, 1.0)))
                 },
             ),
         ),

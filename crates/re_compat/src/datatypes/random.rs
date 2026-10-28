@@ -95,6 +95,30 @@ fn splitmix64(mut x: u64) -> u64 {
     x ^ (x >> 31)
 }
 
+/// The engine's own generators of a VM, by stream (VM app data).
+#[derive(Default)]
+struct EngineStreams(std::collections::HashMap<u64, Random>);
+
+/// An integer in `[min, max]` from engine stream `stream` of the VM: the
+/// draws the engine makes itself (`BrickColor.random`, which spawn a
+/// character loads at). Each stream is a generator of its own, seeded from
+/// the run seed and the stream, so a run with the same seed draws the same
+/// numbers and no script's `Random` or `math.random` numbers change.
+pub(crate) fn engine_integer(lua: &Lua, stream: u64, min: i64, max: i64) -> i64 {
+    let seed = lua.app_data_ref::<SeedSource>().map_or(0, |s| s.seed);
+    if lua.app_data_ref::<EngineStreams>().is_none() {
+        lua.set_app_data(EngineStreams::default());
+    }
+    let mut streams = lua
+        .app_data_mut::<EngineStreams>()
+        .expect("the streams were just set");
+    streams
+        .0
+        .entry(stream)
+        .or_insert_with(|| Random::new(splitmix64(seed ^ splitmix64(!stream))))
+        .next_integer(min, max)
+}
+
 /// The seed `math.random` starts from in a VM with run seed `seed`: the
 /// 32 bits `math.randomseed` takes, from the derivation `Random.new()` uses
 /// at count 0, which no generator gets.

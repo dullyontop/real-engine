@@ -841,7 +841,7 @@ mod net {
     }
 
     #[test]
-    fn characters_load_at_the_first_enabled_spawn_with_a_force_field() {
+    fn characters_load_at_an_enabled_spawn_with_a_force_field() {
         let mut t = two_with_spawns();
         t.server(
             r#"
@@ -1395,5 +1395,244 @@ mod net {
         let (s, c) = t.out();
         assert_eq!(s, ["Player1\ttrue\tR15\ttrue"]);
         assert_eq!(c, ["Player1\ttrue\tR15\ttrue"]);
+    }
+
+    /// A `BrickColor` crosses a remote both ways and replicates as a
+    /// property and an attribute.
+    #[test]
+    fn brick_colours_cross_remotes_and_replicate() {
+        let mut t = two();
+        t.server(
+            r#"
+            local ev = Instance.new("RemoteEvent")
+            ev.Name = "Paint"
+            ev.Parent = game.ReplicatedStorage
+            ev.OnServerEvent:Connect(function(player, c)
+                print(player.Name, typeof(c), c.Name)
+            end)
+            local s = Instance.new("SpawnLocation")
+            s.Name = "Pad"
+            s.Anchored = true
+            s.TeamColor = BrickColor.new("Lime green")
+            s:SetAttribute("Paint", BrickColor.new("Hot pink"))
+            s.Parent = workspace
+            "#,
+        );
+        t.join(&PlayerSpec::numbered(1));
+        t.frames(2);
+        t.client(
+            r#"
+            game.ReplicatedStorage.Paint.OnClientEvent:Connect(function(c, list)
+                print(typeof(c), c.Name, list[1].Number)
+            end)
+            local pad = workspace.Pad
+            print(pad.TeamColor.Name, pad:GetAttribute("Paint").Name)
+            game.ReplicatedStorage.Paint:FireServer(BrickColor.new("Deep orange"))
+            "#,
+        );
+        t.frame();
+        t.server(
+            r#"game.ReplicatedStorage.Paint:FireAllClients(BrickColor.Red(), {BrickColor.palette(70)})"#,
+        );
+        t.frames(2);
+        t.no_errors();
+        let (s, c) = t.out();
+        assert_eq!(s, ["Player1\tBrickColor\tDeep orange"]);
+        assert_eq!(c, ["Lime green\tHot pink", "BrickColor\tBright red\t333"]);
+    }
+
+    /// Teams on both sides: auto-assignment on join, `Team`, `TeamColor` and
+    /// `Neutral`, the team events, and leaving.
+    #[test]
+    fn players_join_teams_and_team_events_fire_on_both_sides() {
+        let mut t = two();
+        t.server(
+            r#"
+            local Teams = game:GetService("Teams")
+            local function team(name, color, auto)
+                local tm = Instance.new("Team")
+                tm.Name = name
+                tm.TeamColor = BrickColor.new(color)
+                tm.AutoAssignable = auto
+                tm.Parent = Teams
+                tm.PlayerAdded:Connect(function(p) print(name .. " +" .. p.Name) end)
+                tm.PlayerRemoved:Connect(function(p) print(name .. " -" .. p.Name) end)
+            end
+            team("Red", "Bright red", true)
+            team("Blue", "Bright blue", true)
+            team("Watch", "White", false)
+            "#,
+        );
+        let p1 = t.join(&PlayerSpec::numbered(1));
+        t.join(&PlayerSpec::numbered(2));
+        t.join(&PlayerSpec::numbered(3));
+        t.frame();
+        t.server(
+            r#"
+            local Teams = game:GetService("Teams")
+            local counts = {}
+            for _, tm in Teams:GetTeams() do
+                table.insert(counts, tm.Name .. "=" .. #tm:GetPlayers())
+            end
+            print(table.concat(counts, " "))
+            local p = game.Players
+            print(p.Player1.Team.Name, p.Player2.Team.Name, p.Player3.Team.Name, p.Player1.Neutral)
+            print(p.Player2.TeamColor, p.Player2.TeamColor == Teams.Blue.TeamColor)
+            "#,
+        );
+        t.frame();
+        t.client(
+            r#"
+            local Teams = game:GetService("Teams")
+            local me = game.Players.LocalPlayer
+            print(me.Team.Name, me.TeamColor, #Teams:GetTeams())
+            Teams.Blue.PlayerAdded:Connect(function(p) print("Blue +" .. p.Name) end)
+            Teams.Red.PlayerRemoved:Connect(function(p) print("Red -" .. p.Name) end)
+            "#,
+        );
+        t.server(
+            r#"
+            local Teams = game:GetService("Teams")
+            local p = game.Players
+            p.Player1.Team = Teams.Blue
+            p.Player3.TeamColor = BrickColor.new("White")
+            p.Player2.Neutral = true
+            print(p.Player2.Team, p.Player2.TeamColor, p.Player3.Team.Name)
+            print(pcall(function() p.Player2.Team = workspace end))
+            "#,
+        );
+        t.frame();
+        t.server(
+            r#"
+            local p = game.Players.Player2
+            p.TeamColor = BrickColor.new("Bright red")
+            print(p.Neutral, p.Team.Name)
+            p.Team = nil
+            print(p.Neutral, p.Team, p.TeamColor)
+            "#,
+        );
+        t.frame();
+        t.leave(p1);
+        t.frames(2);
+        t.no_errors();
+        let (s, c) = t.out();
+        assert_eq!(
+            s[..6],
+            [
+                "Red +Player1",
+                "Blue +Player2",
+                "Red +Player3",
+                "Red=2 Blue=1 Watch=0",
+                "Red\tBlue\tRed\tfalse",
+                "Bright blue\ttrue",
+            ],
+            "{s:#?}"
+        );
+        assert_eq!(s[6], "nil\tBright blue\tWatch", "{s:#?}");
+        assert!(
+            s[7].starts_with("false\t") && s[7].contains("Team"),
+            "{s:#?}"
+        );
+        assert_eq!(
+            s[8..],
+            [
+                "Red -Player1",
+                "Blue -Player2",
+                "Red -Player3",
+                "Blue +Player1",
+                "Watch +Player3",
+                "false\tRed",
+                "true\tnil\tBright red",
+                "Blue -Player1",
+            ],
+            "{s:#?}"
+        );
+        assert_eq!(
+            c,
+            [
+                "Red\tBright red\t3",
+                "Red -Player1",
+                "Red -Player3",
+                "Blue +Player1",
+            ]
+        );
+    }
+
+    /// Spawns follow teams, a character loads at a random eligible spawn,
+    /// and touching a team-changing spawn changes the player's team.
+    #[test]
+    fn characters_load_at_their_teams_spawns_or_a_random_neutral_one() {
+        let mut t = two();
+        t.server(
+            r#"
+            local Teams = game:GetService("Teams")
+            for _, def in {{"Red", "Bright red"}, {"Green", "Bright green"}} do
+                local tm = Instance.new("Team")
+                tm.Name = def[1]
+                tm.TeamColor = BrickColor.new(def[2])
+                tm.AutoAssignable = false
+                tm.Parent = Teams
+            end
+            local function spawn(name, x, color)
+                local s = Instance.new("SpawnLocation")
+                s.Name = name
+                s.Anchored = true
+                s.Position = Vector3.new(x, 0, 0)
+                s.Neutral = color == nil
+                if color then
+                    s.TeamColor = BrickColor.new(color)
+                end
+                s.Duration = 0
+                s.Parent = workspace
+                return s
+            end
+            spawn("RedSpawn", 0, "Bright red")
+            spawn("GreenSpawn", 200, "Bright green")
+            "#,
+        );
+        t.join(&PlayerSpec::numbered(1));
+        t.frames(2);
+        t.server(
+            r#"
+            local Teams = game:GetService("Teams")
+            local p = game.Players.Player1
+            print(p.Neutral, p.Team)
+            p.Team = Teams.Red
+            p:LoadCharacter()
+            print(math.round(p.Character.HumanoidRootPart.Position.X))
+            p.TeamColor = BrickColor.new("Bright green")
+            p:LoadCharacter()
+            print(p.Team.Name, math.round(p.Character.HumanoidRootPart.Position.X))
+            -- Three neutral spawns: a neutral player loads at a random one
+            -- of them, never at a team's.
+            for i = 1, 3 do
+                local s = Instance.new("SpawnLocation")
+                s.Name = "Free" .. i
+                s.Anchored = true
+                s.Position = Vector3.new(-100 * i, 0, 0)
+                s.Duration = 0
+                s.Parent = workspace
+            end
+            p.Neutral = true
+            local seen = {}
+            for _ = 1, 12 do
+                p:LoadCharacter()
+                seen[math.round(p.Character.HumanoidRootPart.Position.X)] = true
+            end
+            local xs = {}
+            for x in seen do
+                table.insert(xs, x)
+            end
+            table.sort(xs)
+            print(table.concat(xs, " "))
+            "#,
+        );
+        t.frame();
+        t.no_errors();
+        let (s, _) = t.out();
+        assert_eq!(s[..3], ["true\tnil", "0", "Green\t200"], "{s:#?}");
+        let xs: Vec<i64> = s[3].split(' ').map(|x| x.parse().unwrap()).collect();
+        assert!(xs.len() > 1, "always the same spawn: {s:#?}");
+        assert!(xs.iter().all(|x| [-300, -200, -100].contains(x)), "{s:#?}");
     }
 }
