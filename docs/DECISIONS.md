@@ -320,6 +320,8 @@ The crate's default `prebuilt` feature downloads binaries during the build, whic
 
 **Amendment (maintainer audit, 2026-10-26).** The first consequence is settled: `build-windows` and `build-macos` have run `re_script`'s tests since WP18 PR "blocking" (#87), and `cpu_budget_stops_runaway_loops_and_the_context_stays_usable` passes on MSVC and on macOS. No desktop build profile sets `panic = "abort"`. The JIT is still `re_script`'s opt-in `jit` feature, off by default.
 
+**Amendment (M4, WP35 PR "budget"; accepted by the maintainer, 2026-10-28).** The CPU budget counts safepoints, not wall time, so a call stops at the same point on every machine, in every build profile and in both runs of a replay (the sample game's F21: slower runners failed replays). Each outer budgeted call (a resume of a script thread, or a synchronous call into Luau; nested calls share it) may run `[scripts] budget` safepoints, 1,000,000 by default, in every context, compat's included; past it `RE3010` stops it, and every later safepoint raises until the next call, so `pcall` still cannot swallow it. A safepoint is an interrupt call with `gc < 0`: Luau 0.740 makes them before calls and returns and at loop back edges, the same on every platform and at debug levels 1 and 2 (except in a function with a jump longer than 32,767 instructions, where level 2's longer code can change which jumps the bytecode builder sends through an interrupting `JUMPX`). The default is the old 4 ms at 250,000 safepoints a millisecond, a little faster than the fastest loop measured (an empty numeric `for`, 5 ns a safepoint), and 287 times the largest call in the example projects' replays (the town's, 3,479; `research/m4/wp35/budget`). The interrupt still reads the clock every 1,024 safepoints for a 10 s wall-clock backstop, `RE3027`, machine-dependent like `RE4102`; `untimed` moves it as it moved the deadline. `budget` is a `u64` of at least 1. A project that sets `cpu_budget_ms` and not `budget` gets `cpu_budget_ms × 250,000` (saturating) with the warning `RE0536`; `real import` writes `budget = 2500000000`, its old 10 s. The run report and `real verify` give each context's largest call in safepoints beside its budget. A `jit` build may count slightly differently, so `jit` stays off by default and outside D2.
+
 ## ADR-0012: Engine-native Luau API in M1; Roblox-style compatibility layer in M2
 
 **Status:** Accepted. The owner chose "Demo first" (open question 3, resolved): M1 ships the playable demo on the engine-native API, and M2's goal is the sample scenes running through the Roblox-style layer. Whether a mechanical migration step on the way is acceptable is still open.
@@ -586,6 +588,15 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 **Consequences.** The policy is checked through `re_command::PolicyCheck`. Every caller gets it, and the check is not specific to MCP.
 
+**Amendment (M4, WP44 PR "safety"; accepted by the maintainer, 2026-10-28).** Path checks for every tier that writes. The tooling audit found that `screenshot`, a `read` command, replaced any project file with a PNG (`real.toml`, `.git/config`), even for an agent with no policy file and even as a dry run, and that the `graph` argument of `proc.create_source` and of the six graph-editing commands, and `scene.apply`'s `set_doc` document, escaped the scopes, because the policy checked only `edit` and `destructive` calls, and only arguments named `path`, `dest`, `*_path` or `paths`; and the protected folders and `deny` scopes compared paths byte for byte, which case-insensitive and Windows file systems do not. From this amendment:
+- Commands declare their path arguments in `CommandSpec::paths` (serialised when not empty): a JSON pointer into the arguments (`*` for every array element or map member: `/ops/*/doc`) and an access, `read`, `write` or `output` (any other value counts as `write`), written on the argument's field as `#[schemars(extend("x-real-path" = "write"))]` and collected by `register` from the input schema. The naming convention is gone.
+- For every call that is not a dry run, whatever the command's tier, the policy checks each declared `write` and `output` path. Every such path is relative, with no `..`, no part that ends in `.` or a space, contains `:`, has the shape of an 8.3 alias (`~` and a digit in at most eight characters, and an extension of at most three), or is a Windows device name, and no existing part that is a link (a policy that does not know its project refuses). A `write` path is also outside `.real/` and `.git/` and outside every `deny` scope, both compared ASCII case-insensitively without the code points HFS+ ignores, and inside an `allow` scope as written. An `output` path is a `.png`: anywhere under `.real/out/` with only those first checks, or elsewhere checked as a write and not existing yet, so `readOnlyHint` stays true of existing files. `read` paths are not checked. A dry run writes nothing at any tier: `screenshot` returns the path it would write.
+- A file a command names itself (`proc.create_source`'s default graph file, `asset.import`'s default destination and sidecar, `proc.bake`'s files) is checked with `Call::check_write`, which asks the dispatching policy (`PolicyCheck::check_write`, allowing everything by default; wrapping policies pass it on). `.real/out/`, `.real/agent/` and `.real/cache/` are the engine's and are not checked; `checkpoint.restore` puts back only files its session recorded. In the editor, agent calls run under the editor's policy after `real mcp` checks their arguments, until the approvals amendment.
+- The scopes govern files; the tier governs the World, so the entry scene that saves an `edit` call's World changes is not scope-checked.
+- The default scopes gain `anims/**`, and a screenshot path must end in `.png` for every caller (`RE0516`).
+- A test walks every command of the agent-facing registry, as calls and as dry runs, with arguments aimed at protected files and their other spellings: under a read-only policy no file changes outside `.real/out/`, `.real/agent/` and `.real/cache/`; under narrowed scopes nothing changes outside them, those folders and the entry scene; under a wide policy protected, denied and outside files never change. It fails on a command it has no arguments for.
+- As built, the budgeted operations write under `.real/out/`, not `.real/agent/` (above, and ADR-0026 answer 6): `play.run`'s capture goes to `.real/out/play/`, and `graph.generate` returns a report and no image.
+
 ## ADR-0021: Profiling: our own `profile_scope!` over puffin or Tracy
 
 **Status:** Accepted
@@ -627,6 +638,12 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 **Alternatives.** Separate commands with no shared report.
 
 **Consequences.** CI and agents both run `real verify --json` and parse the same structure.
+
+**Amendment (M4, WP32 PRs "visibility" and "sync"; accepted by the maintainer, 2026-10-28).** PerfReport carries the renderer statistics this ADR promised, and Sync's parts. Evidence: WP32's phase-0 probe (`research/m4/wp32/probe-results.md`).
+- **`PerfReport.renderer` is typed.** When a renderer drew frames: the backend and adapter; `frames`, the frames whose main view it drew; `resources`, the live meshes, textures and materials with their GPU bytes (`RenderStats` at the end of the run); `per_frame`, each `FrameStats` count as `{ mean, p95, max }` (draw calls, instances, triangles, culled and skipped items, shadow draw calls and instances, point and spot lights, lights culled and dropped, effect quads, highlights, world quads, post passes); `extra_views`, the other views drawn (a compat game's surfaces and viewports, an editor preview), whose statistics are left out of `per_frame`; `gpu_ms`; and `warnings`, every renderer warning of the run counted by code. `FrameStats` gains `shadow_draw_calls`, `lights_culled` and `lights_dropped`. `schemas/verify-report.schema.json` is generated from the Rust types as before; old reports still validate.
+- **GPU pass times.** The renderer requests `TIMESTAMP_QUERY` on Vulkan, DX12, Metal and WebGPU when the adapter offers it, never on GL, whose timestamps read 10 to 200 times too short on the reference container's llvmpipe. Each pass writes its start and end; `gpu_ms` groups them as shadow, scene, post, overlay (highlights and on-top world quads), ui and total. The queries are resolved at the end of the frame and read back with `map_buffer_on_submit` into one of three buffers in turn, never waited for. They are measurements, not checks.
+- **Renderer warnings reach people once per code per session.** Every `FrameReport` that `re_app` gets (a window's frame, a capture, a compat game's views and surfaces, the editor's game view) goes to `Graphics`. The first warning of each code since the app got its GPU side goes into the app's diagnostics, and from there into the editor's console, `real run`'s report and `real verify`'s stages, and is logged once with `tracing::warn!`; later ones are only counted.
+- **`phase_parts`** (PR "sync"): the time of named parts of a phase per frame as `{ mean, p95, max }`. Sync's parts are propagate, assets, render, hud, net, compat, effects and audio; a part that did not run in a frame counts 0 there, so the parts add up to the phase. WP32's valley targets (Sync at most 3 ms mean, the renderer's `render_submit` at most 2 ms) are read from it and from `render_submit`.
 
 ## ADR-0023: CI: Linux with lavapipe blocks merges; Windows and macOS are reported only
 
@@ -846,6 +863,12 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 
 **Consequences.** gilrs keeps its default features: without them gilrs-core fails to compile.
 
+**Amendment (M4, WP37 PR "rebinding"; accepted by the maintainer, 2026-10-28).** Bindings can change at run time, actions can be grouped into contexts, and an axis can be one-dimensional.
+- **Rebinding.** Scripts read and replace an action's bindings as a whole list, in `real.toml`'s text: `input.bindings`, `input.rebind`, `input.reset_bindings`, `input.bound_to`, and `input.pressed_binding` (the first button any device pressed this frame, as a binding). `rebind` checks the list as `[input]` is checked (`RE7201`, `RE7202`, `RE7203`) and cannot create actions, so the action layout a replay is checked against stays `[input]`'s. A rebind takes effect at the next Input phase and is kept in the player's settings as an override per action (ADR-0059 §8). At start, an override that no longer fits (an action that is gone, another kind, a name this build does not know) is dropped with `RE7210`, and the action keeps `real.toml`'s bindings.
+- **Contexts.** `[input.contexts.<name>]` lists actions (`actions = [...]`; `enabled = false` starts it off). An action in no context is always on; an action in contexts is on while at least one of them is enabled; an action that is off reads idle. A button action that turns on while it is down stays idle until it is released. Scripts switch contexts with `input.set_context`, `input.context_enabled` and `input.contexts`, from the next Input phase. The filter runs after the frame's actions are made, from the bindings or from a replay, so playback filters as the run did, and it also takes the actions the UI blocks while it has focus (WP36). Context state is not world state: it is not hashed, a scene switch keeps it, and `world.restart()` resets it. `RE7208`: a context names an unknown action; `RE7209`: an unknown context.
+- **One-dimensional sources.** `buttons = [negative, positive]`, `button`, `trigger = "left" | "right"` (the analog value gilrs reports for `LeftTrigger2` and `RightTrigger2` through `ButtonChanged`, with a dead zone of 0.05 by default), `stick` and `mouse_delta` with `axis = "x" | "y"`, and `wheel` (notches times a scale). Each gives `x` with `y = 0`, so `ActionFrame` and the replay format are unchanged. `input.value(action)` reads an axis action's `x`, or 1 while a button action is held.
+- **Replays.** A recording run's bindings start from `real.toml` and `data/seed/` (ADR-0057 §10). Replay version 2 gains an optional `start.bindings` (every action's bindings at the first frame), which playback applies in place of the seed's overrides, so scripts read the bindings the run read.
+
 ## ADR-0031: Static cells for large static worlds (M2)
 
 **Status:** Accepted. Evidence: WP13's `bigmap` benchmark (`crates/re_compat/examples/bigmap.rs`), merged in #65.
@@ -1056,6 +1079,15 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 - *The harness*, the options and report of `cargo xtask d2`: `--project` can be repeated, `--replay` needs a single `--project`, `--json` prints the report and `--out FILE` writes it. The report is `{"schema", "platform": {"os", "arch", "target"}, "rustc", "projects": [{"project", "replays": [{"file", "frames", "checkpoints": [{"frame", "state_hash"}]}]}]}`, with one entry in `projects` per project.
 - *The harness*, "`real verify` names differing components within one machine": `real verify`'s replay stage (`re_app::verify`) compares only the final `state_hash` of two runs and reports `RE0508` with both hashes; it names no frame or component. The per-frame tool on one machine is `real run --headless --replay R --checkpoints K`.
 - *Luau*, "each VM calls `lua.set_compiler(compile::compiler())`": since #177 each VM calls `lua.set_compiler(compile::compiler_for(files))`, which is `compiler()` in a packaged game and `compiler()` at debug level 2 in a development run (ADR-0045). Both disable the same builtins, so every chunk still follows these rules.
+
+**Amendment (M4, WP38 PR "ids"; accepted by the maintainer, 2026-10-28).** Run-time ids repeat. A native game that spawned without ids took them from a clock-seeded `IdGen`, and `World::fork` gave its copy a fresh one, so such a game hashed differently on every run.
+- `IdGen::session(seed)` is `IdGen::seeded(seed as u64 ^ 0x6e61_7469_7665_0001)`, a stream apart from compat's server and client streams and from `math.random`'s.
+- The App seeds its World's generator with the run's seed (`[scripts] seed`, or the replay's) at one point: the start of `begin_frame`, before replay commands and scripts run, when its seeding flag is unset and no compat contexts run. The flag is unset when the App is made, and `play_replay` and `restart` clear it, so a replay or a restart seeds at its next frame. A compat game's first frame seeds the World before the split, after which compat's fixed server and client streams take over as before. A scene switch keeps the World and its stream.
+- Editing worlds keep the clock seed until they are played (`edit_frame` never seeds), so ids added on two branches still do not clash.
+- `World::fork` copies the generator; a fork played as a new App (`play.run`, the editor's Play) is seeded at its first frame, so it makes the ids `real run` makes.
+- `IdGen::state`, `World::id_gen` and `World::set_id_gen` read and replace it, for tests and saves. It stays out of `state_hash`.
+- An instance's root takes its id from the generator when none is given; the entities it generates are `<root id>/<key>` (ADR-0060).
+- No replay or golden in the repository spawned without an id, so none was re-recorded.
 
 ## ADR-0037: Packaged games: one archive behind `ProjectFiles`, Luau bytecode, zstd, and per-platform bundles
 
@@ -1342,6 +1374,12 @@ Measured (lavapipe and llvmpipe GL, wgpu 30.0.1; measurements §1–§3):
 **Amendment (maintainer audit, 2026-10-26).** Where the text above, or an earlier amendment, says something the code at the end of M3 does not do:
 - *Post chain*, "The `real new` templates and the valley set `PbrNeutral`", and the alternative's "templates opt in for them": only `examples/valley/real.toml` sets `tone_mapping = "PbrNeutral"` (under `[render.post]`). The `real new` templates set no tone mapping, so a new project starts with `re_types::render::ToneMapping::None`.
 
+**Amendment (M4, WP32 PRs "depth", "lights and masks" and "materials"; accepted by the maintainer, 2026-10-28).** Evidence: WP32's phase-0 probe (`research/m4/wp32/probe-results.md`).
+- **Reversed Z (PR "depth").** The scene projection is `glam::camera::rh::proj::directx::perspective_infinite_reverse(fov_y, aspect, near)`. The scene-depth pipelines compare `Greater` (`GreaterEqual` where they compared `LessEqual`), the scene pass and the highlight mask clear depth to 0.0, and the compare functions and the clear value are named once in `re_render`'s `post` module, so every later pass follows them. The sky unprojects at NDC depth 1. `Camera.far` still ends the view on the CPU: items, terrain chunks, instance sets and lights are culled against the finite frustum, and the GPU no longer clips there, so a mesh that crosses `far` is drawn whole. Shadow maps keep standard Z. Measured: a road 5 cm above the ground, seen from 100 m up, lost to the ground from 231 m with standard Z on lavapipe (264 m on llvmpipe GL) and nowhere within 6 km with reversed Z; a test requires the road to win out to 2 km on both backends.
+- **Masks and blends in the shadows (PR "lights and masks").** `Mask` casters draw through alpha-tested shadow pipelines (rigid and skinned) that sample the base colour texture and discard below the cutoff; only they are batched by material, and the highlight mask draws them the same way. Under MSAA, `Mask` pipelines use alpha to coverage, with alpha sharpened around the cutoff. A blended item casts no shadow unless it also has the new `DrawFlags::SOLID_SHADOW` (bit 3), which compat sets for its transparent parts. Material samplers use 16x anisotropic filtering where the adapter has `DownlevelFlags::ANISOTROPIC_FILTERING`.
+- **Lights by visibility (PR "lights and masks").** A point light is kept when its sphere meets the culling frustum, a spot light when its cone's bounding sphere does; of those, the 16 point and 16 spot lights nearest the camera by distance minus range (stable) are drawn, and visible lights beyond 16 are `RE6017`, shown once per session (ADR-0022's amendment for WP32). `MAX_POINT_LIGHTS` and `MAX_SPOT_LIGHTS` are 16 and `FrameUniform` is 1,936 bytes. A test builds every pipeline under `Limits::downlevel_webgl2_defaults()` and checks, per stage, the uniform binding size, the sampled textures, the samplers and the pairs GL makes of them, the uniform buffers, the vertex attributes and the inter-stage variables.
+- **Material slots (PR "materials").** `MaterialDesc` gains `emissive_texture`, `occlusion_texture`, `occlusion_strength` (1.0), `uv_transform` (`UvTransform`: offset, rotation and scale, as `KHR_texture_transform`) and `sampler` (`SamplerDesc`: wrap per axis, linear or nearest filters), all with serde defaults, and material files take the same fields. Occlusion darkens only the ambient light (and, from WP33, image-based light). The renderer keeps one sampler per distinct `SamplerDesc` and gives each material one, so the forward pass binds six sampled textures and two samplers, which leaves WP33 ten of each under WebGL2's 16. glTF import reads the emissive and occlusion textures, `KHR_materials_unlit`, the base colour texture's sampler and `KHR_texture_transform` (the workspace enables `gltf`'s `KHR_materials_unlit` and `KHR_texture_transform` features), and warns with `GLTF_PART_SKIPPED` for a `texCoord` other than 0 and for a slot whose sampler or transform differs from the base colour's. `DrawItem` and `SkinnedDrawItem` gain `tint: [f32; 3]` (white), carried in the free `w` lanes of the instance's normal matrix, so `InstanceRaw` stays 128 bytes and tinted items still batch.
+
 ## ADR-0039: Skins from glTF, GPU skinning, and animation graphs as data
 
 **Status:** Accepted (maintainer, 2026-10-15; drafted by WP21). Built in WP21 PRs "skins" (#97, with the `SkinnedMesh` component in #101) and "graphs" (#145), with the changes in the amendments at the end. Evidence: the WP21 probe (`research/m3/wp21/`): the skinned vertex layout and the vertex-stage palette run on wgpu 30.0.1 on Vulkan (lavapipe) and GL (llvmpipe through EGL) and match the CPU to 4.8e-7; pose evaluation costs 20.8 µs for a 65-joint character with three clips; f32 evaluation stays within 8.5e-6 of an f64 reference even on a 63-deep joint chain.
@@ -1443,6 +1481,20 @@ Measured (lavapipe and llvmpipe GL, wgpu 30.0.1; measurements §1–§3):
 - *Pose evaluation* and *Seams for other WPs*, `Skeleton`: `re_anim` has no `Skeleton` type. `re_anim::skin` works on `re_types::anim::SkinData` directly, with `Pose`, `BoundClip`, `ModelPose` and `palette_into`, and the compat layer's skinned `MeshPart`s use those (`crates/re_compat/src/render/models.rs`).
 - *Seams for other WPs*, ragdolls "with per-joint blend weights": each ragdoll has one blend weight, `re_types::physics::RagdollBlend.weight`, and `re_app::sync::ragdoll::pull` blends every joint by it into `re_anim::skin::ModelPose` before the palette is rebuilt.
 - `GLTF_IMPORTER_VERSION` (2 in *glTF import*, 3 in the amendment above): it is 4 since #164, which added block-compressed images (ADR-0047).
+
+**Amendment (M4, WP45 PR "events"; accepted by the maintainer, 2026-10-28).** Clip markers, montages and layer weights from scripts; with ADR-0057 §2 this is the contract "Animation and script events".
+- A `clip` node may carry `markers`, `[{ time, name, value }]` (`re_types::anim::ClipMarker`): `time` in seconds of the clip's own timeline, `name` 1 to 64 bytes, `value` a string of at most 256 bytes. The format stays version 1.
+- A step fires a marker at `t` once for each whole `k` with `x0 < t + k·d <= x1` (backward: `x1 <= t + k·d < x0`), `x0` and `x1` being the clip node's unwrapped f64 clip times before and after the step and `d` the clip's duration; a marker at the start also fires in the step its state or montage starts. Only layers with weight above 0 fire; in a layer only the current state (not one being faded out); in a blend space only the heaviest child, the first in `children` order on a tie; an additive node fires its base, and its additive child while its weight is above 0; montages fire while they play. A paused graph fires nothing.
+- `anim_skin::step` returns each step's `re_types::anim::AnimEvent { entity, clip, marker, value, layer }` in entity order, then layer order, then montages in start order, and `re_app` raises each as `anim.marker` in PreAnimation (ADR-0057 §2).
+- `montages`, each `{ id, clip, speed, looping, mask, blend, reference, fade_in, fade_out, root_motion, markers }`, play over the layers by `anim.play(e, name, options?)`, which also plays a clip reference once as an ad hoc montage; `anim.stop(e, name?, fade?)` and `anim.playing(e, name)`. At most 8 play per entity.
+- `anim.set_weight(e, layer, weight, seconds?)` and `anim.weight(e, layer)` set and read a layer's weight.
+- `write_state` adds montages and layer weights to `state_hash`. `HostServices` gains provided methods `anim_play`, `anim_stop`, `anim_playing`, `anim_set_weight` and `anim_weight`; `animgraph.edit` takes `montage` elements. Code: `RE7612` an unknown layer or montage, or a value out of range.
+
+**Amendment (M4, WP45 PR "ik"; accepted by the maintainer, 2026-10-28).** IK nodes and skinned poses drawn between steps.
+- The graph's `ik` list holds `foot` nodes (`legs` of `hip`, `knee`, `foot` (a joint or a point in a joint's frame) and `pole`; `pelvis`, `reach`, `max_tilt`) and `look_at` nodes (`joint`, `forward`, `target`, `max_angle`), each with `weight` and `weight_param`. Parameters gain the `vec3` type (`ParamValue::Vec3`, `AnimValue::Vec3`).
+- IK nodes are solved at the start of PostSimulation, after the character has moved. Foot IK casts a ray down at each foot (skipping the bodies of the carrying character and all of its descendants), raises or lowers each foot by the ground's height there relative to the entity's origin (clamped to `reach`), lowers the pelvis by the deepest offset, bends each leg with `two_bone` and tilts foot joints to the ground by at most `max_tilt`; the pelvis offset moves at most 1 m/s and each leg's at most 3 m/s; it fades out over 0.1 s while the skin's character is off the ground. Its offsets and fade are added to `state_hash`. Look-at uses `look_at_delta`, limited to `max_angle`. Angle limits are computed with `libm` at bind time.
+- A skin whose entity is drawn interpolated (ADR-0057 §7's `DrawnPoses`) is drawn from the nlerp of its previous and current local poses at the frame's alpha, and its `BoneAttachment` children at their interpolated joints; other skins, new skins and ragdoll-blended skins draw the step's pose. Simulation reads keep the step's pose.
+- `animgraph.edit` takes `ik` elements. Code: `RE7613` an IK joint the skeleton lacks (a warning; the node is skipped).
 
 ## ADR-0040: Vehicles and ragdolls: oxijolt's `vehicle` and `ragdoll` modules behind `PhysicsCmd`
 
@@ -2182,7 +2234,7 @@ A Rust version computing in f32 is not bit-identical to the Luau one (Luau round
 - *1. Node and generator versions*, `NodeCtx::version()` (also under "Frozen at versioning" and *Alternatives*): `NodeCtx::version` is a public field, read as `ctx.version`, not a method.
 - *`real migrate-graph`*, the per-node `output_changed`: each node entry (`re_proc::migrate::NodeMigration`) has `changes_output` instead, taken from its migration steps' flags and always true for a Luau kind's own `migrate`. `output_changed` is per source, from comparing the fragment hashes, and a source entry also names its `file` or `builder` and carries its `diagnostics`.
 - *`real migrate-graph`*, builder scripts' `{ script, node, kind, from, to }`: there is no such list. A builder source is an ordinary source entry whose `builder` names the script, with the usual `nodes`. `real migrate-graph`'s text output prints the `kind@N` to write under each of those nodes.
-- *3. Structural overrides*, "WP25's canvas and outliner map a hierarchy drag of a generated entity to `proc.move`": not built. The editor's hierarchy panel (`crates/re_editor/src/panels.rs`) has no drag and drop, so `proc.move` is sent only by name (through `real do`, MCP or the editor's command palette).
+- *3. Structural overrides*, "WP25's canvas and outliner map a hierarchy drag of a generated entity to `proc.move`": not built. The editor's hierarchy panel (`crates/re_editor/src/panels/hierarchy.rs` since #192) has no drag and drop, so `proc.move` is sent only by name (through `real do`, MCP or the editor's command palette).
 - *4. Luau generators*, "`ctx` gives the node's seed and a deterministic generator over it (re_noise's `Pcg32`), the recorded version, the field size and cell": the `ctx` table holds `node` (the node's id), `version`, `seed`, `rng` (a `Pcg32`) and `log`, and nothing about fields. Each field input carries its own `n`, `spacing`, `offset` and `samples` (`crates/re_script/src/generator/marshal.rs`).
 - *6. Diagnostics*: also `RE4023`, a refused `proc.move`, `proc.replace`, `proc.insert` or `proc.clear_structure` (not a generated entity or a procedural source, a streamed source, a parent outside the source's output, a cycle, or a replacement that does not turn into entities).
 
@@ -2262,6 +2314,16 @@ A Rust version computing in f32 is not bit-identical to the Luau one (Luau round
 - *Gizmos*, "the selected entities' world transforms (several at once)": the editor has a single selection (`Editor::selected`), and the gizmo (`re_editor::gizmo`) works on that one entity's world transform.
 - *Consequences*, "The hierarchy panel maps a drag of a generated entity to `proc.move`": not built. The hierarchy panel has no drag and drop (ADR-0043's amendment of the same date).
 - *Crates* and *Consequences*, "three new transitive crates", and the amendment's "duplicate and proc-macro2-diagnostics, listed above, are not pulled in": they are. egui_dock depends on duplicate, which depends on proc-macro2-diagnostics, and both came into `Cargo.lock` with #91. So did enumn 0.1.14 (MIT OR Apache-2.0), which `egui/serde` pulls in through `accesskit/serde` once egui_dock's `serde` feature is on, so there are four new transitive crates.
+
+**Amendment (M4, WP42 PRs "camera", "picking" and "edit"; accepted by the maintainer, 2026-10-28).** Editor state, multiple selection, the clipboard and picking; the full draft is in the M4 research files (`research/m4/adr/ADR-0044-amendment-wp42-scene-view.md`).
+- *Editor state is not scene state.* The selection, the editor camera, gizmo and snap settings, view toggles, the dock, each panel's view state and the clipboard are never commands and never in the undo history, the World, `state_hash` or the scene file. `.real/editor/layout.json` becomes version 2: `dock`, `gizmo` and `collapsed`, plus `camera`, `view`, `selection` and `panels` (a map from a panel's id to that panel's own JSON, read with defaults when missing or unreadable). The editor reads version 1 and writes version 2. Preferences (keymap, camera speeds, the external code editor) are kept in `.real/editor/settings.json`.
+- *The editor camera.* `GameView` draws the snapshot with the editor's camera in place of `snapshot.camera`: orbit, pan, zoom towards the cursor, fly with the right button held, focus on the selection (F), frame all (Shift+F) and a speed setting; the gizmo, picking and the overlays use the same camera, and "look through the game camera" is a toggle. In edit mode the editor's world streams around it: `Streamer::set_view_focus` (kept on the `Streamer` only, dropped by `Streamer::forked`) replaces the world's focuses for the cells and the terrain view, with `Lateness::Late` and the terrain view on, and leaves the floating origin, the way each focus is going and terrain collision as they are; the cells of entities edited in the session stay pinned so undo never meets `RE4304`. `App::fork_for_play` drops the view focus and those pins. A headless session with no editor never streams in edit mode.
+- *Overlays in the editor's view only*, never in `screenshot`, goldens or the play view: a grid of depth-tested `debug_lines`, an axis indicator and light and camera icons drawn by egui, and the selection and hover outlines as `SceneExtras::highlights` (not `DrawFlags::SELECTED`).
+- *Multiple selection.* An ordered set of ids with an active entity, which the Inspector edits; click, Ctrl+click, Shift+click and a box in the viewport, the same in the Hierarchy. The gizmo moves the topmost selected entities about the active entity or the selection's centre, as one `scene.apply` per live update under the drag's one `coalesce` key, so a drag is one undo step however many entities move.
+- *Picking.* An on-demand id pass (`re_render/src/pick.rs`, through the prepared-frame seam of WP32's split) draws the view's snapshot without MSAA into an `R32Uint` id target, with the hit's position and face normal. Ids index a pick table built with the pass: draw and skinned items name their entity (terrain chunks their source), an instance of an instance set names `<source>/<key>` through ADR-0052's per-set source and point ids (the pass draws each set whole), and a merged compat cell names the part whose bounds hold the hit point. A click reads a 5×5 neighbourhood and waits; a hover pick is read a frame later; a box keeps every id with a visible pixel. A hit gives the id, the world point, the normal and the camera ray. Agents ask `pick {x, y, w?, h?}` (Read tier), in the pixels and view of `screenshot`.
+- *Delete, copy and paste.* Delete is one `scene.apply` of `despawn` ops. Copy writes JSON text to the system clipboard (egui-winit's): `{"format": "real-engine/entities", "version": 1, "subtrees": [{"world", "entities": [EntityDoc, ...]}]}`. Paste is one `scene.apply` of `restore` ops with fresh ids (the original's trailing number moved to the next free one, or `World::new_id`), references inside the pasted set remapped and others kept when their entity exists, and roots placed under the active entity's parent with their world transforms kept. Generated entities that name a derived asset are left out with a note naming `proc.bake`. Duplicate (Ctrl+D) pastes in place without the clipboard.
+- *The Hierarchy* renames (`rename`), edits notes (`set_note`), searches by name, id or component, reparents by drag (`entity.reparent`, or `proc.move` within a generated entity's own source) and has a context menu whose procedural entries are WP43's.
+- *Ownership in `re_editor`.* `panels.rs` is split into a module per panel; WP43 owns `panels/procedural.rs` and `src/widgets.rs` (the field widgets), and WP42 the rest.
 
 ## ADR-0045: The script debugger: Luau's own breakpoints, stepping on temporary breakpoints, pausing by yield
 
@@ -2345,6 +2407,8 @@ A Rust version computing in f32 is not bit-identical to the Luau one (Luau round
 - *Pausing*, a pause request "is checked in the budget interrupt": it is not. `re_script::debug::service`, which the app calls at the start of each frame, arms it: it sets temporary breakpoints on every line of every registered chunk, and the next line an attached script runs stops with reason `pause`.
 - *Values are read without running Luau*, "for engine types, the fields the binding exposes": not built. A userdata shows only its type name (its metatable's `__type` or `__name`, read raw), and only tables expand (`crates/re_script/src/debug/values.rs`).
 - *DAP*, "Threads in DAP are script contexts (game, tools, compat server and client)": the tools context is never attached. The app attaches the game context and, in a compat project, the server and client contexts (`App::set_debugger`).
+
+**Amendment (M4, WP42 PR "play"; accepted by the maintainer, 2026-10-28).** The debugger on the play world; the full draft is in the M4 research files (`research/m4/adr/ADR-0045-amendment-wp42-play-debugger.md`). The editor sets its debugger on the play app of a play session (ADR-0063), never on the edit app, which runs no scripts: the game context, or a Roblox-style project's server and client contexts, attach when Play starts their VMs, with the breakpoints already set; Stop calls `set_debugger(None)` on the play app before dropping it, so no thread stays parked. Breakpoints belong to the debugger and outlive sessions, and a DAP client of `real editor --debug` stays connected across them, seeing contexts start and exit. In the editor a stop freezes the play session: no frame runs while a play context is stopped, the session calls `App::service_debugger` on each editor frame so that Continue or a step takes effect, and the next frame runs the resumed thread, so a step advances the world by at most one frame. `real run --debug` keeps the behaviour of #157 (the game runs on). The panel's Pause stops scripts at their next line; the toolbar's Pause freezes frames without stopping a script. A stop that cannot park is recorded with `RE3070` unless a DAP client waits for it, in which case the editor's window waits too. F5 continues (in edit mode it plays, and while paused it resumes), F10 steps over, F11 steps in and Shift+F11 steps out. `re_script/src/debug/` does not change.
 
 ## ADR-0046: The M3 AI track: templates and recipes as data, an evaluation harness that never calls a model, and MCP over streamable HTTP on localhost
 
@@ -2788,6 +2852,8 @@ ADR-0010 (the frame loop is ours) and ADR-0036 (D2 determinism, which asked the 
 - §9, "creates the audio device on that click" and "CI starts Chromium with `--autoplay-policy=no-user-gesture-required`": the overlay's click starts the game, and the audio device opens on the first key press or mouse click in the game's canvas (`re_app::web::play`). The page check in `tools/web-test/play.mjs` starts Chromium with `--autoplay-policy=user-gesture-required`.
 - §9, "tests it with a scripted gamepad in Chromium": that test is not built. `re_app::web::play` polls `re_input::Gamepads` each frame, but no browser test drives a gamepad.
 
+**Amendment (M4, WP31 PR "web budget"; accepted by the maintainer, 2026-10-28).** §7's budget is 10 MB: CI fails a `real_bg.wasm` above 10,000,000 bytes gzipped at level 9 (`tools/xtask/src/web_test.rs`), measured as before on the island's build after `wasm-opt -Oz`. It was raised because the runtime reached 7,999,541 bytes with the sample game (#191), 459 under 8 MB, before the M4 runtime work began. `build-web` writes the size, the budget and the margin (bytes and percent) to its job summary, from the line `cargo xtask web-test` prints, and adds a warning annotation, without failing, when the margin is under 5%. M4 adds no runtime variants; before the budget moves again, a new ADR weighs variants per game, split modules and pre-compressed brotli. The size at PR "web budget" was 7,999,541 bytes, a margin of 2,000,459 bytes (20.0%).
+
 ## ADR-0050: Online play: our own reliable UDP in `re_net`, client-owned characters, and a lockstep check over loopback
 
 **Status:** Accepted (maintainer, 2026-10-15; drafted by WP30). Built in WP30 PRs "transport" (#90), "wire" (#117), "sessions" (#138) and "web" (#165), with the changes in the amendments at the end. Evidence: a two-process spike of the transport below over loopback with seeded loss and delay, a probe of quinn's dependency graph, and a measurement of the plaza's replication traffic, all on 2026-10-15 in the reference container (`research/m3/wp30/measurements.md`, `research/m3/wp30/spike/`). quinn 0.11.12 and quinn-proto 0.11.19 were checked on crates.io the same day.
@@ -2903,6 +2969,1215 @@ WP30 has to put a real transport under that seam, so the same game runs as one s
 - §1 and §3, the "protocol version (`u16`)" in every packet header, "bumped on any change to the wire types": that `u16` is `re_net::TRANSPORT_VERSION`, the version of the packet layout. The version of the wire types is `re_compat::net::wire::WIRE_VERSION`, a `u32` that Hello, Response and Deny carry (the protocol named in the amendment for #138). A mismatch of either is a Deny with `RE8903`.
 - §3, "Component types travel as `u16` ids from a table the server sends in Welcome": they travel as `u32` name numbers, and `Welcome` carries no table. Any `re_compat::net::wire::Frame` lists in `names` the names it numbers for the first time (component, record and enum variant names), once per direction.
 - The amendment for #90 and #117, where a send past `max_backlog` is refused with `RE8908` "instead of closing the connection": only `re_net::Endpoint::send` keeps the connection open. `re_compat::net::session` closes it when a frame cannot be sent: the server disconnects that player with an `RE8906` warning, and a client ends its session with an `RE8908` error.
+
+## ADR-0051: Native environment, spot lights, shadow flags and effects
+
+**Status:** Accepted (maintainer, 2026-10-28; drafted by WP32), for WP32 PRs "environment" (§1–§6) and "effects" (§7–§8). It changes ARCHITECTURE §3's lighting convention ("the ambient light … is a renderer setting … `RenderSnapshot` has no ambient field"). The contract in §1–§5 is frozen at PR "environment" (M4 plan, "Cross-WP contracts"); WP33 (atmosphere, ADR-0054), WP43 (inspector), WP47 (compat lighting and effect classes) and WP48 consume it.
+
+**Context.** Checked on `main` at cbbdbf0:
+- **Native frames draw no sky, fog, spot lights or effects** (sample-game F14, rendering audit B1). `Graphics::draw` and `Graphics::capture` call `Renderer::render`, which is `render_with(…, &SceneExtras::default())`, and the editor's game view does the same (`re_editor/src/view.rs`). Only a compat place calls `render_with` with extras, which `compat_view::extras` builds from `Lighting`: ambient, fog, a sky with a sun disc, spot lights, sprites, ribbons and highlights.
+- **`SceneExtras` is "renderer data, not a frozen contract"** (`re_render/src/extras.rs`), so every feature put there (sky, fog, spot lights, effects) widened the split between native and compat (audit §3.3). The ambient light is `RendererSettings::{ambient_sky, ambient_ground}`, (0.16, 0.19, 0.24) and (0.08, 0.07, 0.06), which `re_app` never sets; compat replaces it per frame through `SceneExtras::ambient`. Exposure is already snapshot data (`RenderSnapshot.post.exposure`, ADR-0038): `[render.post] exposure` natively, 2^`Lighting.ExposureCompensation` in a compat place.
+- **Lights.** `re_types::render::LightKind` has `Directional` and `Point`. The renderer draws one directional light (the first with `shadows`, else the first) and the 8 point and 8 spot lights nearest the camera (`frame::select_lights`, `select_spots`). Spot lights exist only as `SceneExtras::spot_lights` (position, direction, colour, lumens, range, `half_angle`; the light fades over the outer 20% of the half angle). `Light.shadows` is documented as "whether the light casts shadows", but only the sun's is read (B4).
+- **Shadow flags.** `DrawFlags::{CAST_SHADOWS, RECEIVE_SHADOWS}` are in the contract. Native sync sets both on every item, skinned item and terrain chunk (`sync/render.rs`), so a scene cannot turn them off; compat sets cast from `BasePart.CastShadow`.
+- **Effects.** `re_compat::render::effects` (674 lines) simulates `ParticleEmitter`, `Beam`, `Trail` and `Highlight` on the CPU from their properties: rate; lifetime, speed, rotation and spin as `NumberRange`s; spread angle; emission face; shape (box, sphere, cylinder, disc; volume or surface; outward, inward or both); acceleration, drag, locked to the part, time scale; colour, transparency and size over life as keypoint sequences (each key's envelope is read but unused); brightness, light emission and z offset; `Emit(n)` and `Clear()`; trails between two attachments with lifetime, minimum and maximum length, width scale and face-camera. Per world, `[compat] effect_budget` (20,000 particles and segments) caps what is drawn (`RE9351`). The RNG is `re_noise::Pcg32`, seeded per session. The output is camera-facing sprites and ribbons, expanded into quads on the CPU, plus highlights.
+- **Fields.** Compat's emitter properties are its own storage (`classes/render.json`), and its parts carry `Transform` (`classes/physics.json`). Scripts read and write any registered component's fields by name, records included, as tables (`e:get`, `e:set`; `re_script/src/api/value.rs`). The editor's inspector edits bool, number, vec3, quat, colour, string, entity and enum fields, and shows lists, maps and records read-only. Record types are registered per process by name (`re_reflect::RecordSchema`); compat registers `NumberRange`, `NumberSequenceKeypoint` and `ColorSequenceKeypoint` from its data.
+- **Configuration.** `[render]` has `backends`, `width`, `height`, `clear`, `[render.post]` and `[render.shadows]` (`RenderConfig`, `deny_unknown_fields`; a value out of range is `RE0501`). MSAA and the shadow map size are `RendererSettings` fields that no project can set.
+
+**Decision.**
+
+*§1. The environment joins the contract.* `RenderSnapshot` gains `environment: Environment` (serde default), and `re_render` draws the ambient light, fog and sky from it:
+```rust
+#[serde(default)]
+pub struct Environment {
+    /// Hemisphere ambient light from above and from below: linear RGB in lux (the units
+    /// of a directional light), multiplied by the exposure.
+    pub ambient_sky: [f32; 3],     // [0.16, 0.19, 0.24]
+    pub ambient_ground: [f32; 3],  // [0.08, 0.07, 0.06]
+    /// A gradient drawn where nothing else is; without one the clear colour shows.
+    pub sky: Option<Sky>,          // None
+    /// Linear distance fog.
+    pub fog: Option<Fog>,          // None
+}
+pub struct Sky { pub zenith: [f32; 3], pub horizon: [f32; 3], pub ground: [f32; 3], pub sun: Option<SunDisc> }
+pub struct SunDisc { pub direction: Vec3 /* towards the sun */, pub color: [f32; 3] }
+pub struct Fog { pub start: f32, pub end: f32, pub color: [f32; 3] }
+```
+- The defaults are the renderer's defaults today, so a snapshot without the field draws what it drew before. Sky and fog colours stay unlit (exposure does not change them), as now.
+- `SceneExtras` loses `ambient`, `fog`, `sky` and `spot_lights`, and `RendererSettings` loses `ambient_sky` and `ambient_ground`. `SceneExtras` keeps sprites, ribbons and highlights: they are built each frame from simulation state the snapshot does not describe (§7), as compat's are.
+- `compat_view` maps `Lighting` onto `snapshot.environment` and its spot lights onto `snapshot.lights` (§2), with the same values, so compat places draw identically: the PR keeps every compat golden byte-identical. WP47 may later map `Lighting` onto the native component (§3).
+- WP33 extends `Environment`, in the contract and in the component, with the atmosphere and image-based lighting of ADR-0054 through new defaulted fields; the gradient stays the fallback sky.
+
+*§2. Spot lights join the contract.* `LightKind` gains `Spot` (appended, so serialized kinds keep their names). `Light` gains two fields with serde defaults:
+```rust
+/// Spot lights: the angle between the light's axis and the edge of its cone, in radians,
+/// above 0 and below π/2.
+#[serde(default = "default_spot_angle")] pub spot_angle_radians: f32,  // π/4
+/// Spot lights: the fraction of the cone, from its edge inwards, over which the light fades out.
+#[serde(default = "default_spot_blend")] pub spot_blend: f32,          // 0.2
+```
+- A spot light uses `position`, `direction` (the way it shines), `color`, `intensity`, `range`, `spot_angle_radians` and `spot_blend`. Its intensity is in lumens, as for a point light: the cone masks a point light, it does not concentrate it (today's convention, so compat's lights keep their brightness). Today's `half_angle` and 20% fade are `spot_angle_radians` and `spot_blend = 0.2`.
+- Point and spot lights are chosen for a frame by ADR-0038's amendment for WP32 (by visibility, then distance; up to 16 of each).
+- `Light.shadows` keeps meaning the sun's shadow. On a point or spot light it is ignored with `RE6042` ("only the sun casts shadows; point and spot lights do not in M4"), shown once per session (ADR-0022's amendment for WP32, §3), and the field's docs say so in `re_types` and `re_scene` (B4).
+
+*§3. Native scenes get an `Environment` component* (`re_scene`, registered after the M3 set):
+```rust
+component! {
+    /// The scene's sky, fog, ambient light and exposure (ADR-0051). A frame uses the
+    /// Environment of the first entity, in entity order, that has one; without one, the
+    /// project's `[render.environment]`.
+    pub struct Environment {
+        /// Draw the sky gradient behind the scene; otherwise the clear colour shows.
+        pub sky: bool = false,
+        pub sky_zenith: Color = (0.18, 0.36, 0.78),
+        pub sky_horizon: Color = (0.62, 0.74, 0.90),
+        pub sky_ground: Color = (0.27, 0.27, 0.26),
+        /// The sun disc drawn towards the frame's directional light, as a multiple of
+        /// that light's colour; 0 draws none.
+        pub sun_disc: f32 = 4.0,
+        /// Linear distance fog: none before `fog_start` metres, opaque from `fog_end`.
+        pub fog: bool = false,
+        pub fog_start: f32 = 50.0,
+        pub fog_end: f32 = 1000.0,
+        pub fog_color: Color = (0.70, 0.76, 0.84),
+        /// Ambient light from above and from below, in lux.
+        pub ambient_sky: Color = (0.16, 0.19, 0.24),
+        pub ambient_ground: Color = (0.08, 0.07, 0.06),
+        /// Stops added to the project's exposure: the frame's exposure is
+        /// `[render.post] exposure` × 2^`exposure_compensation`.
+        pub exposure_compensation: f32 = 0.0,
+    }
+}
+```
+- Sky and fog are off by default, in the component and in `[render.environment]`, so an existing project looks as it does. The sky colours default to compat's daytime gradient. Colours are linear; alpha is unused.
+- Exposure is relative, as `Lighting.ExposureCompensation` is, so that adding an Environment to a scene lit for exposure 1e-5 keeps its exposure.
+- Sync (`sync/render.rs`) builds `snapshot.environment` from the component: the sun disc goes towards the directional light the renderer draws (the first with `shadows`, else the first), with that light's colour times `sun_disc`. Values are made safe there: non-finite values take the field's default, colours below 0 become 0, a `fog_end` not above `fog_start` is raised to `fog_start + 0.01`, and `exposure_compensation` is clamped to ±16.
+- The editor edits it like any component: every field is a scalar, colour or bool. The inspector work of WP43 needs nothing more.
+
+*§4. Per-entity shadow flags: a `Shadows` component.*
+```rust
+component! {
+    /// How the entity's meshes take part in the sun's shadow (ADR-0051). Without one they
+    /// cast and receive.
+    pub struct Shadows {
+        /// The entity's meshes cast shadows.
+        pub cast: bool = true,
+        /// The entity's meshes are darkened by shadows.
+        pub receive: bool = true,
+    }
+}
+```
+- Sync maps it onto `DrawFlags::CAST_SHADOWS` and `RECEIVE_SHADOWS` for the entity's `MeshRef` item, its `SkinnedMesh` item, the terrain chunks it sources (ADR-0042) and, from WP33, its instance sets. Like `Visible`, it applies to its own entity, not to children.
+- A component rather than fields on `MeshRef`: one place covers every kind of drawable, including terrain and instance sets that have no `MeshRef`, and `MeshRef` stays a WP0 asset reference. `Visible` set the pattern (absent means on).
+
+*§5. `[render]` keys* (`re_app::config::RenderConfig`; `RE0501` for a value out of range, at load):
+- `[render.environment]` takes the `Environment` component's fields except `exposure_compensation` (the project's exposure stays `[render.post] exposure`), with the same names and defaults; colours are arrays of three linear values. It applies when the scene has no Environment. In a compat place the place's `Lighting` decides, as for the exposure today.
+- `[render] msaa` (bool, default `true`) and `[render] shadow_map_size` (a power of two from 256 to 8192, default 2048): `RendererSettings::msaa` and `shadow_map_size`, until now fixed for every project.
+
+*§6. Native frames are drawn with extras.* `Graphics::draw` and `capture` (`re_app/src/gfx.rs`) and the editor's game view call `render_with` with the frame's native extras, which hold the effects of §7. The app keeps them beside its snapshot, so a capture draws what a window draws. The editor's change is a small PR WP42 reviews.
+
+*§7. Effects: `ParticleEmitter`, `Trail` and `Highlight` components* (`re_scene`), over compat's data model, in native names. Three record types carry ranges and curves: `Range { min, max }`, `NumberKey { time, value, envelope }` and `ColorKey { time, color }`. They are registered by `re_scene` under those names, which compat's records do not use, so a compat converter maps one onto the other key by key and nothing is lost. A curve is a list of keys at times 0 to 1, linear between keys and held before the first and after the last; an empty list is the field's constant. A key's `envelope` gives each particle its own offset within ±envelope, drawn once at birth (compat reads envelopes but ignores them today).
+```rust
+component! {
+    /// Emits camera-facing particles (ADR-0051). It emits from its entity's frame (its
+    /// `GlobalTransform`), or from its parent's when the entity has no `Transform`.
+    pub struct ParticleEmitter {
+        pub enabled: bool = true,                 // emits `rate` a second while true
+        pub rate: f32 = 5.0,                      // particles a second
+        pub lifetime: Range = Range::new(5.0, 10.0),  // seconds
+        pub speed: Range = Range::new(5.0, 5.0),      // m/s at birth
+        pub rotation_deg: Range = Range::new(0.0, 0.0),
+        pub spin_deg: Range = Range::new(0.0, 0.0),   // degrees a second
+        pub spread_x_deg: f32 = 0.0,              // half-angles of the cone of directions
+        pub spread_y_deg: f32 = 0.0,
+        pub direction: EmitFace = EmitFace::Top,  // Top, Bottom, Left, Right, Front, Back: +Y, -Y, -X, +X, -Z, +Z
+        pub shape: EmitShape = EmitShape::Box,    // Box, Sphere, Cylinder, Disc
+        pub shape_size: Vec3 = Vec3::ZERO,        // metres, in the frame; zero is a point
+        pub surface: bool = false,                // from the shape's surface, not its volume
+        pub flow: EmitFlow = EmitFlow::Outward,   // Outward, Inward, InAndOut
+        pub acceleration: Vec3 = Vec3::ZERO,      // m/s², world space
+        pub drag: f32 = 0.0,                      // speed halves every 1/drag seconds
+        pub locked: bool = false,                 // particles move with the frame
+        pub time_scale: f32 = 1.0,                // 0 to 1
+        pub color: Vec<ColorKey> = Vec::new(),    // over life; empty: white
+        pub opacity: Vec<NumberKey> = Vec::new(), // over life; empty: 1
+        pub size: Vec<NumberKey> = Vec::new(),    // metres, over life; empty: 1
+        pub brightness: f32 = 1.0,
+        pub emission: f32 = 0.0,                  // 0 blends over the scene, 1 adds to it
+        pub z_offset: f32 = 0.0,                  // metres towards the camera
+        pub sprite: SpriteShape = SpriteShape::Soft,  // Soft (round, fading to its rim) or Square
+    }
+}
+component! {
+    /// A ribbon left behind as its edges move (ADR-0051).
+    pub struct Trail {
+        pub enabled: bool = true,                 // adds points while true; old ones still fade
+        pub edge_a: Option<Entity> = None,        // the two entities whose positions are the
+        pub edge_b: Option<Entity> = None,        // ribbon's edges; unset: this entity, `width` wide, facing the camera
+        pub width: f32 = 0.5,                     // metres, without edges
+        pub lifetime: f32 = 2.0,                  // seconds a point lasts
+        pub min_length: f32 = 0.1,                // metres moved before a new point
+        pub max_length: f32 = 0.0,                // metres kept; 0 keeps all the lifetime allows
+        pub color: Vec<ColorKey> = Vec::new(),    // over a point's age; empty: white
+        pub opacity: Vec<NumberKey> = vec![NumberKey::new(0.0, 1.0), NumberKey::new(1.0, 0.0)],
+        pub width_scale: Vec<NumberKey> = Vec::new(),
+        pub brightness: f32 = 1.0,
+        pub emission: f32 = 0.0,
+        pub face_camera: bool = false,            // with edges: turn towards the camera
+    }
+}
+component! {
+    /// An outline and fill over an entity's meshes and its descendants' (ADR-0051).
+    pub struct Highlight {
+        pub enabled: bool = true,
+        pub target: Option<Entity> = None,        // unset: this entity
+        pub fill: Color = Color::new(1.0, 0.0, 0.0, 0.5),    // linear RGB; alpha is the opacity
+        pub outline: Color = Color::new(1.0, 1.0, 1.0, 1.0),
+        pub always_on_top: bool = true,           // otherwise only where the meshes are seen
+    }
+}
+```
+- **Where it runs.** A new module, `crates/re_app/src/sync/effects.rs` (WP32's, maintainer-reviewed), advances every emitter and trail once per frame in Sync, after transform propagation and before the render build, in every run that has a GPU side; a dedicated server never runs it. It advances on the frame's scaled time, so a pause (WP35's `time.set_scale(0)`, ADR-0057) freezes effects; a frame's step is clamped to 0.25 s. The integration and the shapes are compat's (`retain`, then emit; drag as `2^(-drag·dt)`; the four shapes), so WP47 can map compat onto them unchanged.
+- **Determinism.** Emitters and trails advance in entity order with one `re_noise::Pcg32` seeded from the session seed, so a capture after N frames draws the same image in every run (the goldens rely on it). Effects are not world state: they are not in `state_hash`, saves or replication; every client simulates what it draws from the replicated fields.
+- **Limits.** At most 4,096 live particles per emitter (as compat). `[render] effect_budget` (default 20,000, as compat's) caps the particles plus trail segments drawn in a frame; the excess is not drawn and `RE0700` warns once per overflow streak.
+- **Drawing.** Particles become `SceneExtras::sprites` and trails `ribbons`, drawn as compat's are (expanded on the CPU, sorted back to front with the blended items' pass, unlit). A highlight becomes a `SceneExtras::highlights` entry over the target and its descendants; with the editor's selection outline (WP42) they share the renderer's 31 (`RE6018` beyond).
+- **Luau.** Fields are read and written as on any component (`e:set("ParticleEmitter", "rate", 20)`). A new `fx` library (game context, frame and fixed steps) adds the two calls a field cannot express: `fx.emit(entity, count?)` (default 16, at most 4,096) and `fx.clear(entity)` (particles and trail points). They reach the app through two `HostServices` methods with a default body (maintainer-reviewed); the library is a new file `crates/re_script/src/api/fx.rs`, and `engine.d.luau` gains its types (WP35 reviews both). An entity with no emitter or trail is `RE0701`.
+- **Compat** keeps its own simulation until WP47's PR "classes" maps `ParticleEmitter`, `Trail` and `Highlight` onto these components (records key by key, transparency as 1 − opacity; an emitter under a part takes the part's frame by the rule above and the part's `Size` as `shape_size`), and `Emit` and `Clear` onto the host calls. `Beam` stays compat's: M4 has no native beam.
+
+*§8. Codes.* `RE6042` in `re_render`'s WP32 range (§2), with an explain page. `RE0700` (§7, effect budget) and `RE0701` (§7, no emitter) in `re_app`'s unused `RE0700`–`RE0899`, which this ADR asks the maintainer to give WP32 as `RE0700`–`RE0719` in ARCHITECTURE §7.
+
+**Alternatives.**
+- **Keep the environment in `SceneExtras` and build extras for native frames too.** Smallest change, and the plan's wording allows it. Rejected: the snapshot would stay an incomplete description of a frame (a render thread, an agent's snapshot or WP33's atmosphere would each need the extras too), and native and compat would keep two paths for the same look.
+- **The whole effect simulation in the renderer, fed emitter descriptions.** Rejected: the renderer draws only when a frame is drawn, and a headless capture draws once at the end, so effects must advance in the app's frame loop.
+- **A shared crate for the simulation, called by compat and by the app.** Rejected for now: compat parts carry `Transform`, so compat's classes can sit on the native components (the M4 rule "native first"), and one simulation in `re_app` is enough. If WP47 finds a case the components cannot express, the core moves into a small crate then.
+- **Ranges as `_min` and `_max` fields, and curves as evenly spaced samples.** Editable in today's inspector, but compat's keypoints have free times and envelopes, so the mapping would lose data or need compat to keep its own copy; scripts that read a property back would see a resampled curve. Rejected.
+- **Shadow flags as `MeshRef` fields.** Rejected for the reason in §4.
+- **An absolute exposure in the Environment.** Adding one to a scene would reset the project's exposure to its default; rejected for the relative form compat already uses.
+
+**Consequences.**
+- `re_types` changes (maintainer-reviewed, every new field defaulted): `RenderSnapshot.environment`, `Environment`, `Sky`, `SunDisc`, `Fog`, `LightKind::Spot`, `Light.spot_angle_radians`, `Light.spot_blend`. `re_render`'s API loses `SceneExtras::{ambient, fog, sky, spot_lights}`, `SpotLight`, `Ambient` and `RendererSettings::{ambient_sky, ambient_ground}`; `compat_view` moves in the same PR.
+- `re_scene` gains `Environment`, `Shadows`, `ParticleEmitter`, `Trail`, `Highlight`, the enums `EmitFace`, `EmitShape`, `EmitFlow`, `SpriteShape`, the records `Range`, `NumberKey`, `ColorKey` (the first native record types; `FieldValue` impls register them on first use), and `LightKind::Spot` with `Light.spot_angle_deg` (45) and `Light.spot_blend` (0.2). Old scene files load unchanged; `schemas/` is regenerated.
+- Native and compat draw environment and spot lights through one path; native games get sky, fog, spot lights, particles, trails and highlights (F14), and the town's street lamps and exhaust become possible (WP48).
+- New goldens in `re_render` (Vulkan and GL): native fog and sky, spot lights in a scene with sun shadows and per-entity shadow flags (M4 has no local-light shadows, so "spot lights with shadows" in WP32's acceptance means this), and particles; compat's goldens and the valley's do not change. A test checks that a compat frame's environment and spot lights reach the renderer's uniform with the values they had through extras.
+- The `real new` templates can turn the sky on in `[render.environment]` (WP44's choice).
+- ARCHITECTURE §3 (lighting convention: ambient is snapshot data), §4 (the new components), §7 (`RE0700`–`RE0719` for WP32) and §8 (`[render.environment]`, `msaa`, `shadow_map_size`, `effect_budget`) change through the maintainer.
+
+## ADR-0057: The gameplay scripting API: typed events, prefabs at run time, the cursor and raw input, the late frame and time scale, and recorded replays
+
+**Status:** Accepted (maintainer, 2026-10-28; drafted by WP35), with the maintainer's answers folded in: F27 is left out of M4 (§11), F21 gets its own ADR-0011 amendment (§13), and WP35 builds the `world.instantiate` binding (§4). It amends ADR-0009 (§7: a `LateFrame` phase, what a time scale stops, and when events are delivered) and ADR-0012 (§12: the native API's M4 additions). It builds on the sample game's PR #191, merged as `c4c81ae` (seeded `math.random`, `os.clock` on simulation time, `time.set_scale`). Its code is WP35's nine PRs (§13). WP32, WP34 and WP38's points of contact were agreed with those threads on 2026-10-28. Evidence: a luau-lsp 1.70.1 spike on the type declarations (`research/m4/wp35/luau-types/README.md`); the sources the lockfile pins, read on 2026-10-28: winit 0.30.13 (web pointer lock), kira 0.12.5 (sound handles) and Luau 0.740 (`loslib.cpp`, through `luau0-src` 0.22.0); and the code at `c4c81ae`.
+
+**Context.**
+- The native API is ADR-0012's M1 list plus what M2 and M3 added (physics queries and vehicles, the audio mixer, animation graphs, streaming, procedural builders). The gameplay audit (B2, B4 to B9, the workarounds of §5.2) and the sample game (F3, F5, F7 to F10, F13) list what a complete native game still lacks: custom events, prefabs spawned at run time, world poses, cursor control, raw keys, quitting, screen-space queries, control of playing sounds, debug drawing, and a way to record a replay by playing.
+- Everything here answers to determinism. `real verify` plays each replay twice and wants one `state_hash` (`RE0508`), and D2 compares replays on three platforms. So every value a script can read is simulation state, comes from the replay (input, seed, frame times), or is refused inside a fixed step, as `audio.levels` already is.
+- What exists, at `c4c81ae`:
+  - **Signals.** `scheduler::fire` runs each connected callback at once, in its own thread, in connection order. `task.defer` threads run at the end of each phase's script work (`scheduler::settle`), at most `MAX_DEFERS_PER_DRAIN` (10,000) per drain (`RE3014`). Connection order follows script start order, which follows the stable ids of the `ScriptRef` entities (B8).
+  - **Frames.** A headless run passes one step as the frame time, so each frame runs exactly one step and alpha is always 0. A window passes real time, capped at 250 ms. Render sync interpolates only entities with a physics link (`sync/render.rs`, `global`), and `PhysicsSync::interpolated` at alpha 0 is the pose before the last step. The children of a moving body are drawn at the last step's pose, and a camera set in `time.on_frame` follows a pose one step old (B2).
+  - **Cursor.** `HostServices::set_mouse_behavior` exists and the window applies it (`window.rs`, `apply_mouse`), but only compat calls it, and the web player never applies it (`web/play.rs`).
+  - **Replays.** `ReplayDoc` version 1 holds the seed, actions, raw key, mouse and pad-button rows, commands and screenshot checks. `re_input::ReplayRecorder` records actions and raw rows but nothing uses it. A live `real run` keeps saved data, reloads changed files and applies late streamed cells when they arrive (`Lateness::Late`): three things a replay does not do (`re_cli/src/main.rs`, `Live`).
+  - **PR #191.** `time.set_scale(s)` (0 to 10): the fixed clock advances by the frame time times the scale, and a restart sets it back to 1. `math.random` starts from `[scripts] seed`, or the replay's seed. `os.clock` returns 86,400 plus simulation time. `os.time()` and `os.date()` still read the wall clock, and `os.date` without `!` formats in the machine's zone and with `strftime`'s locale (`loslib.cpp`). Its `HostServices` additions (`set_body_velocity`, `set_time_scale`, `time_scale`) are required methods.
+  - **Ids.** `world.spawn` without an id takes one from a clock-seeded `IdGen`, so run-time spawns differ from run to run until WP38's PR "ids".
+- Ownership: `re_script` is WP35's; the `ui` library and `hud.rs` are WP36's; the `physics` library and `sync/physics.rs` WP34's; `sync/render.rs` WP32's; `re_audio` WP45's, whose PR "control" is the engine side of audio control; `World::instantiate` WP38's; `re_core`, `re_types` and `re_scene` the maintainer's.
+
+**Decision.**
+
+**§1 Typed events.**
+- **The API.**
+  ```luau
+  local Scored: Event<{ points: number, by: Entity }> =
+      events.define("scored", { points = "i32", by = "entity" })
+  Scored:connect(function(e) print(e.points, e.by) end)  -- a Connection
+  Scored:fire({ points = 10, by = player })
+  ```
+  - `events.define(name, fields)` declares an event and returns its handle. Fields use `world.define_component`'s types (`bool`, `i32`, `i64`, `f32`, `f64`, `vec3`, `quat`, `color`, `string`, `entity`, enums, lists, maps, records), with optional defaults, through the same schema reader.
+  - Defining the same shape again returns the same handle, so a module that runs twice or reloads is fine. Another shape is `RE3017`.
+  - The handle has `name`, `fire(payload)`, `connect(f) -> Connection`, `once(f) -> Connection` and `wait() -> payload`. `events.get(name)` returns the handle of an event defined anywhere in the context, or nil.
+  - There is no `fire` or `connect` by name, which would skip the types.
+- **Names.** A name matches `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$` and is at most 64 bytes. A name whose first segment is an engine library's (`proc`, `stream`, `anim`, `world`, `physics`, `input`, `time`, `audio`, `ui`, `game`, `camera`, `events`, `debug`, `task`, and the libraries later WPs add, such as `scene` and `save`) belongs to the engine. A script defining one gets `RE3016`.
+- **Payloads.**
+  - `fire` checks the payload against the fields at the call: an unknown field or a wrong type is `RE3018` at the caller's line, and a missing field takes its default.
+  - The payload is converted to reflected values at the call, so later changes to the caller's table never reach handlers.
+  - At delivery one read-only table is built (frozen, nested tables too) and every handler gets that same table. An `entity` field arrives as an `Entity` handle, whose `alive` may be false by then.
+- **Delivery** (ADR-0009 amendment, §7).
+  - Deferred: `fire` queues the event and returns. Events and `task.defer` threads share one queue, which is drained at the end of the current resumption cycle (`scheduler::settle`), so they run in the order they were made.
+  - When an event's turn comes, its handlers run in connection order, each in its own thread, as signals do. A handler disconnected before its turn is skipped, and one connected during delivery waits for the next `fire`. `once` and `wait` are one-shot connections made at the call.
+  - An event fired by a handler joins the end of the queue (breadth first).
+  - `MAX_DEFERS_PER_DRAIN` counts events and threads together. Past it, the rest are dropped with `RE3014`, whose message names the events dropped.
+  - An error in a handler is reported like any callback's and never stops the other handlers.
+- **Scope.**
+  - An event belongs to its context's VM: `game` and `tools` each have their own.
+  - Connections belong to the script that made them (the scheduler's owners), so they end when that script stops or reloads.
+  - A restart, which builds new VMs, drops every definition and connection.
+- **Types.** `engine.d.luau` declares `export type Event<T> = { name: string, fire: (self: Event<T>, payload: T) -> (), connect: ..., once: ..., wait: (self: Event<T>) -> T }`, and `events.define(...) -> Event<any>`.
+  - Annotating the handle, as above, checks payloads at `fire` and in handlers. An unannotated handle stays permissive. The spike shows both in luau-lsp 1.70.1, with the old solver and with `LuauSolverV2`.
+  - A generic extern type (`declare extern type Event<T>`) makes luau-lsp refuse the whole file. A generic `define<T>` cannot infer `T` (only `events.define<<T>>(...)` works). So neither is used.
+
+**§2 Engine events.** Engine events are `Event` handles in their libraries, declared with exact payload types (the spike checks these too). Scripts can `connect` to them, and use `once` and `wait`; `fire` on one is `RE3019`. Each is raised into every context with connections to it, `game` first, and delivered at that context's next settle, in the order raised (§7).
+- **`proc.regenerated`**: `{ source: string, seed: number, ok: boolean, error: string? }`.
+  - Raised when a regeneration has replaced its source's entities, or failed, whatever asked for it: `proc.regenerate`, the `graph.regenerate` command, or a changed graph file.
+  - Today that is at EndFrame, so it is delivered at the end of the next frame's PreRender. Once WP39 moves regeneration off the main thread, it is raised when the result is applied.
+  - This replaces the island's "recount 0.1 s later".
+- **`stream.ground_ready`**: `{ key: string, min: vector, max: vector }`, for a loaded cell once every collider its load spawned has a body in the physics world.
+  - A cell without colliders is ready in the step it loads.
+  - Raised in the Physics phase and delivered at the end of that step's PostSimulation, so a ray cast in the handler hits the new ground. Cells are raised in key order.
+  - The check runs after the step's physics commands are applied, in the Physics phase's module (`app/physics_step.rs` after the maintainer's split, WP34's area, agreed with WP34): a collider entity counts once its body is in Jolt (`Physics::pose(id)` is Some, which a body waiting out of reach of a moved origin is not). WP34's PR "sync" may expose the bodies its last push added, which the check can use instead.
+  - `stream.is_ground_ready(key_or_position)` answers the same question for a script that starts later. This replaces the valley's "ray cast every step until there is ground".
+- **`anim.marker`**: `{ entity: Entity, clip: string, marker: string, value: string, layer: string }`, agreed with WP45. `value` is the keyframe marker's free-form string (`""` by default), and `layer` the graph layer's id (a montage's own layer for one-shot clips).
+  - WP45's PR "events" raises it in PreAnimation, in entity order. It is delivered at the end of the same step's PreSimulation.
+  - In each layer only the current state raises markers (not one being faded out), and in a blend space only its heaviest child, the first on a tie, so a walk and run blend does not double its footsteps (WP45's ADR-0039 amendment, §2).
+  - This section is the typed-event half of the contract "Animation and script events", frozen at that PR.
+- **WP38's change signals.** `on_added`, `on_removed` and `on_changed` from WP38's PR "signals" follow the same delivery rule, agreed with WP38: they are raised when a change is detected, in a fixed order (component name, then stable id), queued with `task.defer` threads and typed events, and delivered at the next settle in the order raised. ADR-0060 names the points where changes are detected.
+
+**§3 Entities: world poses, reparenting, tags and attributes.**
+- **World poses (F13).**
+  - `e:world_transform() -> (vector, Quat, vector)` returns the translation, rotation and scale in the world. It is composed at the call from the entity's `Transform` and its ancestors' (not `GlobalTransform`, which is current only after Sync), so a write earlier in the same callback counts. Shear from non-uniform scale under a rotation is dropped (glam's `to_scale_rotation_translation`, on `libm`).
+  - `e:set_world_transform(translation: vector?, rotation: Quat?)` writes the local `Transform` that puts the entity there under its current parent. Its scale is unchanged.
+- **Reparenting.**
+  - `e:set_parent(parent: Entity?, keep_world: boolean?)` moves the entity and its subtree under `parent`, appended last, or makes it a root when `parent` is nil.
+  - With `keep_world` (true by default), its local `Transform` is recomputed so it stays where it was.
+  - A cycle (`re_scene`'s `check_reparent`) or a dead entity is `RE3020`.
+  - A physics body keeps its world pose and its velocity: WP34's sync already compares the parent's world transform and the local `Transform` with what it last wrote and sends the body a `SetTransform`, and solves the local transform against the current parent every step. It reads the new parent's pose from its `GlobalTransform`, as of the last propagation. A test (with `keep_world`: the same world pose, the velocity kept) goes in `sync/physics.rs` with whichever of WP34's PR "sync" and WP35's PR "world" lands first, reviewed by WP34.
+- **Tags.**
+  - `e:tags() -> { string }` (in the list's order), `e:has_tag(t)`, `e:add_tag(t)` and `e:remove_tag(t)`, over the `Tags` component and its `TagIndex`.
+  - A tag is 1 to 100 bytes.
+  - `world.tagged(t)` comes with WP38's PR "signals", as the plan says.
+- **Attributes.**
+  - `e:get_attribute(name)`, `e:set_attribute(name, value)` (nil removes it) and `e:attributes() -> { [string]: any }`, over the `Attributes` component.
+  - Names follow compat's rule: 1 to 100 letters, digits and underscores, not starting with `RBX`.
+  - Values are booleans, numbers, strings, vectors, `Quat`s and `Color`s. Anything else is `RE3021`.
+
+**§4 Prefabs at run time (F5).**
+- **The call.** `world.instantiate(path, { parent: Entity?, transform: { translation: vector?, rotation: Quat?, scale: vector? }?, name: string?, id: string?, overrides: { [string]: { [string]: { [string]: any } } }? }?) -> Entity` spawns a prefab and returns its root.
+- **Files.** `path` is a project file such as `prefabs/crate.prefab.json`. It is read through the project's files, so a packaged game reads its archive (`prefabs/` is packed, `re_cli/src/build/pack.rs`).
+- **Spawning.** It goes through WP38's `World::instantiate(path, Instantiate { parent, index, id, name, translation, rotation, scale, overrides })` (ADR-0060: nesting, variants, references remapped), as one spawn: every entity, or none on an error.
+  - The root goes under `parent`, appended last, at `transform` (local to the parent). The binding passes its three fields straight through, and each one left out keeps the prefab root's value. The root's `Transform` is the instance's own, so a refresh of the prefab never moves it.
+  - `name` and `id` replace the root's, as in `world.spawn`.
+  - Only the root's stable id comes from the session's `IdGen`, when no `id` is given. The other entities' ids are `<root id>/<key>`, so they repeat whenever the root's does. WP38's ADR-0036 amendment seeds the `IdGen` from the run's seed, so the same calls in the same order give the same ids in every run and on every platform.
+  - An id already in use, the root's or one it implies, is `RE3022`, before anything spawns.
+  - The instance is linked to its prefab, as an editor's is (ADR-0060), so a live run that reloads a changed prefab file refreshes it. Replays and recording runs reload nothing (§10).
+- **Overrides** map a prefab entity's key to components and fields: `""` is the root, `bulb` an entity in the prefab, `post/cap` one inside a nested prefab. Values convert as `e:set` converts them (an `Entity` becomes its stable id). The binding turns them into the override records an instance keeps (ADR-0017's form), applied before anything sees the entities. An unknown key, component or field is `RE3023`; a missing or invalid prefab is `RE3022`, naming the path.
+- **Cost.** Reading and parsing the file are engine work inside the call, which a counted budget does not charge (ADR-0011 amendment, §13).
+- **After the spawn.** The new entities' scripts start at the next PreRender or PreSimulation, as attached scripts do now. Their bodies join physics at the next Physics phase, which applies `AddBody` first since #191 (F24).
+- WP35 builds the Luau binding in its PR "spawn", since `re_script` is WP35's; WP38 builds `World::instantiate` and reviews the binding (the maintainer corrects the plan's ownership line).
+
+**§5 The cursor and raw input.**
+- **The call (F3, B6).** `input.set_cursor({ locked: boolean?, visible: boolean? })` says what the game wants; a field left out keeps its value.
+  - Locked holds the cursor in place while motion still arrives in `input.mouse_delta` and look axes.
+  - It goes through `set_mouse_behavior` (`LockCenter`), the path compat already uses.
+- **Reading it back.** `input.cursor() -> { locked: boolean, visible: boolean }` returns what the game asked for, never the platform's state, so no script can branch on something a replay cannot reproduce. A run starts, and restarts, with `{ locked = false, visible = true }`.
+- **Desktop.** As `apply_mouse` does now: `CursorGrabMode::Locked`, falling back to `Confined` where the platform lacks it (Windows and X11), plus the visibility. The platform frees the cursor when the window loses focus, and the driver applies the requested state again when the window regains it.
+- **Web.**
+  - A browser locks the pointer only during a user gesture, and frees it on Escape without telling winit: winit 0.30.13 calls `requestPointerLock` and `exitPointerLock` and reports nothing back.
+  - So the web driver applies the requested state from its key and click handlers, where it already opens audio. A lock asked for between gestures takes effect at the next click or key, and a lock the browser freed is asked for again at the next click while the game still wants it. Hiding applies at once.
+- **Editor play (WP42, ADR-0063).** The viewport applies the requested state while the game has focus. Shift+F1 frees the cursor, and a click in the viewport applies the state again.
+- **Headless.** Nothing is applied.
+- **Raw keys and mouse,** for what an action map does not cover (debug keys, mouse picking):
+  - `input.key_down(k)`, `key_pressed(k)` and `key_released(k)`; `input.mouse_down(b)`, `mouse_pressed(b)` and `mouse_released(b)`.
+  - `input.mouse_position() -> vector`, in window pixels from the top left; `input.mouse_delta() -> vector`, this frame's motion; `input.wheel() -> number`, this frame's notches.
+  - Names are those `real.toml` binds, without the device prefix (`KeyW`, `Space`, `Left`). An unknown name is `RE3024`, with the nearest names.
+  - They read the frame's `RawInputFrame`, which replays already carry in their `raw` rows (written by `ReplayRecorder::record_raw`). Every fixed step of a frame sees that frame's input, as with actions.
+  - Gamepads stay action-only, because raw replay rows carry no stick axes.
+
+**§6 Quitting and screen space.**
+- **`game.quit()`,** in the `game` context only, ends the run at the end of the frame, after its checks and screenshots, as `world.restart()` is applied.
+  - A window closes, and the process exits with 0, a packaged game's too.
+  - The web player stops and tells its page.
+  - A headless run stops, and its report has `"quit": true` and the frames it ran.
+  - A replay that quits stops at the same frame in both runs, so verify still compares them.
+  - An editor play session ends as Stop ends it (WP42, ADR-0063).
+  - A recording ends there (§10).
+  - A host without it answers `RE3015`.
+- **The `camera` library.**
+  - `camera.active() -> Entity?` is the camera the frame draws from (render sync's rule: the first active `Camera` in entity order).
+  - `camera.viewport() -> vector` is the width and height in pixels.
+  - `camera.world_to_screen(point, cam: Entity?) -> (vector, boolean)` gives x and y in window pixels from the top left, and z as the distance in front of the camera in metres, so it does not depend on WP32's depth convention. The boolean is true inside the viewport and in front of the near plane.
+  - `camera.screen_to_ray(x, y, cam: Entity?) -> (vector, vector)` gives the camera's position and a unit direction, for picking with `physics.raycast`.
+- **Its inputs.** The pose is the camera's `world_transform()` at the call (§3). The projection is the `Camera` component's field of view, with the viewport's aspect.
+- **The viewport is input.** It is the window's size in physical pixels, `[render] width` × `height` in a headless run, or the size a replay recorded (§10), so a replay that clicks a pixel casts the same ray. A host with no viewport answers `RE3025`.
+
+**§7 Time: scale, pause and the late frame (ADR-0009 amendment).**
+- **Time scale,** as #191 built it.
+  - The scale multiplies the frame time fed to the fixed clock, so it scales the fixed steps and everything in them: physics, animation, streaming ticks, `time.on_step` and `time.on_post_step`, contacts, the `task.wait` and `task.delay` timers, `time.now`, `os.clock` and `os.time`.
+  - It does not scale Input, PreRender (`time.on_frame` and `time.delta()` get the unscaled frame time), LateFrame, Sync, Render, EndFrame, audio, UI (WP36's tweens use unscaled time) or debug-draw durations. Sounds keep playing: scripts pause them (§8) or apply a mixer snapshot, as the town does.
+  - At 0, alpha stops changing, so drawn poses stand still. A `task.wait` in a paused game waits until the scale is raised, so a menu counts time in `time.on_frame` instead.
+  - WP32's particles and trails (its PR "effects") advance on the scaled frame time, so a pause freezes them; WP32 writes this into ADR-0051.
+  - The scale lives in the session, outside the world and `state_hash`, and replays reproduce it because the scripts that set it replay. A frame still runs at most five steps, so above 5 it runs as 5 at 60 frames a second.
+- **The `LateFrame` phase.** A new `re_core::Phase::LateFrame` runs once a frame, between the last fixed step and Sync. WP35's PR "correctness" adds it to `re_core` (the maintainer reviews) and, in the maintainer's split of the frame, a `late_frame_phase` method in `app/frame.rs`, called in `finish_frame` after a compat game's client half and before `sync_phase`.
+  - First the frame's drawn poses are computed for this frame's alpha. Then `time.on_late_frame(f(dt))` callbacks run (with the unscaled frame time), then the settle.
+  - It is where cameras and anything else that must follow what is drawn are moved.
+  - Ray casts there see the world after the steps.
+- **Drawn poses (B2).**
+  - A moving physics body is drawn interpolated between its last two steps (`PhysicsSync::interpolated`, as now).
+  - Everything under it in the hierarchy is drawn with the same correction: the body's drawn pose times the inverse of its simulation pose, applied to the descendant's world transform. So a mesh that is the child of a moving body moves smoothly with it.
+  - Anything else is drawn where the world has it.
+  - One table holds these poses for render sync (`global` in WP32's `sync/render.rs`) and for scripts: `DrawnPoses`, in a new `crates/re_app/src/sync/drawn.rs` (WP35's), filled once a frame at the start of LateFrame from WP34's `PhysicsSync::interpolated` (whose signature WP34 keeps). It holds one correction per moving body and one entry per entity under one, so render sync's lookup per entity is a map read; Sync's 3 ms target on the valley (WP32) allows nothing slower. WP35's change to `global()` lands first, and WP32's PR "sync" rebases over it (agreed with WP32).
+- **Reading them.**
+  - `e:drawn_transform() -> (vector, Quat, vector)` is that pose: in LateFrame, this frame's; in PreRender, the last frame's, which is what is on screen.
+  - `time.alpha()` gives this frame's fraction, for scripts that interpolate their own motion.
+  - Both depend on frame timing, so in a fixed step they are `RE3026` (the `audio.levels` rule).
+  - A LateFrame script should move only entities that no body carries, such as a camera or an effect. A body it moves shows the change at the next step.
+- **State.** A LateFrame script that writes a camera's `Transform` writes world state, so `state_hash` then depends on alpha. Replays reproduce alpha: it is 0 in headless runs, and recorded replays carry their frame times (§10).
+- **ADR-0009's frame becomes:**
+  ```text
+  Input → PreRender → (PreAnimation → PreSimulation → Physics → PostSimulation) × 0..=5
+        → LateFrame → Sync → Render → EndFrame
+  ```
+
+  | Phase | Script work, then the settle | Engine events its settle delivers |
+  |---|---|---|
+  | PreRender | start attached scripts; `input.on_pressed`/`on_released`; `time.on_frame` | `proc.regenerated` from the last EndFrame |
+  | PreSimulation | start attached scripts; `stream.on_unloaded`/`on_loaded`; `time.on_step` | `anim.marker` from this step's PreAnimation |
+  | PostSimulation | contacts; due `task.wait` threads; `time.on_post_step` | `stream.ground_ready` from this step's Physics |
+  | LateFrame | `time.on_late_frame` | none so far |
+
+  Fired events, engine events and `task.defer` threads wait in one queue, in the order they were queued: an engine event raised before a phase's callbacks is delivered before the events those callbacks fire. In each phase the `game` context runs before `tools`.
+
+**§8 Audio control.**
+- **One-shots.**
+  - `audio.play(...)` now returns a `Sound`. It returned nothing before, so existing calls are unchanged. It sends `PlayOneShot` or `PlayOneShotOnBus` with the sound's id through `audio_mix`.
+  - A `Sound` has `stop(fade?)`, `pause(fade?)`, `resume(fade?)`, `seek(seconds)`, `set_volume(volume, fade?)` and `set_rate(rate, fade?)`.
+- **Sources** (entities with `AudioSource`):
+  - `audio.start(e)` plays the source's clip now, for a source without autoplay or one that stopped.
+  - `audio.stop(e, fade?)`, `audio.pause(e, fade?)`, `audio.resume(e, fade?)` and `audio.seek(e, seconds)`.
+  - `audio.fade(e, volume, seconds)` writes the source's `volume` field and sends the fade. `audio.set_rate(e, rate, seconds?)` keeps writing its `rate` field and gains the same optional fade. Volume and rate stay world state; stop, pause and seek have none.
+  - This removes the valley's "engine layers kept playing at volume 0".
+- **Fades** are seconds of real time, kira `Tween`s, unaffected by the time scale. Left out, a fade is 0: at once.
+- **Checks.** A fade, seek or volume that is not finite or is below 0, or a rate outside (0, 16], is `RE3006` at the caller's line, as `audio.set_rate` refuses one now. re_audio checks the same limits again (WP45's `RE74xx`).
+- **No reading back.** Whether a sound still plays is live audio, which a replay cannot reproduce, so no function returns it. A command to a sound that has ended does nothing. These calls are outputs, so they are allowed in fixed steps, as `audio.play` is.
+- **Handle ids** come from a per-context counter (the `game` and `tools` contexts use separate ranges), so they repeat in replays. A restart's `StopAll` ends every handle.
+- **The engine side** is WP45's PR "control", agreed with WP45; it adds these to `re_types` (maintainer-reviewed) and `re_audio`.
+  - `PlayOneShot` and `PlayOneShotOnBus` gain `id: Option<u64>` (serde default). After `ApplySnapshot` come `SoundControl { id: u64, op: SoundOp }` and `SourceControl { entity: EntityId, op: SoundOp }`.
+  - `SoundOp` is tagged `"op"`, in snake_case: `start`, `stop { fade }`, `pause { fade }`, `resume { fade }`, `seek { seconds: f64 }`, `volume { volume: f32, fade }` and `rate { rate: f32, fade }`. `fade` is `f32` seconds with a default of 0, like `SetBusVolume`'s `seconds`.
+  - The audio sync resolves a source's `start` from its `AudioSource`, as autoplay does (`SetSourceBus`, then `StartSource`); `start` on a one-shot's id does nothing. A `volume` or `rate` op arrives in the frame its field was written, and the sync then skips its own instant change for that field.
+  - re_audio keeps kira's handle per id (`StaticSoundHandle` and `StreamingSoundHandle` both have `pause`, `resume` and `stop` with a `Tween`, and `seek_to`). An unknown or finished id does nothing, and `StopAll` ends every handle. Doppler multiplies a voice's rate, so a rate fade and doppler compose.
+
+**§9 Debug drawing.**
+- **The calls.** `debug.line(a, b, color?, seconds?)`, `debug.box(center, size, rotation?, color?, seconds?)`, `debug.sphere(center, radius, color?, seconds?)`, `debug.text(position, text, color?, seconds?)`, and `debug.physics(on)`, which draws colliders as wireframes coloured by body kind and sleep.
+- **Luau's `debug` table.** They go in Luau's own `debug` table, next to `traceback` and `info`, under the names the plan uses.
+  - Declaring `debug` in `engine.d.luau` hides those two builtins (the spike shows it), so the file re-declares them with Luau's own types. The spike shows this passes both solvers.
+  - A definitions test type-checks a script that calls all of them.
+- **Duration.** `seconds` 0, the default, draws for the current frame. Longer items stay that long in unscaled time, so they stay visible while paused. The colour defaults to white.
+- **Only in development runs:** `real run` and `real editor` with its play sessions.
+  - Packaged games, headless runs and verify keep nothing: the calls return at once, through a `HostServices::debug_draw` whose default ignores them.
+  - Nothing can be read back, so drawing never changes a run.
+- **Drawing them.**
+  - Lines go into `RenderSnapshot.debug_lines`, which is empty today; the renderer draws them depth-tested in the scene pass (WP32 corrects the field's doc, which says otherwise). Text is drawn by the HUD overlay at the projected point (WP36 reviews `hud.rs`).
+  - Boxes are 12 lines, and spheres three circles of 32 segments.
+  - A frame takes at most 65,536 lines; the rest are dropped with one warning (`RE0535`).
+  - An argument that is not finite, or a negative size, radius or duration, is `RE3006` at the caller's line.
+  - `debug.physics` builds its lines in a new `crates/re_app/src/debug_draw.rs` (WP35's) from the shapes the physics sync builds: WP34's PR "sync" adds a small `pub fn` in `sync/physics.rs` that gives an entity's `ShapeDesc` and world pose, so the outlines show what is simulated (a scaled sphere, capsule or heightfield is approximate there too). WP34 reviews the outlines; compounds and joints come later.
+
+**§10 Recorded replays (F10).** This is the contract "Recorded replays", frozen at PR "record".
+- **`real run --record <file>`,** windowed or headless, with or without `--replay`, records the run and writes the replay when it ends. The run ends when the window closes, at `game.quit()`, or when its `--frames` are done. The file is written with `re_input::save_replay` (a temporary file, then a rename).
+  - `real run --headless --replay a.json --record b.json` writes a replay that plays the same and carries the new hashes. This is how a replay is recorded again after a change in simulation.
+  - With `--checkpoints K`, it also writes a hash check every K frames, so a later divergence is found near where it starts.
+- **A recording run follows the rules a replay plays by,** except for the clock:
+  - saved data starts from `data/seed/` and is not written (as `Live::Check`);
+  - files are not reloaded;
+  - streamed cells are waited for (`Lateness::Wait`), as in headless runs, so the window may hitch while a cell loads.
+  - A network session refuses `--record` (`RE0530`). The browser cannot record in M4, and the packaged game runtime has no `--record`.
+- **`ReplayDoc` version 2.** Every new field is optional, and a file without them plays as version 1 does. Version 1 files still load; the recorder writes version 2. An older engine refuses a version 2 file over its unknown keys, as intended.
+  - `start: { scene?, state_hash?, time? }`.
+    - `scene` is the project path of the scene the run began in, as `entry_scene` names one (by default, the entry scene). A scene file that `[scenes]` does not list counts too (WP37's ADR-0059).
+    - `state_hash` is the world's hash before frame 0. A replay whose start hash differs from the world it is played in stops at once with `RE0532`, naming both hashes ("recorded from another world": an unsaved scene, other content or another engine).
+    - `time` is the Unix time `os.time()` starts from.
+  - `frame_times: [{ frame, ns }]`: the frame time from that frame on, in nanoseconds, changes only. Without it, every frame is one fixed step, as now. In every driver, playback feeds these times to the clock and to `time.on_frame`, so a windowed recording replays with the steps, alpha and frame times it had. Times above 250 ms, or rows out of order, are `RE0534`.
+  - `viewport: [{ frame, size: [w, h] }]`: the viewport from that frame on (§6).
+  - `checks[].state_hash`: the expected hash after that frame. Verify and `real run --replay` report `RE0533` at the first check that differs, and the two runs must still agree with each other, as now. The recorder writes one for the last frame.
+- **Recorded each frame:**
+  - actions (`ReplayRecorder::record`) and raw keys, mouse and pad buttons (`record_raw` already writes `pad_button` rows from the frame's gamepad events, which WP37's `input.pressed_binding` reads);
+  - the frame time before scaling, and the viewport;
+  - commands that change state dispatched during the run from outside the game, in dispatch order: an agent through MCP, or the editor during play as ADR-0063 §5's allow-list allows, each at its frame;
+  - the rows later WPs add, each recorded by the PR that adds it: WP36's UI input, and WP37's `scenes` (scene changes, checked and never driven) and `start.bindings` (ADR-0059).
+- **The seed.** The run's seed (`[scripts] seed`, or the replay's) is recorded. It starts `math.random` (#191) and, from WP38's PR "ids", the `IdGen` (`IdGen::session(seed)`, a stream apart from `math.random`'s; playing a replay and a restart seed it again).
+- **`os.time()` and `os.date()` in native contexts,** which completes B1:
+  - `os.time()` is `start.time` plus the whole seconds of simulation time since the run began. A restart does not take them back, so a save written after one never carries an earlier time than one written before it (WP37). `start.time` is the wall clock when a live run starts, the replay's in a replay, and 1,767,225,600 (2026-01-01T00:00:00Z) in a replay without one and in verify's runs.
+  - `os.date` always formats in UTC, with the C locale's names, in Rust, so `%c`, `%a` and `%p` read the same on every machine.
+  - `os.time(table)` is unchanged: Luau already reads the table as UTC.
+- **For the editor.** `App` gains `start_recording()` and `finish_recording() -> ReplayDoc`. WP42's Record calls the first before a play session's first frame and the second at Stop, and follows these rules (ADR-0063): the session starts from a fresh load of the saved scene, not a fork of the editor's world (whose streamed cells follow the editor camera), and Record is refused while edits are unsaved (`RE0655`), so the start hash matches when the replay is verified.
+
+**§11 Correctness.**
+- **B4.** `ui.set_text` writes `HudText` at once. The host's `set_hud_text` checks the entity and writes the field, so the text shows in the same frame, and a wrong entity fails at the script's line. WP36 reviews this; its PR "luau" keeps the same-frame rule when `HudText` becomes a wrapper over `UiText`.
+- **B5.**
+  - Each context keeps printed lines in a ring of 10,000 (a `VecDeque`, not `Vec::remove(0)`).
+  - Each line is logged once, when printed.
+  - Every driver (window, editor, web, headless) drains the lines through `App`, which keeps the last 10,000 for reports and the console and counts what it dropped.
+- **B9.** The header names no milestone: `-- engine.d.luau: the Real Engine native Luau API.`
+- **F9** is done by #191.
+- **F27 is not in M4.** Declaring input tables with `read` properties would let a typed table variable through where a table literal already passes, but luau-lsp 1.70.1's old solver then refuses the whole file (spike), and editors still on it would lose every engine type. It stays in the findings until luau-lsp defaults to the new solver.
+
+**§12 Host calls, contracts and codes (ADR-0012 amendment).**
+- **The native API in M4** adds:
+  - the `events` library and the `Event` type (§1), and engine events in `proc`, `stream` and `anim` (§2);
+  - `Entity` methods: `world_transform`, `set_world_transform`, `set_parent`, `drawn_transform`, the tag methods and the attribute methods (§3, §7);
+  - `world.instantiate` (§4);
+  - in `input`: `set_cursor`, `cursor`, and the raw key, mouse and wheel queries (§5);
+  - the `camera` library, and `game.quit` (§6);
+  - in `time`: `on_late_frame` and `alpha` (§7), beside #191's `set_scale` and `scale`;
+  - a `Sound` returned by `audio.play`, and source control (§8);
+  - `debug.line`, `box`, `sphere`, `text` and `physics` (§9);
+  - `os.time` and `os.date` on the run's clock (§10).
+
+  `engine.d.luau`'s snapshot lists every one of them with its types.
+- **`HostServices`.** New methods are provided ones with default bodies, as the plan asks, reviewed by the maintainer:
+  - `request_quit() -> HostResult<()>` (default: unavailable);
+  - `viewport() -> Option<Viewport>` (default: none);
+  - `drawn_pose(EntityId) -> Option<Affine3A>` (default: none, which means the simulation pose);
+  - `debug_draw(DebugDraw)` (default: ignored).
+
+  Native cursor control reuses `set_mouse_behavior`, and audio control reuses `audio_mix` with WP45's new commands. PR "correctness" also gives #191's three required methods default bodies, as the plan's rule asks: `set_body_velocity` and `set_time_scale` answer unavailable, and `time_scale` returns 1.
+- **Elsewhere.**
+  - `re_core::Phase::LateFrame` (maintainer).
+  - `ReplayDoc` version 2 in `re_types` (this ADR's contract), the `AudioCmd` additions (with WP45), and a debug-draw item type, with a text list beside `debug_lines` (WP32 and WP36 review).
+  - `ScriptRuntime` gains `run_phase(Phase::LateFrame, ...)` and `raise(event, payload)` for engine events.
+  - Each WP35 PR teaches `re_script_check`'s gap scan the members it adds, and the maintainer reviews that part.
+- **Codes.** `re_script`, from WP35's `RE3016`–`RE3069`:
+  - `RE3016`: an event name malformed or reserved;
+  - `RE3017`: an event defined again with other fields;
+  - `RE3018`: a payload that does not match its event;
+  - `RE3019`: a script firing an engine event;
+  - `RE3020`: reparenting refused;
+  - `RE3021`: a tag or attribute refused;
+  - `RE3022`: a prefab that cannot be instantiated;
+  - `RE3023`: an override that names nothing;
+  - `RE3024`: an unknown key or button name;
+  - `RE3025`: no viewport or camera;
+  - `RE3026`: a frame-only read in a fixed step.
+
+  Bad numbers given to the audio and debug-draw calls are the existing `RE3006`, as in the rest of the `audio` library. The ADR-0011 amendment adds `RE3027` (§13).
+
+  `re_app`, from `RE0530`–`RE0569`:
+  - `RE0530`: recording refused;
+  - `RE0531`: the recording could not be written;
+  - `RE0532`: the replay's start differs;
+  - `RE0533`: a hash check differs;
+  - `RE0534`: invalid frame times or viewport rows;
+  - `RE0535`: too many debug lines.
+
+  Each has an explain page. A PR may renumber within the ranges.
+
+**§13 The PRs, in order.** Every PR edits `re_app`, so none opens before the maintainer's split of `app.rs` has merged.
+1. **"correctness":** §7's late frame and drawn poses, §11, and default bodies for #191's host methods (§12). It adds `Phase::LateFrame` to `re_core` and `late_frame_phase` to `app/frame.rs`. Its change to `sync/render.rs`'s `global()` lands before WP32's PR "sync", which rebases over it. The island's camera moves to `time.on_late_frame` with re-recorded hashes (the town's camera is WP48's to move), and goldens with children of moving bodies are re-recorded with before and after images.
+2. **"budget":** F21, by an ADR-0011 amendment of its own (`research/m4/adr/ADR-0011-amendment-wp35-counted-budget.md`): a script call's budget counted in safepoints, as generators count theirs, with the wall clock only as a backstop.
+3. **"world":** §1 and §3.
+4. **"input and time":** §5, §6 and `time.alpha`.
+5. **"events":** §2. It comes after "world"; the `anim.marker` binding comes with or after WP45's PR "events".
+6. **"spawn":** §4, after WP38's PRs "prefabs" and "ids". WP38 reviews its use of `World::instantiate`.
+7. **"audio control":** §8, after WP45's PR "control".
+8. **"debug draw":** §9, after WP34's PR "sync" (the shapes).
+9. **"record":** §10, after "input and time" (the viewport) and WP38's PR "ids" (so recorded spawns repeat).
+
+A fixture project, `crates/re_app/tests/projects/gameplay/`, calls every new function. Its replays, recorded with `--record`, play twice in `re_app`'s tests and in D2. `.github/` is WP31's in M4, so PR "record" names the project in its description and WP35 asks WP31 to add it to `platforms.yml`'s `d2-run` step; the maintainer does it if WP31 cannot.
+
+**Alternatives.**
+- **Immediate events,** with handlers run inside `fire`. Simpler, but a fire inside a handler recurses, a handler that yields interleaves with the code that fired, and the order depends on call depth. Deferred delivery matches compat's default `SignalBehavior` (Deferred) and `task.defer`.
+- **Events by name only** (`events.fire(name, payload)`, `events.connect(name, f)`). A typo is found only at run time, and no payload type can be declared. Handles plus `events.get` cover use across modules.
+- **Payload types without annotations,** through a generic extern type or an inferred `define<T>`. luau-lsp 1.70.1 refuses the first and cannot infer the second (spike).
+- **Handler priorities (B8).** Not in M4: connection order is fixed and documented. An `order` option can come later without changing the default.
+- **Interpolating everything that moves in a fixed step,** not only what bodies carry. It needs every moved entity's previous pose each step and blurs teleports. Scripts can interpolate their own motion with `time.alpha`, and a later component can opt entities in.
+- **A `physics.interpolated(e)` call instead of a phase.** A camera set in `time.on_frame` would still run before the step that follows it, so it would still lag. The plan asks for a late hook.
+- **Recording at a fixed frame time,** one step per frame as headless runs do. Simpler files, but a windowed recording would replay with other step counts and frame times, so a recorded drive would not repeat what the player did.
+- **Scaling `time.on_frame`'s frame time,** as Unity's `deltaTime` does. Pause menus would then need an unscaled clock anyway. #191 chose unscaled, and the town relies on it.
+- **Reading the real cursor state.** It depends on the platform and the player (Escape in a browser), which a replay cannot reproduce.
+- **A separate library for debug drawing** (`draw.line`). It avoids re-declaring two builtins, but the plan names `debug.line`, and the cost is one tested declaration.
+- **Leaving `os.time` and `os.date` on the wall clock.** Replays of games that show dates or seed from the time would differ.
+
+**Consequences.**
+- **Goldens.** B2's fix moves pictures. In a headless run alpha is 0, so a child of a moving body is drawn at the pose before the last step, as its body already is. Goldens showing such children (the valley's car and hero) shift by one step and are re-recorded.
+- **Perf reports.** ADR-0009's phase list gains `LateFrame`, and `PerfReport` gains its row (`Phase::ALL` has ten entries).
+- **Recording.** A recording run hitches while a streamed cell is late, rather than diverging. A replay recorded from an unsaved editor world, or from older content, fails fast with `RE0532` instead of drifting.
+- **`os.time`.** In a live run it drifts from the wall clock while the game is paused or slowed: it is the game's clock. No script can read the real date in M4.
+- **Type definitions.** `engine.d.luau` grows by every addition, and its snapshot test shows each one. It still passes luau-lsp's old solver as well as the new one.
+- **Compat** keeps its BindableEvents, mouse behaviour and data rules. The recorder serves compat projects too, since it records actions and raw input.
+- **Not decided here:**
+  - F22: a clock for measuring script work (the ADR-0011 amendment reports each context's largest call in safepoints, which covers part of it).
+  - F23: bulk reads.
+  - The plan's stretch: a camera rig and Luau state machine and tween modules.
+
+## ADR-0059: Scenes, saves and settings: a named scene list, additive loading with kept entities, save slots and user settings in the data folder, all repeatable in verify runs and replays
+
+**Status:** Accepted (maintainer, 2026-10-28; drafted by WP37), for WP37 PRs "scenes", "saves" and "settings". The input half of WP37 (rebinding, contexts, one-dimensional axes) is ADR-0030's amendment for WP37 PR "rebinding", which this ADR's settings rely on for key bindings.
+
+**Context.** WP37 must let a game move between scenes behind a loading screen, save and load progress in slots, and keep the player's settings and key bindings between runs, with verify runs and replays repeating exactly (M4_PLAN, WP37). What the engine does today, read from `main` at c4c81ae (after the sample game's PR #191):
+
+- **One scene.** `[project] entry_scene` (default `scenes/main.scene.json`) is the only scene. `load_world` (`re_app/src/app.rs`) reads and parses it, builds a fresh `World` (`content_world`, `procedural::install`, `declare_generators`), calls `World::load`, propagates transforms and loads the procedural graphs. `world.restart()` asks for `App::restart` at EndFrame, which does all of that again into a fresh `World`, makes a fresh `Physics`, sends `AudioCmd::StopAll`, resets every sync, drops the compat contexts and any network session, replaces both Luau VMs (`ScriptRuntime::reset`), resets the fixed clock, the time scale (`time.set_scale`, #191) and the streaming tick, and keeps the frame counter, the seed and the replay going. `App::save_scene` always writes to `entry_scene`.
+- **Loading is already additive and atomic.** `World::load(&SceneDoc)` (`re_scene/src/scene.rs`) declares the file's script components, then spawns its entities through `spawn_docs`, which is atomic (on any error every entity spawned so far is despawned again), refuses an id the world already has (`SceneError::DuplicateId`), and returns the spawned entities in file order. `World::despawn_runtime` despawns a subtree and suppresses generated ids, which is play state (ADR-0017).
+- **Everything else follows the world.** A script runs per entity (`ScriptRef`); `ScriptRuntime::start_attached` drops the callbacks and threads of every entity that is gone and starts the scripts of new ones, in stable-id order, at the next `PreRender` or `PreSimulation`. The physics sync removes the body of an entity that is gone (`sync/physics.rs`, `push`); the audio sync stops its sound (`sync/audio.rs`); `procedural::refresh_graphs` loads the graphs of sources that appeared; the streamer re-describes its sources at every tick and unloads the cells of a source that is gone (ADR-0042). Streaming is deterministic by tick, and `App::set_stream_lateness` chooses between waiting for a late cell (`Lateness::Wait`, every run but a live window) and applying it when ready (`Lateness::Late`, set by `real run` in a window only).
+- **Saved data.** `ProjectFiles::writable(Writable::Data)` (ADR-0037, ADR-0049 §6) is `.real/data/` in development, a per-user folder named by `[package] identifier` in a packaged game, and memory mirrored to IndexedDB (`real-engine:<id>`, keys `data/<path>`) in a browser. `WritableDir` writes atomically. Compat's data services (ADR-0048 §1) keep their data there only when the run keeps data (`App::persist_data`, called by `real run` in a live run, by the editor and by the web runner) and `[compat.data] mode = "persist"`; otherwise each run starts from a copy of `data/seed/` in memory on a fixed clock (`[compat.data] epoch`), so it repeats. Native scripts have no saved data (sample-game finding F2).
+- **No settings.** The window takes its size from `[render] width` and `height` and is never fullscreen (`re_app/src/window.rs`). `re_render::Gpu::surface_config` returns `PresentMode::Fifo`, and `re_app` configures the surface with that `SurfaceConfiguration`, so it can change the mode before configuring. The audio graph (ADR-0041) puts each bus's fader in a `volume_control` effect and leaves every track's own volume at 0 dB; kira 0.12.5 applies a track's own volume after its effects and before it feeds its parent and its sends (`track/sub.rs`, "apply volume fade", then "output to send tracks"), and `TrackHandle::set_volume` documents it as the post-effects volume. Meters are in the effect chain, so a track's own volume never shows in `audio.levels`. The main track's volume is set only by `AudioCmd::SetMasterVolume`, which no script or system sends.
+- **Replays** (`ReplayDoc` v1, `re_types/src/replay.rs`) carry the seed, the frame count, action changes, raw device rows, commands and checks. Playback injects the recorded `ActionFrame`s in `App::begin_frame`, so the action map is not used. `real verify` runs each replay twice and compares the final `state_hash` (`RE0508`), and `cargo xtask d2` compares checkpoints across Linux, Windows and macOS (ADR-0036). WP35's draft ADR-0057 §10 (2026-10-28) adds recording (`real run --record`) and `ReplayDoc` version 2, whose new fields are all optional: `start { scene, state_hash, time }`, frame times, the viewport and hash checks. A recording run follows the rules a replay plays by: saved data starts from `data/seed/` and is not written, files are not reloaded, and streamed cells are waited for (`Lateness::Wait`). `os.time()` is `start.time` plus whole seconds of simulation time, with `start.time` = 2026-01-01T00:00:00Z in verify runs and replays without one. Rows that later WPs add to version 2 are recorded by the PR that adds them.
+- **The script host.** Libraries reach the engine through `ScriptHost` (`re_script/src/host.rs`): `services()` (the `HostServices` of `re_types`), `world()`, and since ADR-0042 `stream()`, a `re_script` trait (`StreamAccess`) that `re_app` implements for the `stream` library without any change to `re_types`.
+- **APIs checked for this ADR.** winit 0.30.13: `Window::set_fullscreen(Option<Fullscreen>)`, `Fullscreen::Exclusive(VideoModeHandle)` and `Fullscreen::Borderless(Option<MonitorHandle>)`, `MonitorHandle::video_modes()`; Wayland ignores exclusive fullscreen, and the web supports only borderless and only "with a transient activation" (a user gesture in the last few seconds; winit calls `requestFullscreen` and drops a rejection). wgpu 30.0.1: `PresentMode::{AutoVsync, AutoNoVsync, Fifo, FifoRelaxed, Immediate, Mailbox}`; `AutoNoVsync` tries Immediate, then Mailbox, then Fifo, so it is supported everywhere. kira 0.12.5: `MainTrackBuilder::add_effect` and `TrackHandle::set_volume` as above.
+- **Who consumes this.** The plan's cross-WP contract "Scenes and saves" (the `scene`, `save` and `settings` libraries, `[scenes]`, and the save file format with its version) is defined here and frozen at WP37's PRs "scenes" and "saves". WP36's settings screen binds to the settings, WP42's play session and recorder start runs from an open scene, WP43's `scene.open` and `scene.new` use the scene list and the loader, WP44's templates use all three, and WP48's town switches scenes, saves best scores and rebinds keys.
+
+**Decision.**
+
+*1. The scene list.*
+- `[scenes]` in `real.toml` maps scene names to project paths. It is a table, not a list: scripts name scenes, and order means nothing.
+
+  ```toml
+  [project]
+  entry_scene = "scenes/title.scene.json"
+
+  [scenes]
+  title = "scenes/title.scene.json"
+  town = "scenes/town.scene.json"
+  harbour = "scenes/harbour.scene.json"
+  ```
+
+- `[project] entry_scene` stays a path, and stays the scene a run starts in. The scenes a game can load are the entry scene and `[scenes]`. When `[scenes]` does not name the entry scene's path, the entry scene is listed under its file stem without `.scene` (`main` for `scenes/main.scene.json`). A project without `[scenes]` therefore has exactly one scene, as today.
+- A name is 1 to 64 characters from `a`–`z`, `0`–`9`, `_` and `-`. A bad name, a path that is not a `.scene.json` file of the project, two names for one path, or an implicit entry name that clashes with a listed name is `RE0572` when the config loads (`AppConfig::check`).
+- A run that starts in a scene the list does not name (a play session the editor started from an unlisted scene file, or a replay's `start.scene`, section 6) lists it for that run under its project path, so `scene.current()` returns the path and `scene.switch` takes it; paths and names cannot collide, since names have no `/` or `.`.
+- `real verify`'s schema stage already parses every `scenes/*.scene.json` and loads it into a scratch world. It now also checks that every listed path exists, loads the listed scenes that live outside `scenes/`, and checks that the scene names in a replay's `scenes` list (section 6) are scenes of the project.
+
+*2. Loaded scenes and kept entities.* `re_app` keeps the state of the loaded scenes in its new `scenes` module, outside the ECS (it is not saved in scene files, copied by `World::fork` or hashed):
+- the **main scene** (the entry scene at start, then the last one switched to);
+- the **added scenes** (`scene.load`), in load order, each with the root entities it spawned;
+- the **kept entities**: root entities that survive a switch (`scene.keep`). A kept entity must be a root (no parent), must not be `Streamed`, and takes its subtree with it.
+- Streaming belongs to the main scene: an added scene that holds a `Streamed` entity (a streamed source or a stashable authored root, ADR-0042) fails to load with `RE0570`. So the stream stash and the streamer's cells only ever hold the main scene's content.
+- A root entity spawned at run time belongs to the main scene; an entity spawned under a parent belongs with that parent. So a switch takes away whatever the old scenes made, and a script that wants something to survive keeps it.
+
+*3. The `scene` library* (native game context only; compat games keep their own model). Declarations as they will appear in `engine.d.luau`:
+
+```luau
+-- A scene load started by scene.switch or scene.load.
+declare extern type SceneLoad with
+    read name: string        -- the scene's name
+    read progress: number    -- 0 to 1
+    read done: boolean       -- true once the load is over, done or failed
+    read error: string?      -- why it failed (then nothing changed), else nil
+    function wait(self): ()  -- suspends this script thread until done
+end
+
+declare scene: {
+    switch: (name: string) -> SceneLoad,   -- unload every scene, load `name` in their place, keep kept entities
+    load: (name: string) -> SceneLoad,     -- load `name` beside the loaded scenes
+    unload: (name: string) -> (),          -- unload a scene that scene.load added, at the end of this frame
+    current: () -> string,                 -- the main scene
+    loaded: () -> {string},                -- the main scene, then the added ones in load order
+    list: () -> {string},                  -- every scene the game can load, sorted
+    keep: (entity: Entity, keep: boolean?) -> (),  -- keep a root entity across switches, or stop (false)
+    is_kept: (entity: Entity) -> boolean,
+}
+```
+
+- An unknown name is `RE3100` (with the closest name as a hint). Loading a scene that is already loaded, unloading the main scene or one that is not loaded, and keeping an entity that is not a root are `RE3101`. Each raises in the calling script.
+- `SceneLoad:wait()` returns at once when the load is done; otherwise it parks the calling thread with the scheduler's public `park` and `wake` (`re_script::sched`, as compat's yielding calls do), and the scenes module wakes it, deferred, at the EndFrame that ends the load, so it resumes in the next frame's first script phase. It needs no scheduler change, and it does not poll `task.wait()`, which runs on fixed steps and would never resume under a time scale of 0 (#191), the usual state behind a loading screen. Like every yielding call, it raises `RE3005` outside a script thread, and a parked thread whose entity a switch despawns goes with its owner.
+- `world.restart()` keeps its name and its meaning (section 5).
+
+*4. Loading.*
+- A load goes through three stages, and `progress` counts them: **read** (read and parse the scene file into a `SceneDoc`, then check it: up to 0.2), **warm** (load each mesh, material, skin, clip and animation graph the scene's components name into `Media`'s and the mixer's caches: up to 0.9; only when the run draws, so headless runs skip it), and **apply** (at EndFrame: 1.0, and `done`).
+- **The check** runs before anything is despawned. It repeats passes 0 to 2 of `spawn_docs` without spawning, through `re_scene`'s and `re_reflect`'s public API (`World::registry`, `Registry::key`, `ComponentSchema::field_index`, `Doc::to_value`): the format and version, every id valid and unique, every parent earlier in the file or already in the world, every component registered (after the file's `script_components` are declared) and every field value convertible, with entity references resolved among the scene's own ids, the kept entities and, for an added scene, the entities already loaded. So a failed load, switch included, changes nothing. Once WP38's PR "prefabs" (ADR-0060) lets a scene refer to entities inside a linked prefab instance (`<instance id>/<key>`), which exist only after the instance is expanded, the check calls its dry check, `World::check_scene(&SceneDoc, existing)` (the same passes plus the instances' keys, spawning nothing), instead of repeating the passes. `existing` names the ids that count as already there: every id of the World for an added scene, and only the ids of the kept subtrees for a switch, since the old scene is still in the World while the check runs. The loader removes the entities that kept ones stand in for (below) from the document before checking it.
+- Requests are applied in the order they were made, each at the EndFrame of a frame once it and every earlier request are ready. A switch requested while another switch is still loading replaces it (the first `SceneLoad` ends with `error = "replaced by the switch to <name>"`). A pending `scene.load` made before a switch is cancelled when the switch applies; one made after it applies after it.
+- **When a load is ready depends on the run's lateness, the same setting streaming uses (ADR-0042).** With `Lateness::Wait`, which is every run but a live window (`real verify`, replays, recording runs, headless runs, `play.run`, tests), every stage runs to the end within the frame that asked, so the change applies at the EndFrame of the request's frame, on every machine. With `Lateness::Late` (`real run` in a window), the read stage runs on a pool thread, the warm stage loads assets on the main thread within 4 ms per frame, and the change applies at the first EndFrame after both are done, so a loading screen keeps drawing. A browser has one thread, so there the read stage takes one frame of its own.
+- **Apply** does, for a switch: despawn every root entity that is not kept, in stable-id order, with `hierarchy::despawn_recursive` (not `despawn_runtime`: unloading is not the play-state deletion that suppressions record); forget the suppressions of the sources it despawned, so a scene loaded again starts as authored; empty the stream stash and put a fresh `Streamer` (same `[stream]` config) in place of the old one, which only held the old main scene's cells; then `World::load` the new scene, propagate transforms, load the graphs of the new sources and regenerate them (synchronously, as play does under ADR-0017 and WP39), and reset the undo history. A scene entity whose id is the id of a kept entity is not spawned, with its subtree: the kept one stands in for it, and the scene's references to that id resolve to it (one `info` note per id, `RE0578`). That lets every level hold its own player for testing on its own, while the player carried from the last level wins. For an added scene, apply is the load half alone, and its roots are recorded; `scene.unload` despawns them the same way and forgets their sources' suppressions. Any other id the world already has makes the load fail in the check.
+- Physics, audio, animation and scripts are not reset by a switch. Their syncs already follow the world: the bodies and sounds of despawned entities go, the new ones start at the next step, the scripts of despawned entities stop and the new scene's scripts start at the next `PreRender`. Kept entities keep their bodies, sounds and running scripts, and both VMs keep their module state. The fixed clock, the frame counter, the seed, the time scale (#191), the world's id stream (WP38's session ids, ADR-0036 amendment) and the mixer snapshot carry on, so run-time ids keep repeating across switches.
+- **Failure.** A file that cannot be read or parsed, or a load refused by `World::load`, ends the `SceneLoad` with `error` set and reports `RE0570` with the scene's own diagnostic as `related`. Nothing changes: the despawns of a switch happen only after the new scene has passed its checks (the load is checked on the parsed document first, then applied, and `spawn_docs` is atomic).
+- **Known costs.** Generating an uncached procedural source and uploading new GPU assets still happen on the main thread at apply and in the next frame's upload; the disk cache makes the first cheap from the second visit on. Moving asset decoding to worker threads needs `re_assets` work, and generating ahead of apply can follow WP39's PR "async editor" (regeneration on the pool with cancel); both are left out of M4.
+
+*5. `world.restart()`.* The plan's "today's restart becomes a scene switch" is read as: the restart code moves into the `scenes` module as its full-reset path, and keeps its behaviour exactly. `world.restart()` switches to the entry scene with everything reset: a fresh `World`, `Physics`, syncs, compat contexts and VMs, `AudioCmd::StopAll`, the clock and streaming tick reset, the time scale back to 1 (#191), no kept entities, every pending load cancelled. Whatever `restart` gains before PR "scenes" lands moves with it: WP38's PR "ids" makes a restart clear the flag that seeds the session ids at the next frame, one line that whichever of the two PRs lands second carries. So the valley's restarts, their replays and the d2 hashes do not change. `scene.switch(scene.current())` is the soft reload of the current scene.
+
+*6. Replays and `real verify`.*
+- **Scene changes are logged and checked, never driven.** `App` logs every applied change as `{frame, switch | load | unload | restart: name}`, where `frame` is the frame whose EndFrame applied it. `ReplayDoc` version 2 (ADR-0057) gets an optional `scenes` list of the same entries. When a replay has the list, `App` compares each applied change with the next expected one as it applies, and a difference (another scene, another frame, a change the replay does not list, or a listed change that never happens) is error `RE0571`, naming the first difference; `real verify`'s replay stage fails on it. A replay without the list checks nothing, so every existing replay plays as before. Because loads finish within the requesting frame under `Lateness::Wait`, the same scripts produce the same log on every run and machine.
+- **What a run starts with.** ADR-0057's `start.scene` is the scene a run began in, a project path like `entry_scene` (the entry scene by default; a play session started from the editor begins in its open scene), and playback starts there: the scenes module loads it before frame 0 through its full-reset path. Saves and settings need no row: a recording run starts them from `data/seed/` and writes nothing (ADR-0057 §10), exactly as playback and verify runs do (sections 7 and 8), so a replay never carries a player's data. The bindings a run used are the one exception, recorded as `start.bindings` by the ADR-0030 amendment, so a replay keeps reading the bindings it was recorded with after `real.toml`'s change.
+- **Recording** is WP35's (PR "record"). This ADR's PRs add their rows to version 2 and record them, as ADR-0057 asks: PR "scenes" the `scenes` list (copied from `App`'s log), PR "rebinding" `start.bindings`. A recording run waits for loads as it waits for streamed cells, so its log is the log its playback makes; a run that applied a load late (a live window) is not a recording.
+- Both are optional fields of ADR-0057's version 2 in `re_types::replay::ReplayDoc` (`#[serde(default)]`, so version 1 files and version 2 files without them play as before), plus the regenerated `schemas/replay.schema.json`. `re_types` is the maintainer's: section 10 lists the change for the maintainer to make or accept.
+
+*7. Saves.*
+- **`real.toml`**, with these defaults, mirroring `[compat.data]`:
+
+  ```toml
+  [saves]
+  version = 1                       # the save version this build writes
+  mode = "persist"                  # or "session": never keep saves, even in `real run`
+  ```
+
+- **The `save` library** (native game context):
+
+  ```luau
+  declare save: {
+      write: (slot: string, data: {[any]: any}) -> (),      -- stamped with [saves] version and saved_at
+      read: (slot: string) -> {[any]: any}?,               -- migrated to [saves] version; nil for an empty slot
+      exists: (slot: string) -> boolean,
+      list: () -> { { slot: string, version: number, saved_at: number } },  -- sorted by slot
+      delete: (slot: string) -> (),
+      version: () -> number,                                -- [saves] version
+      migrate: (from: number, step: (data: {[any]: any}) -> {[any]: any}) -> (),  -- the step from `from` to `from + 1`
+  }
+  ```
+
+- **A save is the game's data, not the world**: no entities, components or physics state (the stretch goal, below), so a game rebuilds its state from what it saved, by switching to the saved scene and setting what it stored.
+- **Slots** are named with 1 to 64 characters from `a`–`z`, `0`–`9`, `_` and `-` (`RE3102` otherwise). Lowercase only, so two slots never collide on a case-insensitive file system.
+- **Values** are tables of nil, booleans, finite numbers, strings and tables of them, as JSON: an array is a table with keys exactly `1..n`, any other table has string keys only, and objects are written with sorted keys. A value that would not read back as written (a vector, an entity, a function, a number key that is not part of a sequence, NaN or infinity, nesting deeper than 64) or a slot over 4 MiB as JSON is `RE3103`, with a hint (store `{x, y, z}`, or the entity's id).
+- **Migration.** `save.read` reads the slot's `data_version`. Older data passes through each registered step in turn, from its version up to `[saves] version`, and the result is returned; the slot is not rewritten until the game writes it. A missing step is `RE3104`, a step that errors or returns something other than a table is `RE3105` (with the step's error), and data from a newer version than the build's is `RE3106`. This meets the plan's acceptance: a slot written by version 1 of a project reads in version 2 through its `save.migrate(1, ...)` step.
+- **The file** is `saves/<slot>.json` in the data folder:
+
+  ```json
+  { "format": "real-engine/save", "version": 1, "data_version": 2, "saved_at": 1798128000, "data": { "coins": 12, "visited": ["town"] } }
+  ```
+
+  `version` is this envelope's version, `data_version` the game's. `saved_at` is the run's `os.time()` when the slot was written (ADR-0057 §10: seconds since 1970, UTC, starting from the wall clock in a live run and from a fixed time in verify runs and replays, and counting simulation seconds since the run began, across restarts, so it never goes back), so a save menu can show and sort it and verify runs still repeat.
+- **Where saves live.** When the run keeps data (`App::persist_data`) and `mode = "persist"`, the store is the data folder's `saves/` (`.real/data/saves/` in development, the per-user folder in a packaged game, IndexedDB in a browser through the existing mirror). Otherwise (verify runs, replays, recording runs, `mode = "session"`) it is memory, seeded from `data/seed/saves/` (the seed mirrors the data folder's layout, as compat's does).
+- **Timing.** `save.write` checks and serialises at once and keeps the result in memory, so a later `read`, `exists` or `list` in the same run sees it. The file is written at EndFrame, outside the script budget, once per slot per frame. A file that cannot be written is `RE0573` (warning); the run goes on with the slot in memory. A file that does not parse, or has another `format` or a newer envelope `version`, is renamed to `<slot>.json.bad` and reads as empty, with `RE0574` (warning), as compat sets aside bad data files.
+
+*8. Settings.*
+- **Keys.** Settings are a flat set of dotted keys, each with a type and a default:
+
+  | Key | Type | Default |
+  |---|---|---|
+  | `audio.master` and `audio.<bus>` for every bus and send of `[audio]` | number, 0 to 1 (linear) | 1, or `[settings.audio]` |
+  | `display.mode` | `"windowed"`, `"borderless"` or `"fullscreen"` | `"windowed"`, or `[settings.display]` |
+  | `display.width`, `display.height` | whole number of pixels | `[render] width` and `height` |
+  | `display.vsync` | boolean | `true`, or `[settings.display]` |
+  | `quality` | a preset name | `"high"`, or `[settings] quality` |
+  | `game.<name>` | the type of its default | `[settings.game]` |
+
+  Key bindings are settings too, kept per action; their rules are the ADR-0030 amendment's.
+- **`real.toml`:**
+
+  ```toml
+  [settings]
+  quality = "high"                  # the default preset
+
+  [settings.audio]                  # default volumes, 0 to 1
+  music = 0.8
+
+  [settings.display]
+  mode = "windowed"
+  vsync = true
+
+  [settings.game]                   # the game's own settings: name = default (boolean, number or string)
+  invert_y = false
+  mouse_sensitivity = 1.0
+
+  [settings.presets.low]            # a quality preset: values that replace [render] keys
+  shadows = { cascades = 1, distance = 60.0 }
+  post = { bloom = { intensity = 0.0 }, sun_rays = { intensity = 0.0 } }
+  ```
+
+  A bad default, an unknown key under `[settings.audio]` or `[settings.display]`, or a preset that does not deserialize over `[render]` is `RE0576` when the config loads.
+- **Quality presets.** A preset is a TOML table merged key by key over `[render]` before `RenderConfig` is read. Without `[settings.presets]`, the engine offers `low`, `medium` and `high`, which cap `[render]`'s values rather than replace them: `high` is `[render]` as written (so the default changes nothing); `medium` keeps at most two shadow cascades over half the distance, `shadow_map_size` at most 2048 and `effect_budget` at most 10,000; `low` keeps one cascade over a quarter of the distance, `shadow_map_size` at most 1024 and `effect_budget` at most 4,000, and turns `msaa`, bloom, sun rays and blur off. No preset touches `[render.environment]` (sky, fog, ambient), which is the game's look, not its cost. WP32 owns the `[render]` keys (ADR-0051 §5, frozen at its PR "environment") and agreed these values on 2026-10-28; whichever of PR "settings" and PR "environment" lands second wires the new keys into the built-in presets. The keys the renderer reads every frame (`post`, `shadows`, `effect_budget`) change at the next frame; `msaa`, `shadow_map_size` (they size the renderer's targets) and every other key change at the next start.
+- **`real.toml` is never written.** The player's values are stored as overrides only, in `settings.json` in the data folder, so a default that changes in a new version of the game reaches every player who never changed it:
+
+  ```json
+  { "format": "real-engine/settings", "version": 1,
+    "values": { "audio.music": 0.5, "display.mode": "borderless", "quality": "low", "game.invert_y": true },
+    "bindings": { "jump": ["key:KeyJ", "pad:South"] } }
+  ```
+
+  A value with an unknown key or the wrong type, or a binding the amendment refuses, is dropped with `RE0575` (warning), and the rest still applies; a file that does not parse is set aside as `settings.json.bad` with `RE0574`, and the defaults apply.
+- **The `settings` library** (native game context):
+
+  ```luau
+  declare settings: {
+      get: (key: string) -> any,
+      set: (key: string, value: any) -> (),   -- checked now (RE3107 unknown key, RE3108 bad value); applied and saved at EndFrame
+      reset: (key: string?) -> (),            -- back to the default; every key when nil
+      keys: () -> {string},                   -- sorted
+      presets: () -> {string},
+      display_modes: () -> { { width: number, height: number, refresh_hz: number } },
+  }
+  ```
+
+- **Applied at start, and at EndFrame after a change.**
+  - *Volumes* set the bus or send track's own volume, which the graph leaves at 0 dB and no snapshot or fader touches, and `audio.master` sets the main track's volume. A user volume therefore scales a bus after its effects, its fader and its meter, so it never shows in `audio.levels` and never changes the simulation. This needs a small `re_audio` API, which WP45 adds in its PR "control": `Audio::set_user_volume(&mut self, bus: Option<&str>, volume: f32) -> Result<(), Diagnostic>`, where `None` is the main track (so a project bus named `master` is no problem), linear 0 to 1 (`RE7404` otherwise), an unknown bus or send `RE7408`; it survives `set_graph` rebuilds and `StopAll` (a restart keeps the player's volumes), applies to the headless mixer, and on the main track adds to `AudioCmd::SetMasterVolume` in decibels.
+  - *Display.* The windowed runner opens the window at `display.width` by `display.height` in the chosen mode: `borderless` is `Fullscreen::Borderless(None)` on the current monitor, and `fullscreen` is `Fullscreen::Exclusive` with the current monitor's video mode closest to the size (highest refresh rate first), falling back to borderless where exclusive is unsupported (Wayland, the web) with `RE0577` (info). `display.vsync` chooses `PresentMode::Fifo` (on, today's mode) or `PresentMode::AutoNoVsync` (off), set on the `SurfaceConfiguration` before `surface.configure`, so `re_render` does not change. In a browser, the page decides the size and the vsync; `display.mode` other than `windowed` applies only when the frame that sets it follows a user gesture (a menu click), which is how a settings screen sets it, and is not applied at start.
+  - *Quality*: as above.
+  - *Bindings*: the action map is built from `[input]` with the overrides applied (the amendment).
+  - *Headless runs* apply volumes to the headless mixer and ignore the display; `display_modes()` returns the configured size alone, so a script that lists modes repeats in verify runs.
+- **Where settings live.** The same rule as saves: `settings.json` in the data folder when the run keeps data, else memory seeded from `data/seed/settings.json`. Verify runs, replays and recording runs therefore use the project's defaults and the seed. Volumes, display and quality never reach the simulation; `game.*` keys and bindings can, and those come from the project and the seed there, and the bindings also from a replay's `start.bindings` (the amendment).
+
+*9. Edit mode (WP43).* The `scenes` module gives `App` the open scene's path (`App::scene_path`, the entry scene at start), and `App::save_scene` writes to it instead of always to `entry_scene`. `App::open_scene(path)` replaces the world with the scene at `path` through the same loader (read, parse, spawn, propagate, graphs), with no VMs and nothing simulated, carries the open documents (`OpenDocs`: project files rather than scene content, with their epochs) over to the new world, returns the scene's diagnostics, and leaves the undo history to the caller, so WP43's `scene.open` can keep one history per scene (ADR-0064 §6). It also opens a prefab file through WP38's `World::load_prefab` (ADR-0060), and `save_scene` then writes it back with `World::save_prefab`, so editing a prefab is opening it; whichever of PR "scenes" and WP38's prefab PR lands second adds that branch. The editor opens one document at a time, by path (any scene or prefab file); added scenes are a run-time feature. The scenes module reads `[scenes]` from the App's config whenever it resolves a name, so a name that WP43's `scene.new` adds to `real.toml` (through its config document) counts as soon as the editor applies the config. WP42's play session runs scene changes on its play copy like any run, and returning to edit restores the open scene as the session already does.
+
+*10. Where the code goes, and what other owners are asked for.*
+- `crates/re_app/src/scenes/` (new, WP37): the scene state, loader and log, the save store, the settings store and their EndFrame work. `App` calls it from Input (bindings and contexts), EndFrame (apply loads, flush saves and settings, apply settings) and `restart`.
+- `crates/re_script/src/api/scene.rs`, `save.rs`, `settings.rs` (new, WP37), and `api/game.rs` with the `GameAccess` trait the three libraries call: scene requests and states, kept entities, save reads and writes, settings, bindings and contexts. `re_app` implements it. **No `HostServices` call is added**: following `ScriptHost::stream()` (ADR-0042), `ScriptHost` gets one provided method, `fn game(&mut self) -> Option<&mut dyn GameAccess> { None }`, and a host without a game (builder runs, tools) leaves it `None`, so the libraries raise `RE3015` there, as the services do with no game running.
+- **Asked of WP35** (owner of `re_script` and the recorder, reviews): the `ScriptHost::game` method in `host.rs`; three entries in `libs::all` and one line in `input_lib` for the amendment's input calls; the regenerated `engine.d.luau` snapshot; and the review of this ADR's PRs where they add their rows to the recorder (agreed 2026-10-28). The recorder's raw rows already include pad buttons (`record_raw` writes `pad_button` rows from the raw frame for native games too), so the amendment's `pressed_binding` replays with no further ask.
+- **From WP45** (owner of `re_audio`): `Audio::set_user_volume`, as above, in its PR "control" (agreed 2026-10-28; split into its own small PR if PR "settings" is ready first).
+- **Asked of the maintainer** (makes or reviews): `ReplayDoc.scenes` (and the amendment's `start.bindings`) in `re_types`, on top of ADR-0057's version 2, and the replay schema; `[scenes]`, `[saves]` and `[settings]` in `AppConfig` and in ARCHITECTURE §8; the display and vsync hooks in `re_app/src/window.rs` and the web runner; the save and settings file schemas in `schemas/`; and the fixture project `crates/re_app/tests/fixtures/scenes/` added to the `d2` job's projects in `platforms.yml`. App code that the split of `app.rs` moves goes in after that split.
+- **Diagnostic codes**, each with an explain page: `re_script` `RE3100`–`RE3108` (unknown scene; refused scene request; bad slot; value that cannot be saved; missing migration step; failed step; save from a newer version; unknown setting; bad setting value); `re_app` `RE0570`–`RE0578` (scene load failed; replay's scene changes differ; bad `[scenes]`; save or settings write failed; bad file set aside; settings value dropped; bad `[saves]` or `[settings]`; display mode unsupported; kept entity stands in for a scene entity). The amendment's codes are `re_input`'s.
+
+*11. The PRs.* PR "scenes" is sections 1 to 6 and 9 (with `world.restart()` moved into the module), PR "saves" section 7, PR "settings" section 8 without bindings, and PR "rebinding" the amendment with the bindings in settings. The contract freezes at PR "scenes" (the `scene` library, `[scenes]`, the replay's `scenes` list) and PR "saves" (the `save` library and the save file with its version). A fixture project (`crates/re_app/tests/fixtures/scenes/`: three small scenes, a kept player, a save and a load, a migration from version 1) has replays with `scenes` lists that run twice to the same `state_hash`, and joins `d2`.
+
+**Alternatives.**
+- *`[scenes]` as an ordered list, or scenes named by path in scripts.* Order would carry no meaning, indices break when a scene is added, and paths in scripts break when a file moves. Names in a table give scripts a stable handle and let `real verify` check every one.
+- *A switch that also replaces the VMs, as restart does.* Then a loading screen's script would die with the scene it is leaving, and kept entities would lose their scripts, so neither feature could work. Restart keeps its full reset; switch is the soft change.
+- *A fresh `Physics` at every switch.* It would drop the bodies, velocities and character state of kept entities. The physics sync already removes and adds bodies as entities come and go, deterministically.
+- *Replays that drive loads (record the frame a load applied and hold playback until then).* That makes a replay depend on the loader's timing, and a hand-written replay would have to know it. With loads finishing in the requesting frame in every repeatable run, the scripts alone decide when scenes change; the replay's list only checks it.
+- *Waiting a fixed number of frames in repeatable runs, so a loading screen shows there too.* It changes every replay's timing for no check that needs it; repeatable runs have no one watching the screen.
+- *Scene membership as a component.* A registered component would be hashed and written into scene files by the editor; an unregistered one would not survive `World::fork`. The module's own state is simpler, and the ECS is unchanged.
+- *Saves in compat's DataStore format, or one file for all slots.* One JSON file per slot keeps each write small and atomic, lets a player copy one slot, and reads plainly in a text editor; compat's format carries DataStore versions and keys that native saves do not need.
+- *A binary save format (postcard).* Smaller, but opaque, and a migration then has to be written in Rust; JSON keeps migrations in Luau, where the game's data is.
+- *A version per field, or schema-checked saves.* A single `data_version` with Luau steps covers renames, splits and defaults with no schema language; the game owns its data.
+- *Settings in a save slot, or in TOML.* Settings must exist before any script runs (the window opens with them), must survive the player deleting saves, and are written by the engine; a separate JSON file in the data folder does all three, with the same store, seed and set-aside rules as saves.
+- *Storing every setting, not only overrides.* Then a default that changes in a later version of the game would never reach existing players.
+- *New `HostServices` calls.* About twenty calls in a WP0 crate for one WP's libraries. `ScriptHost::stream()` already shows the narrower way: a `re_script` trait that `re_app` implements.
+- *Replays that carry the player's saves and settings (`start.saves`, `start.settings`), so a recording can start from the player's own data.* Faithful to one machine, but replay files would grow with save data and carry a player's data into the repository; ADR-0057's rule (a recording run starts from `data/seed/` and writes nothing) makes every recording portable, and a developer seeds the data a recording needs.
+- *Asset decoding and procedural generation on worker threads during the warm stage.* Better loading screens, but `Media` and `AssetServer` are main-thread caches today and play-time regeneration stays synchronous for determinism (WP39); left for later.
+
+**Consequences.**
+- A project without `[scenes]`, `[saves]` or `[settings]` runs, verifies, packages and replays exactly as before: one scene, the same restart, no new files, the same hashes and goldens.
+- Games get scene switches with loading screens, added scenes, entities kept across switches, save slots with migrations, and settings with a settings screen to bind them (WP36), all with no wall-clock dependence in repeatable runs.
+- Repeatable runs, recording runs included, never read or write the player's data folder: saves and settings come from `data/seed/`, so a player's files can never change a verify result, and a replay never carries a player's data. A developer who wants a recording to start from a particular save puts that save under `data/seed/saves/`.
+- `saved_at` is the game's clock (`os.time()`, ADR-0057 §10): in a live run it drifts from the wall clock while the game is paused or slowed, so a save menu shows it as a rough time.
+- A load in a live window can still hitch for one frame at apply (generating an uncached procedural source, uploading GPU assets). A game hides it behind its loading screen by waiting a frame after `done`, or for WP35's "ground ready" event when the scene streams terrain.
+- A browser applies a fullscreen setting only from a user gesture, and offers borderless only; exclusive fullscreen is unavailable on Wayland too.
+- Replay version 2 grows two optional fields, `scenes` and `start.bindings`. Older replays play unchanged, and an engine from before this ADR refuses a replay that has them (unknown fields are errors), which is ADR-0057's rule.
+- The `data/seed/` folder now seeds native saves (`data/seed/saves/`) and settings (`data/seed/settings.json`) as well as compat's data; the two never share a path.
+- Stretch work stays possible on this design: saving physics state with WP34 adds a section to the save envelope under a new envelope version, and touch sticks in the browser are another input source in the amendment's terms.
+
+## ADR-0063: The play session in the editor: a second App forked from the edit world, stepped frame by frame in the editor's window
+
+**Status:** Accepted (maintainer, 2026-10-28; drafted by WP42), for WP42 PR "play", with ADR-0045's amendment for it (the debugger on the play world). The play session is a cross-WP contract (`crates/re_app/src/play.rs`; consumers WP35 for recording, WP44 for watches and approvals).
+
+**Context.**
+
+- **The editor has no Play.** It draws the World in edit mode (`App::edit_frame`: regeneration, transform propagation, asset upload and the render snapshot; no scripts, physics, audio or streaming) and edits it through commands, saving the scene after each one (`AppConfig::persist_edits`). `re_cli/src/tooling/editor.rs` calls `persist_data()` and `enable_hot_reload()` "as `real run` does" for a play that does not exist, and the tooling audit (§1.8) found that the editor's debugger can never stop for the same reason.
+- **What exists to build on** (main at `cbbdbf0`):
+  - `App::play_copy` (the `play.run` command, ADR-0021) forks the World (`World::fork`: every entity with its stable id, generated entities with their keys, overrides, `GlobalTransform`, suppressions, the stream stash and the open documents; ids, child order and `state_hash` identical; undo history not copied), clones the `GraphStore`, forks the `Streamer` (`streamer.forked(&live, &copy)`), builds the copy with `App::with_world` (fresh command history, no debugger, headless audio), carries over alpha, shaders, the stream tick and the physics origin, gives the copy's physics the live bodies' motion (`apply_motion_state`), lends the GPU side, the loaded media, the render assets and pending compat font textures to the copy (`Graphics::set_keep_derived(true)` while lent), runs it headless for N frames and takes everything back. A Roblox-style game that already started reloads its entry scene instead of forking.
+  - `real run` in a window (`re_app::window::run_windowed`) is the behaviour a designer expects from Play: frame time from the wall clock, clamped at 250 ms ("a long pause is not simulated time"); keyboard, mouse and gamepad through `RawInput::on_window_event`, `on_device_event` and `Gamepads::poll`; the mouse lock and cursor visibility a game asks for (`take_mouse_behavior`); the audio device (`Audio::new_or_headless`); saved data kept (`persist_data`); hot reload (`enable_hot_reload`); late streaming (`Lateness::Late`); `App::draw_into` for the scene, HUD and compat GUI.
+  - The editor socket (ADR-0020, ADR-0026) serves other writers' calls between frames on the editor's thread; a socket call blocks until the editor answers, and `real mcp` passes MCP tool calls through it.
+  - The script debugger (ADR-0045) attaches each VM as a context and parks a stopped scheduler thread until a command arrives; `re_script::debug::service` runs between frames. Its use in play is the subject of the companion amendment to ADR-0045.
+- **M4_PLAN WP42 PR "play"** asks for Play, Pause, Step and Stop; Play forks the World (from `play_copy`'s fork) and steps it frame by frame in the editor's window with input from the viewport; Stop throws the fork away, and the edit world and its undo history are never touched; the debugger attaches to the play world; script output goes to the console; a Roblox-style project runs its server and client in the editor's process; streaming follows the play camera; agent commands during play are refused or queued, as this ADR decides; a Record button writes a replay through WP35's recorder (WP35 PR "record", `crates/re_types/src/replay.rs`). Keeping changes made during play is a non-goal (a question for M5).
+
+**Decision.**
+
+*1. A play session is a second App.*
+
+- `re_app::play::PlaySession` (in `crates/re_app/src/play.rs`) owns the **play app**: a second `App` made from the edit app by the same fork `play_copy` uses, moved into one function both call (`App::fork_for_play`), so `play.run` and Play start the same way.
+- The play app is set up as `real run` sets up a development run in a window: `persist_data()`, `enable_hot_reload()` (its own watcher), `Lateness::Late`, the audio device, the editor's debugger (ADR-0045 amendment) and `persist_edits` off, so nothing the play app does is written to the scene file. Its command history starts empty.
+- For the session, the edit app **lends** its GPU side, media, render assets and compat textures to the play app, as `play_copy` does, and takes them back at Stop. The edit app has no GPU side while the session lasts: it is not drawn, does not upload, and the commands that need a GPU are routed to the play app or refused (§5).
+- The edit app is not stepped, drawn or edited during the session. Its World, undo history and `state_hash` at Stop are exactly those at Play; the acceptance test checks `state_hash` and the history's steps, labels and position.
+
+*2. Play, Pause, Step and Stop.*
+
+- **Play** (the toolbar, F5 in edit mode) ends a gizmo drag or an inspector edit in progress, seals the edit history, builds the session and switches the panels and the viewport to it. If the play app cannot be built, the editor stays in edit mode with an error (`RE0653`). The first play frame runs like `real run`'s first frame: scripts start from their entry points, and a Roblox-style project starts its server and client in the editor's process.
+- **Running**: on each editor frame the session runs one `App::frame(dt)`, with `dt` the wall time since the last play frame, clamped at 250 ms as `run_windowed` does; the window redraws continuously while running, paced by the display.
+- **Pause** (F6) stops calling `frame`; the viewport keeps showing the last frame, the panels stay live, and Resume (F5 or F6) carries on without a jump in time.
+- **Step** (F7, while paused) runs one frame with exactly one fixed step, whatever the game's time scale (`time.set_scale`, #191: frame time is multiplied by `App::time_scale`, and 0 stops the fixed steps): Step is the person's request, so a game that paused itself with a scale of 0 still steps once. Running frames honour the scale, as in `real run`.
+- **Stop** (Shift+F5, or the toolbar) detaches the debugger, gives the lent parts back to the edit app (releasing the play app's compat view resources), drops the play app with its VMs, physics, audio and history, applies the file changes the edit app's watcher collected meanwhile (§7), and draws the edit world again. The selection is kept by id; ids that only existed in play leave it.
+- **Record** (after WP35 PR "record"; hidden until then) starts the session from a fresh load of the saved open scene (`App::scene_path`, WP37's ADR-0059 §9: the entry scene until another is opened), recorded as the replay's `start.scene` (ADR-0057), instead of the fork, so it starts where `real verify` replays from (the fork would also carry the cells loaded around the editor camera, and the replay's start `state_hash` would not match). It follows WP35's recording rules (ADR-0057 §10): `App::start_recording()` before the first frame and `App::finish_recording()` at Stop; saved data comes from `data/seed` and is not written, files are not reloaded, and streamed cells are waited for (the view may hitch while a cell loads); frame times and the viewport size are recorded per frame, and the commands the person sends during the session (§5) are recorded at their frame. Stop writes the replay with `re_input::save_replay` to `tests/replays/<name>.replay.json` under a name the person gives (default `recorded-<n>`). Record is refused while the edit app has edits not written to disk (`RE0655`): the replay stores its start world's `state_hash`, and `real verify` would refuse it at once (`RE0532`).
+- **A game that quits** (`game.quit()`, WP35) ends the session as Stop does.
+
+*3. The view and input.*
+
+- The viewport shows the play app's frames: `App::draw_into` into the viewport's texture, at the viewport's size and pixels per point, so the HUD, the compat GUI and a game's cursor all match the viewport. The debug shapes scripts draw (`debug.line` and the others, WP35) are drawn, as in any development run; the editor's own overlays are not (ADR-0044 amendment §3). The editor camera keeps its pose for after Stop.
+- **Game focus.** Input reaches the play app only while the viewport has game focus: a click in the viewport gives it focus, and Shift+F1, Stop, or the window losing focus take it back. While it has focus:
+  - window events (keys, mouse buttons, the wheel, and cursor moves translated into the viewport's pixels) and device events (raw mouse motion) go to the play app's `RawInput`, and gamepads are polled into it each frame;
+  - the mouse lock and cursor visibility the game asks for are applied to the editor window, and undone when focus leaves;
+  - the editor's own shortcuts do not fire, except Stop (Shift+F5), Pause (F6) and release (Shift+F1).
+  
+  When focus leaves, `RawInput::release_all` lets go of every key and button, so nothing stays held.
+
+*4. Panels during play.*
+
+- The Hierarchy, Inspector, History and Profiler show the **play world**, and the window shows a coloured frame and a banner: "Playing: changes made now are not kept". The person may still edit: their edits are ordinary commands on the play app, undoable within the session (Ctrl+Z), and thrown away at Stop with the rest of the play world.
+- Script output (prefixed with its context: `[game]`, `[server]`, `[client]`) and the play app's diagnostics go to the editor's console each frame; a diagnostic with a location links to its source (PR "panels").
+- In a Roblox-style project the Hierarchy lists the native World only, with a banner: its Instances are not shown or edited in the editor (a WP42 non-goal).
+
+*5. Commands during play: an allow-list; agents' edits are refused, not queued.*
+
+Every command that reaches the editor while a session runs, from the person's own panels or from the editor socket (`real do`, `real mcp`), goes through an allow-list in `play.rs` before it is dispatched:
+- **Reads are answered from the play world**: `describe`, `query`, `entity.get`, `project.status`, `config.get` (WP43's; the play app has the edit app's configuration), `screenshot` (the play view, as the person sees it), `pick` (the play view; ADR-0044 amendment §5) and the new `play.status`. A read that arrives through the socket gets a note in its outcome (`RE0654`): "answered from the play session at frame N", so an agent watching a test sees what the person sees and knows it.
+- **World edits are allowed from the editor's own panels only**, on the play world: `entity.spawn`, `entity.set`, `entity.reparent`, `entity.delete`, `component.add`, `component.remove`, `scene.apply` without `set_doc` ops, `undo`, `redo`, `proc.move`, `proc.replace`, `proc.insert`, `proc.clear_structure` and `graph.set_param`.
+- **Refused with `RE0652`** (an error that says the editor is playing, names `play.status`, and says to call again after Stop):
+  - every Edit- or Destructive-tier command that arrives through the editor socket (`real do`, `real mcp` or any other writer), whatever origin it names;
+  - for everyone, commands that write files or change which documents are open: `asset.import`, `proc.bake`, the `graph.*` commands that edit a graph file, `script.write`, and WP43's `scene.open`, `scene.new`, `material.*`, `prefab.*` and `config.*` except `config.get`; and the commands that run their own world or need the edit app's GPU side: `verify` and `play.run`.
+  
+  A command not on the list is refused during play, so a WP that adds a command decides whether it belongs on the list.
+- **`play.status`** (new, Read tier, answered in edit mode too): the JSON of §9.
+- **Agents' edits are not queued.** A socket call blocks its writer until the editor answers, so a queued edit would hold an agent's call for the whole session, longer than MCP clients wait; and it would land on an edit world the agent has not seen since. A refusal with a reason lets the agent wait for `play.status` to say "editing" and read again.
+
+*6. Streaming, physics, audio and ids.*
+
+- Streaming in the play app follows the game's focuses (`StreamFocus` entities, else the active camera) with `Lateness::Late`, starting from the edit world's streaming state at Play. The fork (`App::fork_for_play`) drops the editor's view focus (`Streamer::forked` does not copy it) and the pins the editing session made (ADR-0044 amendment §2), so Play and `play.run` stream around the game's focuses as `real run` does, and edited cells do not stay pinned through play: cells loaded around the editor camera unload once no play focus wants them, and cells around the play camera load as in `real run`. A game that needs the ground under its player waits for the cell (`stream.on_loaded`, or WP35's "ground ready" event).
+- Physics carries on from the edit world's state, as `play_copy` does; in edit mode bodies are at rest, so play starts from the scene's poses.
+- The play app opens the audio device; the edit app stays silent. While the session is paused or stopped at a breakpoint, the play app's sounds pause once WP45's source control lands (WP45 PR "control"); until then, sounds already playing play on.
+- Ids made at run time come from the play world's `IdGen`, forked with it; WP38 PR "ids" seeds it per play session.
+
+*7. Files during play.*
+
+- The play app's own watcher hot-reloads changed scripts, shaders, meshes, materials and textures in play, as `real run` does.
+- The edit app's watcher keeps collecting changes while the session runs and they are applied at Stop: a scene file changed outside the editor is reloaded or flagged as a conflict there (WP42 PR "saving"), and open documents are reloaded by the existing rule (`RE0528`).
+
+*8. Diagnostic codes.*
+
+In WP42's `re_app` range, each with an explain page: `RE0652` a command refused during play (error); `RE0653` the play session could not start (error); `RE0654` an answer from the play session (note); `RE0655` Record refused with unsaved edits (error). `RE0650` and `RE0651` are PR "saving"'s (a file changed on disk, a scene reloaded).
+
+*9. The contract.*
+
+Frozen in M4_PLAN's Cross-WP contracts (consumers: WP35 for recording, WP44 for watches and approvals); fields and calls may be added, none renamed or removed:
+- **`re_app::play::PlaySession`**:
+  - `PlaySession::start(edit: &mut App, options: PlayOptions) -> Result<PlaySession, Diagnostic>`, where `PlayOptions` (`#[non_exhaustive]`, `Default`) has `record: bool` (start from a fresh load and record, §2) and `debugger: Option<re_script::debug::Debugger>`;
+  - `state(&self) -> PlayState`, one of `Running`, `Paused` and `AtBreakpoint`;
+  - `app(&self) -> &App` and `app_mut(&mut self) -> &mut App`: the play app;
+  - `frame(&mut self, wall: Duration)`: one editor frame (a play frame unless paused or at a breakpoint, when it only services the debugger); `pause`, `resume` and `step` (§2);
+  - `allows(&self, command: &str, through_socket: bool) -> Result<(), Diagnostic>`: the allow-list of §5, with `RE0652` when refused;
+  - `status(&self) -> PlayStatus`: the `play.status` answer;
+  - `stop(self, edit: &mut App) -> PlayReport`: gives the lent parts back; `PlayReport` has `frames`, `state_hash`, `diagnostics` and `replay: Option<ReplayDoc>` (WP35's document, when recording).
+- **`play.status`** answers `{"state": "editing" | "playing" | "paused" | "at_breakpoint"}`, plus, while a session runs, `"frame"` (the play app's frame count), `"state_hash"` (the play world's, hex), `"time_scale"` and `"recording"`.
+- **What agents see**: `RE0652` for a command refused during play and the `RE0654` note on an answer from the play session.
+- **Recording**: while recording, the session feeds WP35's recorder once per play frame, the way `real run --record` does (WP35 PR "record" defines the recorder's calls), and returns its `ReplayDoc` in `PlayReport`.
+
+**Alternatives.**
+
+- **Play in a separate process** (a `real run` child, its window embedded or its frames streamed back). A crash in the game would not take the editor down, but the child needs its own GPU device and a second load of every asset, and input, the debugger, the Hierarchy and the Inspector would all need a protocol between the processes. Rejected for M4; worth reconsidering if game crashes in the editor turn out to be common.
+- **Play on another thread.** The App holds Luau VMs that are not `Send` and a GPU side lent from the editor's thread, so it would need the same lending plus a synchronisation protocol for every panel; no gain over stepping on the editor's thread between frames.
+- **Play in the edit app itself, restoring a saved copy at Stop** (save the World before Play, load it back after). The same memory as a fork, but every cache, the history and the streaming state of the edit app would be rebuilt after each play, and a bug in the restore would lose the person's work; with a second App the edit app is never touched, so the acceptance invariant holds by construction.
+- **Queue agents' edits until Stop.** Rejected (§5): blocking socket calls for minutes, timeouts in MCP clients, and edits applied to a world the agent no longer sees.
+- **Apply agents' edits to the edit world during play** (it is idle). The person would find the level changed at Stop with nothing shown while playing, and the edit world would no longer be what the play started from. It can be reconsidered with WP44's approvals in the editor.
+- **A fresh load of the scene for every Play.** A start that is the same every time, but slow on procedural worlds (every source regenerates, while the fork reuses the edit world's generated content), and it would not include an edit that could not be saved. Kept for Record only, where the start must be the file.
+- **A fixed time step per drawn frame** (as `play.run` and replays). Reproducible, but the game would run slow or fast with the editor's frame rate; Play matches `real run`, and Record is the reproducible path.
+- **Keeping changes made during play.** A non-goal for M4; M5 decides how a person picks what to keep (Unity keeps nothing, Roblox Studio offers copy and paste back).
+
+**Consequences.**
+
+- Play in the editor behaves like `real run`: wall-clock time, saved data kept, hot reload, late streaming, sound. A play is not reproducible unless recorded with Record (after WP35 PR "record").
+- During a session two Worlds are in memory (the edit world and its fork); GPU assets are lent, not copied, so GPU memory does not double.
+- `re_cli/src/tooling/editor.rs`'s comment about play becomes true, and the tooling audit's §1.8 (a debugger that can never stop) is answered by the ADR-0045 amendment.
+- `play.rs` grows from 141 lines to hold `PlaySession` and the allow-list; `play_copy` and the session share `App::fork_for_play`. The App needs a few small public calls the session uses (take the socket's pending calls without dispatching them, the script output since the last frame, a debugger service between frames), added in the maintainer-reviewed `re_app` after the `App` split.
+- Agents can follow a test session (`play.status`, reads, `screenshot` and `pick` of the play view) but cannot change anything until Stop; WP44's watches and approvals build on that.
+- Headless editor tests drive Play, Pause, Step and Stop with clicks on the toolbar and check that the edit world's `state_hash` and undo history after Stop equal those before Play; another test checks that a command outside the allow-list is refused during play and accepted after Stop.
+- A WP that adds a command adds it to the allow-list if it should run during play; otherwise it is refused there, which is the safe default.
+- WP44's path-check amendment adds a test that walks every agent-facing command against its table; whichever of WP44's PR and WP42's PRs lands second adds `pick` and `play.status` to that table.
+
+## ADR-0066: Compressed and streamed audio: Ogg Vorbis decoded by lewton over `ogg` 0.9, long sounds streamed through a ring buffer, pumped by one stream thread on the desktop and each frame in the browser
+
+**Status:** Accepted (maintainer, 2026-10-28; drafted by WP45), for WP45 PR "ogg". Evidence: WP45's spike, `research/m4/wp45/measurements.md` (scratch crate in `research/m4/wp45/spike/`), run on 2026-10-28; the sources the lockfile pins, read the same day: kira 0.12.5 (`sound/streaming/`, `sound.rs`, `frame.rs`, `backend/`), rtrb 0.4.0, and lewton 0.10.2, ogg 0.8.0 and ogg 0.9.2 from crates.io; and the code at `c4c81ae`. Revised after the maintainer's review of 2026-10-28 (`reviews/wp45-adr-0066-and-0039-events-ik.md`).
+
+**Context.**
+- **Today** `re_audio` plays WAV only, through its own reader (`wav.rs`), which kept symphonia (MPL-2.0) out under ADR-0019. Every clip is decoded whole into a kira `StaticSoundData` at first use and cached by name (`Mixer::clip`). A 3-minute stereo track is 61 MiB of frames, 126 MiB at the peak of loading, and 0.5 s of decoding before its first frame (spike, 44.1 kHz).
+- **kira's own streaming does not fit.**
+  - `kira::sound::streaming` is `#[cfg(not(target_arch = "wasm32"))]`, so the browser build has none.
+  - Its `DecodeScheduler` spawns one OS thread per playing stream, with a 16,384-frame ring.
+  - kira's public `SoundData` and `Sound` traits let a crate supply its own sound, and `kira::interpolate_frame` (the 4-point resampler its static sounds use) is public. rtrb 0.4.0 is already in the tree through kira.
+- **Files.**
+  - `ProjectFiles` (ADR-0037) reads whole files: `FileLayer::read` returns `FileData { bytes: Arc<[u8]>, .. }`, and there is no ranged read.
+  - The archive stores an entry with zstd only when that saves 10%; an Ogg file does not compress, so it is stored raw at a known offset, and `Archive` already reads with positional `read_at`. Every read checks the entry's blake3 hash over the whole entry.
+  - In the browser the whole `game.rpak` is in memory (ADR-0049 §4), and there is one thread.
+- **The browser runtime** is 7,999,541 bytes gzipped since the sample game (#191), 459 bytes under its 8 MB budget, as WP31's `ADR-0049-amendment-wp31-web-budget.md` records; that amendment raises the budget to 10 MB in WP31 PR "web budget".
+- **Decoders** (spike):
+
+  | | lewton 0.10.2 + ogg 0.9.2 | symphonia 0.6.1 | vorbis_rs 0.5.6 |
+  |---|---|---|---|
+  | licence | MIT OR Apache-2.0; BSD-3-Clause | MPL-2.0 (a named exception) | BSD-3-Clause (libvorbis, C) |
+  | native speed | 445–535× real time (1.9–2.3 ms per audio second) | 811–933× | not measured |
+  | wasm32 speed (Node 22) | 308–360× | 589× | needs C in wasi-sdk |
+  | wasm gzip growth | +50.6 KB | +147.4 KB | |
+
+  Both pure-Rust decoders give the same samples. `cargo deny check advisories licenses` with the repository's policy passes for lewton, ogg 0.9.2, tinyvec and byteorder. lewton's last release is from 2021; it has no advisory, and its own `ogg` feature would pull ogg 0.8.0, so the spike uses lewton's packet decoder without that feature and reads pages with ogg 0.9.2 (2025).
+- **lewton's packet boundaries** run up to (long − short) / 4 = 448 samples ahead of the granule positions after a long block followed by a short one, while the samples are the same. A seek that trusts its `get_last_absgp` lands up to 448 samples off. The spike's reader places every chunk by the block sizes and lands every seek on the exact sample (51 seeks per file, identical to a whole decode).
+
+**Decision.**
+
+**§1 Format and decoder.**
+- Ogg Vorbis (`.ogg`), mono or stereo, at any sample rate kira resamples. A file with more than two channels, several chained or multiplexed streams, or a codec other than Vorbis is refused with the new `RE7409` ("Unsupported audio file"), whose hint says how to convert it.
+- Decoded by **lewton 0.10.2** without its `ogg` feature, over **ogg 0.9.2**, both pinned with `=` in `[workspace.dependencies]`. New crates in the tree: `lewton`, `ogg`, `tinyvec`. PR "ogg" adds their `docs/DEPENDENCIES.md` rows, for the maintainer's review there.
+- `re_audio::ogg::VorbisReader` is the spike's reader: ogg 0.9 pages and packets, lewton's `read_audio_packet_generic`, each chunk placed by its window offsets, the last page's granule used as the end trim, `rewind` by the first audio page's byte offset, and `seek` to a page two long blocks early (four times further back when the last page comes first), then decoding forward to the exact frame.
+- MP3, AAC, FLAC and Opus are not in M4 (the plan's non-goals); WAV is unchanged.
+
+**§2 Static or streamed.**
+- An Ogg clip longer than **10 seconds** streams; a shorter one is decoded whole at first use into a `StaticSoundData` and cached by name, as WAV is. The rule is a constant, not a setting: a 10 s stereo clip at 48 kHz is 3.7 MiB decoded, and a stream costs about 0.8 MiB whatever its length.
+- **Who decides, and where.** The first play of an Ogg clip not yet classified starts as a stream (§3), so on the desktop no Ogg file is opened or hashed on the game thread. The pump opens it (§5) and reads its length from the last page's granule position, in the file's last 64 KiB.
+  - A clip of 10 s or less is then decoded whole by the pump (at most about 25 ms of decoding, off the game thread). This play continues from those frames, and the frames are handed back: the game thread caches them as a `StaticSoundData` at its next `apply`, so later plays are static.
+  - A longer clip is recorded as streamed, so later plays stream without classifying again.
+  - In the browser and in headless runs the pump runs on the game thread (§4), so this happens there, inline. WAV clips are read whole on the game thread at first use, as today.
+  - `Audio::remove_clip` (a changed file) forgets the classification with the cached frames.
+- The same rule holds for one-shots: each one-shot of a long clip is its own stream.
+- At most **32 streams** play at once; one more is `RE7403` ("Too many sounds playing"), as a full voice table is today.
+
+**§3 The stream.**
+- `re_audio::stream` has two halves:
+  - **`StreamSound`**, a kira `Sound`, reads frames from an rtrb ring and resamples them with `kira::interpolate_frame`, so the source rate, the playback rate and doppler are one step. It keeps its own volume, rate, pause, resume, stop and fade, as kira's static sound does, so the commands of PR "control" (`SoundControl`, `SourceControl`) work on streams and static sounds alike. It never allocates.
+  - **The pump** owns a `VorbisReader` and the ring's producer. It fills the ring to the brim, rewinds at the end of a looping clip (gapless: the second pass equals the first), and carries out seeks.
+- **The ring** holds 0.5 s on the desktop and 1 s in the browser, at the clip's own rate: 8 bytes a frame, so 188 KiB and 375 KiB at 48 kHz.
+- **Starting.** The sound is handed to kira at once and stays silent until the ring holds 0.1 s or the stream has ended, so opening the file never runs on the audio thread. That silence is not an underrun.
+- **Seeking.** The pump stops pushing, seeks its reader, and raises a flush number; the sound empties the ring with a 10 ms fade when it sees the number, and the pump pushes the new frames once the sound has acknowledged it. A seek costs 1–2 ms of decoding at the median and about 9 ms for a target in the last page (spike).
+- **Errors.** A read or decode error mid-stream stops that stream with `RE7410` ("Audio stream failed"), reported once with the clip's name and position. It never stops the mixer or another stream.
+- **Panics.** On native targets each stream's decode step runs under `catch_unwind`, so a decoder panic on a damaged file that lewton does not expect stops only that stream, with `RE7410`; its reader is dropped, and the stream thread goes on with the others. In the browser a panic stays fatal, as everywhere there.
+- **Underruns** play silence and count in a statistic that `re_audio` exposes for tests and the profiler; they are not diagnostics.
+
+**§4 Who pumps.**
+- **Desktop with a device: one stream thread per `Audio`** ("re_audio streams"), started with the first stream and joined when `Audio` drops. It opens files (§5), fills every ring, handles seeks, and parks for at most 10 ms between rounds, woken early by a new stream or a seek. Decoding costs about 2 ms per audio second per stream (spike), so 32 streams use under a tenth of one core.
+- **Browser (one thread, ADR-0049) and headless runs: the pump runs inside `Audio::advance`**, once a frame, before the headless render. Opening a stream and its first fill run inline in `Audio::apply`. So headless output (tests, servers, CI captures) does not depend on thread timing.
+  - In the spike the per-frame pump costs a median of 42 µs and a 99th percentile of about 100 µs per stream natively, and the wasm decoder runs at about two-thirds of native speed.
+  - A ring survives a frame a little shorter than itself without a pump: 1 s survives 500 ms frames with no underrun.
+
+**§5 Reading from disk: `ProjectFiles::open` (a maintainer-reviewed change to `re_core` and the archive layer).**
+- `ProjectFiles::open(path) -> Result<FileReader, FileError>`, where `FileReader` is `Read + Seek + Send`. `FileLayer` gains `fn open(self: Arc<Self>, path: &ProjectPath) -> Result<Option<FileReader>, FileError>` with a provided body that reads the whole file and returns a cursor over its bytes, so every existing layer keeps working.
+- `DirLayer` (the project and the folder beside a packaged game) opens the canonical checked path as a `File`, with the same rules as `read`.
+- `Archive` returns a reader over the entry's byte range through `read_at`, for an entry stored raw. It first reads the entry once, in 64 KiB pieces, to check its blake3 hash, so "every read checks the hash" holds without the entry in memory. A zstd entry falls back to the whole read.
+- In the browser the archive's bytes are already in memory, and the reader reads from them without a copy.
+- `re_audio` streams through `ProjectFiles::open` and decodes WAV clips from `ProjectFiles::read`, as today. On the desktop the stream thread (§4) does every Ogg opening and its hash pass, off the game thread, including the first play that classifies a clip (§2).
+
+**§6 The asset pipeline (`re_assets`, the plan's planned edit; the maintainer reviews).**
+- `re_assets::audio_info(bytes, extension) -> Result<AudioInfo, Diagnostic>` reads a WAV's `fmt` chunk, or an Ogg's identification header and last granule: format, channels, sample rate and length. It decodes nothing, so `re_assets` takes no decoder dependency.
+- The asset server lists `.wav` and `.ogg` files as audio with that information (for the editor's asset browser, WP43), and its reload report names changed audio files, so `re_app` drops `re_audio`'s cached clip (`Audio::remove_clip`) and an edited sound plays new on its next start.
+- `real check` and `real build` refuse an audio file that `audio_info` refuses (more than two channels, chained streams, not Vorbis, a WAV it cannot read) with the new `re_assets` code `RE7070` ("Unsupported audio file"), with its explain page, so a packaged game never ships one.
+- `real build` also decodes each `.ogg` it packs once, through `re_audio` (about 2 ms per audio second, the files in parallel on the build's worker pool), and refuses a file damaged past its headers with `RE7402`, before it ships. `real check` reads the headers only, so it stays fast.
+
+**§7 What stays as it is.**
+- Audio stays outside the simulation and `state_hash` (ADR-0041); nothing here changes a replay. Decoded samples can differ in their last bits between platforms, because lewton builds its tables with the platform's `sin` and `cos` (clippy's maths rules cover our crates, not dependencies); audio tests compare levels with tolerances, as they do now.
+- The `AudioCmd` contract is unchanged by this ADR: a clip path ending in `.ogg` simply plays.
+
+**§8 Tests in PR "ogg".**
+- A 3-minute mono Ogg made from a synthetic signal (sparse tones, 22.05 kHz, `oggenc -q -1`, 50 KB; the generator is in the test's comment) streams through the headless mixer with a counting allocator in its own test binary: everything `re_audio` allocates while it plays stays under **2 MiB**, against about 30 MiB to decode it whole. The same test runs the browser path (the pump in `advance`, the file read from memory) and the desktop path (the stream thread).
+- Exact seeks against a whole decode, at fixed and seeded random frames; a looping clip's second pass equals its first.
+- A short Ogg clip's first play streams and classifies it, and its next play is static; a long clip streams every time. A corrupt file is `RE7402`, an unsupported one `RE7409`, a failing stream `RE7410`, and a decode step that panics (through a test hook) stops only its own stream, with `RE7410`.
+- `real check` refuses an unsupported audio file with `RE7070`, and `real build` a damaged Ogg with `RE7402`.
+- The wasm32 clippy of `build-web`, and the runtime's growth from `build-web` in the PR description.
+
+**Alternatives.**
+- *symphonia 0.6.1* (Ogg and Vorbis only). About 1.8× faster, actively maintained, but MPL-2.0, which needs an ADR-0019 exception, and three times the browser growth (+147 KB gzip). lewton's speed is ample: under 2.5 ms per audio second natively.
+- *libvorbis through vorbis_rs.* C in every build, and in the browser through wasi-sdk; more build surface for no gain over a pure-Rust decoder.
+- *kira's `StreamingSoundData`.* Not available in wasm32, and one thread per stream.
+- *The browser's own decoder* (`decodeAudioData` or a media element). A second code path that the headless tests cannot run, outside kira's buses and effects, and `decodeAudioData` decodes whole.
+- *Decode every Ogg whole* (compressed on disk only). Simple, but a 3-minute track is 61 MiB of memory: the problem this ADR solves.
+- *Stream from the whole file read into memory* (no `ProjectFiles::open`). The decoded audio stays bounded, but a long track's compressed bytes stay in memory (about 0.7–1.1 MB a minute), and "streamed from disk" is the plan's ask. In the browser it is what happens anyway.
+- *A per-asset streaming setting* in the `.meta.json` sidecar. Possible later; one documented threshold covers music, ambience and effects.
+- *Opus.* Better quality per bit, but the pure-Rust decoders are months old, and the plan asks for Ogg Vorbis.
+
+**Consequences.**
+- Music and long ambience take about 0.8 MiB each while they play, instead of 3.7 MiB for every 10 s of stereo; a game can ship them compressed (about 0.7–1.1 MB a minute at `oggenc -q 3` to `-q 5`).
+- The browser runtime grows by about 51 KB gzipped, so PR "ogg" waits for WP31's 10 MB budget.
+- `re_audio` gains a thread on the desktop (only while streams exist), two dependencies, and codes `RE7409` and `RE7410`; `re_assets` gains `RE7070`. Each has an explain page.
+- `re_core`'s `FileLayer` and `ProjectFiles` gain `open`, and the archive layer serves byte ranges; the maintainer reviews both in PR "ogg", and both are useful to later streamed assets.
+- **A known limit:** the archive checks an entry's hash once, when it is opened. Bytes read later while the stream plays are not checked again, so a file changed on disk under a running game is not caught mid-stream.
+- The first play of a short Ogg clip streams, so on the desktop it can start up to about 10 ms late (the stream thread's wake-up); later plays are static and start at once.
+- PR "ogg" itself carries the `docs/DEPENDENCIES.md` rows for lewton, ogg and tinyvec and ARCHITECTURE's audio section (formats, the 10 s rule, the stream thread), for the maintainer's review there. The user guide's audio page follows once WP44's guide exists.
+
+## ADR-0067: Encrypted online play: a Noise NKpsk0 handshake in `re_net`, sealed packets, transport version 2, join codes and limits per address
+
+**Status:** Accepted (maintainer, 2026-10-28; drafted by WP46). It amends ADR-0050: §1 (packets, the handshake, liveness and "No encryption in M3"), §6 (running it), §8 and the Consequences on encryption; the amendment for #90 and #117 (the fragment size); and the amendment for PR "web" (the listener's limits and the clients). Its code is WP46 PRs "secure", "join codes" and "limits". Evidence: the WP46 spike of 2026-10-28 in the reference container (`research/m4/wp46/measurements.md`, code beside it), which built snow 0.10.0 and our own NKpsk0 over x25519-dalek 3.0.0, chacha20poly1305 0.11.0 and blake2 0.11.0 for the desktop and `wasm32-unknown-unknown`, ran both in V8, timed and sized them, checked ours against cacophony's vector and vectors snow made, and ran cargo-deny and the duplicate gate on each. Every crate named here was checked on crates.io the same day; each version is the latest release.
+
+**Context.**
+- **M3 shipped without encryption** (ADR-0050 §1, "No encryption in M3"), and the M4 audit found what that allows (`research/m4/audit/platform-net-compat-ci.md` §3.3): everything crosses in plaintext, chat and remote events included; a packet counts as a connection's when it comes from the peer's address with the connection's salt, and the salt is in every header, so anyone on the path (the same Wi-Fi, a router, a relay) can read the traffic, inject data or forge a Disconnect; and any client with the right versions and game hash joins. The audit found no limits per address either.
+- **The owner's default for M4** (M4_PLAN, "Defaults this plan picks", online play): "a Noise handshake with authenticated encryption, and join codes, for UDP and WebSockets alike". No accounts, backend, relays or matchmaking; a native networking API for `game` scripts is M5. WP46's non-goals add NAT traversal, QUIC and native `wss://`.
+- **The transport as built** (`crates/re_net/src/`): a 15-byte header (magic `RENT`, `TRANSPORT_VERSION` 1, kind, salt) and a CRC-32 trailer on every packet; 1,200-byte datagrams, so a reliable fragment and the largest unreliable message are 1,162 bytes (`FRAGMENT`, which `re_compat` checks for `RE9454`); Hello (padded), Challenge (an 8-byte SipHash cookie under `RandomState`, over the address, salt and a 30-second epoch), Response (padded), then Accept or Deny (version, full, game); a client salt hashed from `RandomState`, which is not random on `wasm32-unknown-unknown`, so a browser's salt is predictable; Disconnect unauthenticated. Each binary WebSocket message carries one datagram, so everything above runs unchanged over both.
+- **Constraints.** The runtime-only build reaches no tokio (ADR-0027). A new crate needs a licence ADR-0019 allows and a `docs/DEPENDENCIES.md` row, and a new duplicate fails `cargo xtask dupes` until it has a `[bans] skip` entry (DEPENDENCIES.md policy 5). The web runtime was 7,477 bytes under its 8,000,000-byte budget on 2026-10-28; WP31's ADR-0049 amendment raises the budget to 10 MB. WP31's ADR-0068 leaves "what the secure handshake checks" to this ADR, and its build id lives in `re_cli`'s `version` module. The contract "Secure transport" (the handshake, join codes, transport version 2 and the `[net]` keys) is frozen at WP46 PR "secure" and consumed by WP47.
+- **What the spike measured** (`measurements.md`; reference container, Xeon 2.8 GHz with AVX2):
+
+| | snow 0.10.0 | Our NKpsk0 |
+|---|---|---|
+| Matches cacophony's NKpsk0 vector and snow's own bytes | (it is snow) | yes, byte for byte: both handshake messages, the handshake hash, and transport messages at explicit nonces out of order; live interoperation both ways |
+| Server's half of a handshake, native | about 0.2 ms | about 0.2 ms |
+| Seal of a 1,200-byte packet, native / V8 after `wasm-opt -Oz` | 2.6 µs / 13 µs | 2.7 µs / 14.5 µs |
+| Web runtime, gzip, after the web build's `wasm-opt -Oz` | +24,688 bytes | +10,011 bytes |
+| Crates added to the lockfile | 20, of which 5 are second versions (block-buffer, chacha20, cpufeatures, crypto-common, digest) | 15, no duplicates |
+| `cargo deny check` | ok (5 more duplicate warnings) | ok (no new warnings) |
+| Associated data on transport messages | no (`StatelessTransportState::write_message(nonce, payload, out)`) | yes |
+
+**Decision.**
+
+**§1 The handshake: `Noise_NKpsk0_25519_ChaChaPoly_BLAKE2s`.**
+- **The pattern.** In Noise NK the client knows the server's static key before it starts, and the handshake is one round trip: the client's first message encrypts to that key (`-> e, es`) and the server's answer completes forward-secret session keys (`<- e, ee`). `psk0` mixes a 32-byte pre-shared key into the very first message, so the server can tell a client without the join code from the first packet it reads, before it answers or keeps anything.
+- **One code path.** Every handshake is NKpsk0. A server without a join code uses the key derived from the empty code (§8), which is public, so a game without a code costs the same and runs the same code as one with a code.
+- **What it guarantees.** For every connection: the traffic is confidential and authenticated (§5), and keys are fresh per connection, so recording a session and later stealing the server's key does not decrypt it. Against someone who can change packets on the path:
+  - with the server's fingerprint pinned (`--server-key`, §7), the client reaches the server and no one else;
+  - with a join code and no pin, an impostor who swaps in its own key cannot finish the handshake, because the server's answer is encrypted under keys that depend on the code; it can only capture the client's first message and guess the code offline afterwards, at most 2^50 tries (§8), and the client never connects to it;
+  - with neither, the client takes the key the Challenge carries, so an impostor on the path can stand in the middle; the client prints the fingerprint it reached, which a careful player can compare with the one the server printed.
+- A passive listener learns nothing either way, and cannot test code guesses: that needs a Diffie-Hellman with the server's private key or with one of the ephemeral keys.
+
+**§2 Our own implementation, over the RustCrypto crates of the lockfile's generation.**
+- `re_net` implements the one pattern it needs from the Noise specification (revision 34) in a module of about 200 lines (`crates/re_net/src/noise.rs`): the symmetric state (MixHash, MixKey, MixKeyAndHash, EncryptAndHash, DecryptAndHash, Split, with HKDF over HMAC-BLAKE2s), the client's two steps and the server's one, and sealing and opening in place with an explicit nonce. The primitives are crates:
+  - **x25519-dalek 3.0.0** (curve25519-dalek 5.0.0), `default-features = false`, features `static_secrets` and `zeroize`: X25519. Not `precomputed-tables`: the tables would add to the web runtime, and a server's half of a handshake costs about 0.2 ms either way.
+  - **chacha20poly1305 0.11.0**, `default-features = false`: the AEAD for the handshake's payloads and for every sealed packet.
+  - **blake2 0.11.0**, `default-features = false`: BLAKE2s-256 for Noise's hash and HKDF, the cookie's HMAC, the server key's fingerprint and the join code's key.
+  - **zeroize 1.9.1**: session keys are wiped when a connection drops (x25519-dalek's secrets wipe themselves).
+  - **getrandom 0.4.3**, already in the runtime through rand and tungstenite: every server key, ephemeral key, cookie key, salt and join code, from the operating system, and in a browser from `crypto.getRandomValues` (feature `wasm_js` on `wasm32`, which on getrandom 0.4 needs no `--cfg` flag, so `.cargo/config.toml` does not change). There is no fallback to a weaker source: without one, going online fails with `RE8916`.
+- **Why not snow.** snow 0.10.0 builds and works natively and in the browser, but it is on the previous RustCrypto generation, so it brings five second versions of crates we already have (block-buffer, chacha20, cpufeatures, crypto-common, digest) that the duplicate gate refuses; it costs the web runtime 24.7 KB against 10.0 KB; its transport API takes no associated data, so the packet kind would have to be repeated inside every ciphertext (§5); its default `std` feature names `ring/std` and so pulls in ring; and its README says it has had no formal audit, so what we would trust instead of our 200 lines is an unaudited framework of every pattern, for the one we use. The other Noise crates are on the same old generation: clatter 2.3.0 (MIT; blake2 0.10, chacha20poly1305 0.10, x25519-dalek 2, rand_core 0.6) and noise-protocol 0.2.1 with noise-rust-crypto 0.6.2 (Unlicense, outside ADR-0019's allow-list).
+- **Why our own is safe to own.** It invents nothing: a fixed Noise pattern over the constant-time primitives of the RustCrypto and dalek projects (chacha20poly1305's README cites NCC Group's audit of it), as WireGuard's implementations, Tailscale's control protocol and Lightning's BOLT 8 implementations each write their one pattern. Its tests pin it to independent bytes: cacophony's NKpsk0 vector and four vectors snow 0.10.0 made for our prologue layout, with transport messages at explicit nonces out of order, both kept as test data in `crates/re_net/tests/data/` (about 21 KB), so the repository never depends on snow and any change to the bytes on the wire fails CI. It refuses a Diffie-Hellman result that is all zeros (a low-order point), compares cookies in constant time, and keeps every secret in a type whose `Debug` prints at most a fingerprint.
+
+**§3 Transport version 2: the packets.** `TRANSPORT_VERSION` becomes 2. All integers are little-endian.
+
+```text
+handshake header  magic "RENT" (4) | transport version u16 | kind u8 | salt u64       (15 bytes, as in version 1)
+Hello       protocol u32 | game u64 | zero padding to 1,200 bytes                       | CRC-32
+Challenge   cookie (16) | server key (32) | flags u8 (bit 0: a join code is required)    | CRC-32
+Response    cookie (16) | protocol u32 | game u64 | msg1 (48) | zero padding to 1,200   | CRC-32
+Accept      msg2 (48)                                                                   | CRC-32
+Deny        reason u8 | server protocol u32 | server game u64 | label length u8 | label | CRC-32
+
+sealed header     magic "RENT" (4) | transport version u16 | kind u8 | packet number u64   (15 bytes)
+Data        sealed: seq u16 | ack u16 | ack_bits u32 | chunk*                           | tag (16)
+Disconnect  sealed: reason length u8 | reason (UTF-8)                                   | tag (16)
+```
+
+- **Handshake packets keep version 1's framing**: the salt in the header, the CRC at the end, the same kinds with the same numbers (Hello 0, Challenge 1, Response 2, Accept 3, Deny 4). So a version 1 client still reads a version 2 server's Deny, and the other way round (§6). msg1 is the client's ephemeral key and the tag of its empty payload; msg2 is the server's ephemeral key and the tag of its empty payload. The payloads are empty in version 2, and a receiver ignores payload bytes, so a later change can use them.
+- **Sealed packets** (Data 5, Disconnect 6) carry the sender's packet number where the salt was, and end with ChaCha20-Poly1305's 16-byte tag instead of the CRC, which the tag makes redundant. The body is encrypted, and the 15-byte header is the associated data, so changing any header byte, the kind included, fails the tag: no one can turn a Data packet into a Disconnect.
+- **Sizes.** Challenge 68 bytes and Accept 67, both smaller than the 1,200-byte packets they answer, so a forged source address still gets no amplification. A data packet's overhead grows from 27 to 39 bytes, so `FRAGMENT`, the payload of a reliable fragment and the largest unreliable message, goes from 1,162 to **1,150** bytes. `MAX_MESSAGE` stays 1 MiB.
+- **The prologue** that both sides mix into the handshake is `real-engine/net/2` followed by the protocol (u32), the game hash (u64) and the salt (u64), so the handshake is bound to this version, this game and this attempt, and changing the Response's plaintext fields on the way fails it.
+
+**§4 The handshake, step by step.**
+- **Client.** It sends Hello (a salt from getrandom) every 250 ms until a Challenge with its salt arrives. From the Challenge it takes the cookie, the server key and the flags, and it stops if the key does not match a pinned fingerprint (`RE8914`) or if the join code does not fit (`RE8913`, §8). It then writes msg1 once and sends the same Response every 250 ms until Accept or Deny. An Accept whose msg2 does not open is ignored and counted, and the client keeps waiting; one that opens gives the session keys and the connection (`Event::Connected`). After 10 s with neither, the handshake fails with `RE8902`, whose message says when answers arrived that failed the handshake. The client no longer takes a data packet as a lost Accept, since only msg2 gives it the keys; the server's early packets are dropped, and its reliable ones sent again.
+- **Server.** A Hello is answered with a Challenge as in version 1, costing one HMAC and no state. A Response is checked in order of cost:
+  1. the padding and the CRC, then the cookie (a 16-byte HMAC-BLAKE2s of the address, the salt and the epoch, under a random 32-byte key made at start; the current and previous 30-second epochs are accepted, as now);
+  2. a Response from the address and salt of an open connection is a resend: the server sends that connection's Accept again, which it keeps until the client's first sealed packet arrives;
+  3. protocol and game (Deny `Version` or `Game`), then room (Deny `Full`), then the limits of §9;
+  4. a msg1 whose ephemeral key the server answered within the last two cookie epochs, for a connection that is no longer open, is a replay and is dropped;
+  5. the Diffie-Hellman work: msg1 must open under the server's key and the code's key, or the answer is Deny `Handshake` (`RE8912` on the client);
+  6. then a connection from that address with another salt is replaced (its client restarted), the new connection opens with the session keys, and the server sends Accept.
+- The server keeps nothing for a source that has not answered a Challenge, so a forged source address still costs it nothing, and the Diffie-Hellman work (about 0.2 ms) happens only for a client that proved its address.
+
+**§5 Sealed packets: nonces, the replay window and the counts.**
+- Split gives each direction its own key. Each side numbers its sealed packets from 0, and the packet number is the AEAD nonce (32 zero bits, then the number), as Noise §11.4 describes for transports that lose and reorder packets. A sender never reuses a number; one that reached 2^64 would close the connection (it cannot happen in practice).
+- **The replay window.** A receiver keeps the highest packet number that opened and which of the 1,024 numbers up to it have opened. A packet whose number has opened before, or is more than 1,023 below the highest, is dropped before any decryption; one that fails its tag is dropped; only a packet that opens moves the window. This is the bookkeeping of RFC 6479 and WireGuard; 1,024 packets are more than 12 s of the plaza's traffic, far more reordering than a network does.
+- **Counts.** `ConnStats` gains `rejected` (failed its tag: altered, forged, or sealed with other keys) and `replayed` (a number already seen or too old: a duplicate from the network, or a replay). The endpoint's `stray` still counts datagrams that belong to no connection. So "a packet altered or replayed on the wire is dropped and counted" is a test of these two numbers.
+- **Disconnect is sealed**, so only the peer can close a connection. Its three copies are three packets with their own numbers. Keepalives and acks are ordinary sealed Data packets.
+- **No rekeying** in M4. A session is a game session, its keys are already its own, and a 64-bit nonce never runs out.
+
+**§6 Versions.**
+- **Version 1 and 2 refuse each other with a clear diagnostic.** A version 2 server answers a version 1 Hello with a Deny that a version 1 client reads as today: `RE8903`, "the server at ADDR speaks network version 2.2, this client 1.2" (the transport version, then `re_compat`'s wire version). A version 2 client denied by a version 1 server says so in the same code, with the hint that a server before Real Engine 0.4 does not encrypt and cannot be joined.
+- **The Deny names the server's engine.** It ends with a label of at most 64 bytes: the engine version and build from WP31's `version` module (`0.4.0-dev (cbbdbf0c0cf8 2026-10-28)`), passed down through `re_app::NetOptions`, or `ENGINE_VERSION` alone before that module exists. A version 1 client ignores the trailing bytes; a version 2 client puts both sides' labels in `RE8903` and `RE8905`.
+- **What the handshake checks** stays the transport version, the protocol and the game hash. The build is reported, not checked: builds of one version play together, and the game hash already refuses different content.
+
+**§7 Server keys and fingerprints.**
+- **Where the key lives.** A server or host that keeps its data loads its X25519 key from `net/server.key` in its data folder (`Writable::Data`: `.real/data/` in a project, which git ignores and the game hash leaves out; the game's data folder for a built game), and makes it there on first serve. The file is text: a comment line warning that whoever has it can pose as the server, the fingerprint, and the private key as 64 hex digits, written with mode 0600 on Unix. A file that does not parse is `RE8916`, whose page says to delete it for a new key. Deleting the file changes the key; clients that pinned the old fingerprint then refuse the server (`RE8914`). A run that keeps no data (lockstep, the checks) uses a new key in memory and writes nothing.
+- **The fingerprint** is the first 80 bits of BLAKE2s-256(`real-engine/server-key/1` ‖ public key), written as 16 symbols of Crockford's base32 in four groups: `3QF7-M2XK-9TBA-6RHE`. Finding another key with the same fingerprint takes about 2^80 key generations.
+- **Shown and pinned.** The server prints its fingerprint when it starts, beside where it serves. A client reports the fingerprint of the server it reached once connected. `--server-key FINGERPRINT` with `--connect`, and `#key=` on a web build's page (§8), make a client refuse any other server (`RE8914`).
+- **No store of known servers in M4.** Remembering each server's key on first connect, as ssh does, needs a per-game store and a way to accept a key that changed; it can come later without a version change.
+
+**§8 Join codes** (PR "join codes"; the key derivation and the Challenge flag are part of PR "secure", so the contract is frozen with them).
+- **The code** is 10 symbols of Crockford's base32 (50 bits from getrandom), shown as `KD4RT-7XWQP`. Reading one ignores case, dashes and spaces, and takes `I` and `L` as `1` and `O` as `0`; anything else, or another length, is `RE8915`. A host may choose its own ten symbols.
+- **The pre-shared key** is BLAKE2s-256(`real-engine/join-code/1` ‖ server public key ‖ the code's 10 symbols as uppercase ASCII), with no symbols for a server without a code. Tying it to the server's key means one guess tests one code for one server.
+- **The Challenge says whether the server needs a code** (flag bit 0), so a client can stop early with a clear message: one without a code stops at a server that needs one, and one given a code stops at a server that uses none, both with `RE8913` and a message that says which. A client never leaves its code out because of the flag, so an attacker who flips it causes a refusal, never a handshake without the code. A wrong code gets Deny `Handshake`, which the client reports as `RE8912`, "the server at ADDR refused the join code".
+- **Running it.** `real run --server` and `--host` (and a built game's executable) take `--code [CODE]`: with CODE, that code; without, a new one; `--code none`, no code. `[net] join_code = true` makes a server or host make a new code at each start when `--code` is not given (default `false`, an open server). A client passes the code with `--code CODE` beside `--connect`. A server with a code prints it, and the command a player runs: `real run --connect ADDRESS:47800 --code KD4RT-7XWQP`. The code lives in memory only.
+- **In a browser.** A web build's page reads `#code=` and `#key=` from its address's fragment, which the browser never sends to the web server that hosts the page: `?connect=ws://HOST:PORT/#code=KD4RT-7XWQP`. When the server needs a code and the page has none or a wrong one (`RE8913`, `RE8912`), the page asks for it and joins again. `play(session, { connect, name, code, serverKey })` in `boot.js` takes both.
+- **Guessing.** Online, a guess costs a round trip and is limited per address (§9): at 5 wrong codes a minute, finding a code takes about 10^8 years from one address. Offline guessing needs an impostor on the path that a client without a pin sent its first message to: each guess costs about 44 BLAKE2s compressions (the code's key, then the HKDF steps up to msg1's tag) and a tag check, and a code takes 2^49 guesses on average, on the order of a hundred core-years or weeks on a few GPUs, long after that client gave up. A new code per session keeps that useless; a host who reuses one with `--code` takes the risk, and a pinned client removes it.
+- **A TLS proxy for HTTPS pages.** A page served over HTTPS may only open `wss://`. The user guide gains a recipe (a page in WP44's `docs/guide/`, through WP44's review): a reverse proxy such as Caddy or nginx on the server's machine that terminates TLS and forwards the WebSocket upgrade to `ws://127.0.0.1:PORT/`. The game's traffic inside is encrypted end to end anyway, so the proxy reads nothing; it only gives the browser the TLS it requires. Native `wss://` stays a non-goal.
+
+**§9 Limits** (PR "limits").
+- **An address** here is an IPv4 address or an IPv6 /64 prefix, since one machine often has a whole /64. A WebSocket player's is its TCP peer's, which the server's transport reports for the virtual `100::/64` address it gave that player (a new `Transport` method whose default is the address itself). Loopback addresses are exempt, so local tests and a TLS proxy on the server's machine are not limited; a proxy elsewhere needs higher limits.
+- **Players per address:** at most `[net] players_per_address` connections (default 4), past which Deny `Crowded`, reported as `RE8904` with "from one address".
+- **Handshakes per address:** at most 8 Responses a second reach the Diffie-Hellman work (a client resends its Response 4 times a second, so two can join at once), a bucket that refills at that rate, and at most 5 wrong codes a minute (room for typing mistakes); past either, Deny `Busy` (`RE8917`) until the bucket refills. The server warns once a minute per address that it is refusing.
+- **Pending WebSocket upgrades:** at most 8 per address, of the listener's 64.
+- **The server's total send rate:** `[net] total_rate` bytes a second for all connections together (default 2 MiB/s, which leaves 16 players about 128 KiB/s each, nearly three times the plaza's walking player). Each frame the connections draw from one shared bucket in turn, from a start that rotates so none starves, and a packet that does not fit waits for the next frame and counts as deferred, as a connection's own bucket does now. Handshake packets are not limited by it. A host on a slower uplink sets it lower.
+- **Deny reasons** become: `Version` 1, `Full` 2, `Game` 3, `Handshake` 4, `Busy` 5, `Crowded` 6. A version 1 client reads an unknown reason as a version mismatch, which is what it is.
+
+**§10 The contract "Secure transport"**, frozen at PR "secure":
+- `TRANSPORT_VERSION` 2, `FRAGMENT` 1,150, and the layout and handshake of §3 to §6.
+- `ServerKey` (made, loaded or saved; `Debug` prints only its fingerprint; zeroized), `Fingerprint` and `JoinCode` (`Display` and `FromStr` as above). `Config` gains `key: Option<ServerKey>` (the server's own; a server without one makes one), `join_code: Option<JoinCode>`, `pin: Option<Fingerprint>`, `engine: String`, `players_per_address` and `total_rate`. `Endpoint::fingerprint` is a server's own fingerprint and a client's server's once the Challenge arrived. `ConnStats` gains `rejected` and `replayed`. `Endpoint::server` and `Endpoint::client` keep their signatures, so `re_compat` and the tests do not change how they make endpoints.
+- Codes `RE8912` (the server refused the handshake: wrong join code, or not encrypted to its key), `RE8913` (the join code does not fit the server: needed and missing, or given to a server without one), `RE8914` (the server's key is not the pinned one), `RE8915` (a join code or fingerprint that does not parse), `RE8916` (no secure random numbers, or the server key file cannot be read, parsed or written) and `RE8917` (too many handshakes or wrong codes from this address), each with an explain page in `crates/re_net/explain/`.
+- `[net]` gains `join_code`, `players_per_address` and `total_rate` (PRs "join codes" and "limits" read them).
+
+**§11 What it does not protect.**
+- An impostor on the path against a client with neither a code nor a pin (§1), and the offline guessing of §8.
+- A flood from many addresses: limits are per address, and the Diffie-Hellman work is about 0.2 ms per handshake.
+- Packets before the keys: an attacker on the path who sees a salt can forge a Deny or a Challenge, and so stop a client joining, which dropping its packets would do as well.
+- Cheating by a player with the code: the server stays authoritative as in ADR-0050 §2.
+- Sizes and timing: the length of every packet and when it is sent stay visible.
+
+**Alternatives.**
+- **snow 0.10.0** (measured, §2). It is the fallback if the maintainer prefers a crate to our 200 lines: the handshake and the packet layout stay as §3 says, except that the kind is repeated inside the ciphertext, the five duplicates get `[bans] skip` entries until snow moves to the current RustCrypto releases, and the web runtime pays 14.7 KB more.
+- **NK with the code inside msg1's payload** instead of as a pre-shared key: an impostor with its own key would read the code at once, where with psk0 it has to guess it offline and cannot finish the handshake.
+- **NN, NNpsk0 or NNpsk2:** no server key, so nothing to pin. With NNpsk0 a passive listener can test code guesses against msg1 offline; with NNpsk2 any client that connects once can test them against msg2.
+- **XX:** a round trip and a half, and it sends a static key the client does not need; the server's key would still need a pin. **IK and KK:** they authenticate clients by static keys, which means accounts, a non-goal.
+- **A PAKE** (CPace, SPAKE2) for the code: it would stop offline guessing even by an impostor, but Noise has no standard pattern for one, and it means more crates and our own protocol design. The pin closes the same gap for players who need it.
+- **QUIC, DTLS, or TLS over the WebSocket:** ADR-0050 §1 rejected quinn (an async runtime or quinn-proto with ring, and certificates for servers players start); DTLS in Rust means ring or OpenSSL and the same certificates; a browser cannot speak raw QUIC or DTLS; and TLS would protect only the WebSocket half.
+- **Encryption that can be turned off** (for a LAN, or debugging): one code path and no downgrade to attack are worth more than about 1% of a core.
+- **A store of known server keys** (trust on first use): §7, later.
+- **A 32-bit packet number on the wire,** widened by the receiver as QUIC does: 4 bytes a packet saved, against more code where mistakes are security bugs.
+- **A CRC on sealed packets as well:** the tag already rejects any damage.
+- **Rekeying** every few minutes, as WireGuard does: not needed for game-length sessions with per-connection keys.
+
+**Consequences.**
+- Online play is encrypted and authenticated on UDP and WebSockets alike. An on-path attacker can no longer read the traffic, inject data or close a connection; an altered or replayed packet is dropped and counted; a client with a wrong code is refused with `RE8912`. The server's note "online play is not encrypted" goes; a server without a code prints instead that anyone who can reach the port can join, and how to make the game private.
+- A version 1 build and a version 2 build refuse each other with `RE8903`. M3's builds cannot join M4's servers, which ADR-0050 §3 already expects of different engine versions.
+- `FRAGMENT` shrinks by 12 bytes, so an `UnreliableRemoteEvent` of 1,151 to 1,162 bytes, which reached the other side in M3, is now dropped with `RE9454` (WP47 is told; the plaza's events are far smaller).
+- Cost, estimated from the spike and WP30's plaza measurement (31 to 48 KB/s per walking player at 60 Hz, 60 to 80 packets a second each way): 12 bytes a packet, about 0.8 KB/s or 2 to 3% per player; about 0.4 ms of server CPU a second per player, 0.6% of a core for 16 players; about 2 ms a second in a browser; 0.2 ms of server CPU per join. PR "secure" measures it on the plaza (bytes from `ConnStats`, the server's CPU time over each replay, against main) and records it in `research/m4/wp46/` and its description.
+- **The web runtime grows by about 10 KB gzipped** (the spike's figure; PR "secure" reports the runtime's), more than the 7,477 bytes left under 8 MB, so PR "secure" merges after WP31's PR "web budget".
+- The lockstep check, D2 and the plaza's `state_hash` do not change: encryption sits below `re_compat`'s frames. The `net` stage and `cargo xtask web-test` (the plaza's replays from headless Chromium) run over encrypted links on all three platforms with no change to their scripts, so every web test also exercises the browser's random numbers in Chromium.
+- The lockfile gains 15 crates, none a duplicate, all under ADR-0019's allow-list, so `deny.toml` does not change: aead 0.6.1, blake2 0.11.0, chacha20poly1305 0.11.0, cipher 0.5.2, cmov 0.5.4, ctutils 0.4.6, inout 0.2.5, poly1305 0.9.1, universal-hash 0.6.1 and zeroize 1.9.1 (MIT OR Apache-2.0); fiat-crypto 0.3.0 (MIT OR Apache-2.0 OR BSD-1-Clause); curve25519-dalek-derive 0.1.1 (MIT/Apache-2.0); curve25519-dalek 5.0.0, x25519-dalek 3.0.0 and subtle 2.6.1 (BSD-3-Clause, already allowed and shipped with zstd, and in `THIRD_PARTY_NOTICES.txt` through the notices tool). MSRVs are 1.83 to 1.87, under the workspace's 1.95. `docs/DEPENDENCIES.md` gains a "Secure transport (M4, runtime)" section with rows for x25519-dalek, curve25519-dalek, chacha20poly1305, blake2 and zeroize and the transitive list, and getrandom's row adds `re_net` (directly, `wasm_js` on `wasm32`), all through the maintainer in PR "secure"'s "Doc changes requested".
+- We own about 200 lines of cryptographic protocol code. The vectors in its tests make a silent change impossible, and any change to the handshake is a new transport version.
+- The cookie is no longer std's `RandomState` (whose algorithm std does not promise, and which is not random in a browser) but an HMAC under a key from getrandom, and a browser's salt is random.
+- A server or host has a key file in its data folder from its first run. Backing up the data folder keeps the server's identity; deleting the file changes it.
+- **Docs, through the maintainer:** ARCHITECTURE's online play section (encryption, keys and fingerprints, join codes, limits, and the sentence "The traffic is not encrypted, so play on a LAN or with people you trust") and its `[net]` block (`join_code`, `players_per_address`, `total_rate`); the README's line about online play; ADR-0050's "No encryption in M3" and its Consequences, which this ADR replaces. `re_net`'s own crate docs and `RE8910`'s page change in PR "secure"; the TLS proxy recipe is WP44's guide's (§8).
+- The proposed `[net]` block:
+
+```toml
+[net]
+join_code = false              # true: a server or host makes a join code at each start unless --code gives one
+players_per_address = 4        # the most players from one address (an IPv4 address or an IPv6 /64); loopback is exempt
+total_rate = 2097152           # bytes a second a server sends all its clients together (2 MiB/s)
+```
+
+## ADR-0068: Versions follow the milestone, every binary names its build, and releases are drafts with checksums
+
+**Status:** Accepted (maintainer, 2026-10-28; drafted by WP31). It amends ADR-0037 where §2 says so (`runtime.json`, `--runtime-info`, the game's `--version` and the notices' first line). Its code is WP31 PR "version"; the first tag is WP31 PR "tag", at the end of M4.
+
+**Context.**
+- Every crate inherits `[workspace.package] version = "0.1.0"`, unchanged since M1. `real --version` is clap's (`CARGO_PKG_VERSION`); the game runtime's `--version` prints `<game> <version> (Real Engine 0.1.0)` (`crates/re_cli/src/game.rs`); a crash report starts "real 0.1.0 crashed" (`install_crash_hook` in `crates/re_cli/src/main.rs`); the notices start "The Real Engine 0.1.0 runtime for <triple> is built from ..." (`crates/re_cli/src/build/notices.rs`); and `runtime.json` and `--runtime-info` name the engine, Luau, bytecode and compiler versions and the target (`RuntimeVersions` in `crates/re_app/src/package/archive.rs`, with `target` added by `re_cli`). Nothing names the commit, so two builds made weeks apart cannot be told apart, in a crash report or by `real build --runtime` (the M4 audit of platforms and release, §2.5).
+- `release.yml` has never run on a tag. It names its assets after the tag (`${GITHUB_REF_NAME#v}`) without comparing the tag with the workspace version, creates a published release with empty notes, writes no checksums, and its Windows and macOS jobs build without a cargo cache (audit §2.6).
+- The repository is public again (the owner, 2026-10-28): a published release can be downloaded by anyone, and so can a workflow artifact by anyone signed in to GitHub. The owner wants compiled builds only, under a proprietary license, and has not decided how the engine is distributed and sold.
+- The plan's defaults (M4_PLAN, "Defaults this plan picks"): version 0.4.0 at the end of M4, the minor number following the milestone; a build id in every binary; the first tag `v0.4.0`; releases kept as drafts; no installers, signing or notarisation in M4.
+
+**Decision.**
+
+**§1 Versions.**
+- One version for the workspace, `[workspace.package] version`, which every crate inherits (all 26 crates under `crates/` and the 3 under `tools/` do today). The minor number is the milestone's: `0.N.0-dev` while milestone N is built, `0.N.0` at its tag. M4 is `0.4.0-dev` from PR "version"; PR "tag" sets `0.4.0`, and the PR after the tag sets `0.5.0-dev`. M2 and M3 were never tagged, so no 0.2 or 0.3 exists. A fix to a tagged release would be `0.N.1`, tagged from a branch; none is planned.
+- A version with a pre-release part (`-dev`) is never tagged (§4).
+- `ENGINE_VERSION` (`CARGO_PKG_VERSION`) stays what archives store and require (`RE0602`, ADR-0037), so any build of a version reads that version's archives, as today, and the archive format does not change. An archive or runtime folder made by 0.1.0 is refused by 0.4.0-dev with `RE0602`, whose page says to build it again.
+- The MCP server's version and the agent evaluation's client version, which read `CARGO_PKG_VERSION` too, follow without code changes.
+
+**§2 The build id.**
+- A build id is three facts about the source a binary was built from:
+  - the commit, `git rev-parse HEAD`: 40 hex digits, shown as the first 12;
+  - the commit's date: the committer date in UTC, as `YYYY-MM-DD`. It is the commit's, not the build's, so every build of a commit has the same id;
+  - whether the tree was clean: no tracked file differed from the commit (`git status --porcelain --untracked-files=no` printed nothing).
+- `crates/re_cli/build.rs` reads them with `git` (no new dependency) and gives them to the crate as `REAL_BUILD_COMMIT`, `REAL_BUILD_DATE` and `REAL_BUILD_CLEAN`. It runs git with `GIT_OPTIONAL_LOCKS=0`, so its check never rewrites the index. Cargo runs it again when HEAD moves (`HEAD`, the branch's ref file and `packed-refs`, found with `git rev-parse --git-dir` and `--git-common-dir`, so worktrees work) and when one of the tracked files the binaries are built from changes: the tracked files under `crates/`, `third_party/`, `docs/` and `templates/`, the root `Cargo.toml` and `Cargo.lock`, `.cargo/config.toml` and `rust-toolchain.toml` (2,152 files at `cbbdbf0`; the git calls take about 15 ms). So the clean flag follows the source, and files that tests write under ignored paths (`.real/`, `out/`) never rerun it. Without git or a repository, as in a source archive, the build id is unknown, and each place below says "unknown build".
+- It lives in `re_cli`, the crate of both binaries (`real`, and the game runtime built with `--features game`), so a commit rebuilds `re_cli` alone and never a crate below it. A module `crates/re_cli/src/version.rs` holds `VERSION`, `BuildId { commit, date, clean }` and the lines below.
+- Where it shows. This is WP31's contract "Versions and build ids", frozen at PR "version":
+  - `real --version` and `real -V`: `real 0.4.0-dev (cbbdbf0c0cf8 2026-10-28)`, with `, modified` after the date when the tree was not clean, and `real 0.4.0-dev (unknown build)` without git. This is the shape of `rustc --version`.
+  - The game runtime's `--version`: `Island 0.1.0 (Real Engine 0.4.0-dev, cbbdbf0c0cf8 2026-10-28)`.
+  - `--runtime-info` and every `runtime.json` (desktop and web): a `build` object beside the versions, `{"commit": "<40 hex digits>", "date": "2026-10-28", "clean": true}`, or `null` when the build is unknown. A web runtime's `runtime.json` names the build of the `real` that built it, from the same tree.
+  - Crash reports (`install_crash_hook`): the first line names the program, its version, the build and the target, as `real 0.4.0-dev (cbbdbf0c0cf8 2026-10-28) on x86_64-unknown-linux-gnu crashed`, or for a game `Island 0.1.0 (Real Engine 0.4.0-dev, cbbdbf0c0cf8 2026-10-28) on x86_64-pc-windows-msvc crashed`.
+  - The notices' first line: `The Real Engine 0.4.0-dev (cbbdbf0c0cf8 2026-10-28) runtime for x86_64-unknown-linux-gnu is built from the third-party software listed below.`
+- `real build --runtime` keeps checking what decides whether a runtime can play an archive: the engine, Luau, bytecode and compiler versions and the target. A runtime of the same version but another build, when both builds are known, is still used, with a warning, `RE0976`, that names both builds: a development version spans many commits, while a release's `real` and runtimes share one build.
+- Not in this ADR: the build id in the archive (it would change the format for no reader that needs it), on the network (WP46 decides what the secure handshake checks), or on the web page.
+
+**§3 What a release is.**
+- A release is the GitHub release of a tag `v0.N.0`, made by `release.yml`. It holds:
+  - the desktop runtime folders for `x86_64-unknown-linux-gnu` (built on ubuntu-22.04, so glibc 2.35), `x86_64-pc-windows-msvc` and `aarch64-apple-darwin`, packed as `real-runtime-<version>-<target>.tar.gz` (`.zip` on Windows);
+  - the web runtime folder, as `real-web-runtime-<version>.tar.gz`;
+  - `SHA256SUMS`: the sha256 of each asset, in `sha256sum`'s format, so `sha256sum -c SHA256SUMS` checks a download;
+  - from PR "tag": `real` itself (the tools and the editor) for the three desktop targets, embedding WP44's user guide instead of the internal design documents.
+- The release is created as a **draft**, and the workflow never publishes it. Only the repository's writers see a draft ("Only users with push access will receive listings for draft releases", GitHub's REST reference for releases). Publishing is the owner's decision, with the decision on distribution: a published release's assets are public while the repository is.
+- Its notes are drafted by GitHub from the titles of the PRs merged since the previous tag (`gh release create --generate-notes`), and are edited before any publishing.
+- Workflow artifacts: anyone signed in to GitHub can download a public repository's artifacts, so `release.yml` uploads its packed runtimes as artifacts only while the repository is private (`github.event.repository.private`). A tag's assets go to the draft only. A run started by hand while the repository is public builds, packs and checks the runtimes, writes their sha256 to the job summary, and keeps nothing.
+
+**§4 The release workflow** (`release.yml`).
+- `check`, in every run: reads the workspace version (`cargo metadata --no-deps`); on a tag, fails unless the tag is `v` followed by that version, the version has no pre-release part, and the tagged commit is on `main`. Nothing is built after a failed check. `tools/ci/release-check.sh` does it, so it also runs locally (`TAG=v0.4.0 tools/ci/release-check.sh`).
+- `draft`, on a tag, after `check`: finds the draft of an earlier attempt for this tag (`gh release view` finds drafts by tag), or creates it: `gh release create <tag> --draft --verify-tag --title "Real Engine <version>" --generate-notes`. A re-run makes no second draft.
+- `desktop-runtime` (the three targets) and `web-runtime`, after `check` (and `draft` on a tag): build and pack the runtime folders as today; on a tag, upload the archive to the draft (`gh release upload --clobber`); started by hand, upload it as an artifact while the repository is private. The Windows and macOS jobs restore the cargo cache that `platforms.yml`'s `build-package-windows` and `build-package-macos` save on main, and the Linux job `build-package`'s (one `shared-key` per pair), so a release builds on main's dependencies; release runs never save a cache.
+- `sums`, on a tag, after all of them: downloads every asset of the draft, writes `SHA256SUMS`, uploads it, and lists the sums in the job summary.
+- Only `draft`, the uploads and `sums` get `contents: write`. One release run at a time per tag (`concurrency`, not cancelled). Every job keeps a time limit.
+
+**§5 The release checklist**, `docs/RELEASING.md`:
+1. Start CI by hand on main (`gh workflow run ci --ref main`): a run started by hand runs every check, the Windows, macOS and D2 checks included while the repository is public; while it is private, also `gh workflow run platforms --ref main`. Every check must be green on the commit that will be tagged.
+2. A PR sets the version to `0.N.0` (the root `Cargo.toml`, and `Cargo.lock` after a build) and merges when green.
+3. Tag its merge commit and push the tag: `git tag -a v0.N.0 -m "Real Engine 0.N.0" <sha>`, then `git push origin v0.N.0`.
+4. Check the release run: `check`, the four runtime jobs and `sums` are green; the draft holds the four archives and `SHA256SUMS`; `sha256sum -c SHA256SUMS` passes on the downloaded assets; each desktop runtime's `--version` and `runtime.json` name `0.N.0` and the tagged commit, clean.
+5. Edit the notes. The release stays a draft until the owner decides how the engine is distributed.
+6. A PR sets the version to `0.(N+1).0-dev`.
+
+**Alternatives.**
+- **A build id from CI only** (an environment variable such as `REAL_BUILD_ID`, otherwise "local"). Simpler, but every local build, and every runtime `real build` makes, would say "local", and the build a bug report most needs to name is often a developer's.
+- **The `vergen` or `built` crates** for the git facts. A new build dependency, with an ADR-0019 review, for three `git` calls.
+- **The build time, or a build counter, in the id.** The same commit would no longer build the same binary, and two machines' builds of one commit would differ.
+- **The build id in `re_app` or `re_core`,** beside `ENGINE_VERSION`. Every commit would rebuild every crate above that one, minutes per commit in a development loop; in `re_cli` it is seconds.
+- **Watching the git index** to update the clean flag. A `git status` run by the developer or an editor rewrites the index, so `re_cli` would rebuild after each.
+- **Refusing a runtime of another build.** That would break `--runtime` across every commit of a development version, where nothing in the archive format differs.
+- **Published releases, or runtimes as workflow artifacts only.** A published release is public while the repository is; artifacts expire, and while the repository is public anyone signed in can download them.
+- **Artifact attestations** (`actions/attest-build-provenance`). For a public repository they are written to Sigstore's public transparency log, which publishes each asset's digest and the workflow that built it. Left for the distribution decision.
+- **Calendar versions** (`2026.10`). What a version means for users is the milestone's capabilities, and the plans already number them.
+- **Release notes from commit subjects** (`git log`). The squash-merged commits are the PR titles, and GitHub's notes link each PR.
+
+**Consequences.**
+- Every crate's version, the workspace crates' entries in `Cargo.lock` and the version every archive stores become `0.4.0-dev`. Archives and runtime folders made before PR "version" are built again.
+- A commit, or a change to a tracked source file, reruns `re_cli`'s build script and rebuilds `re_cli`, in CI and locally.
+- `real doctor` (WP44) and the secure transport (WP46) read the build id from `re_cli`'s version module.
+- `release.yml` may run while the repository is public, since it publishes nothing: its assets go only to a draft, and its artifacts are uploaded only while the repository is private. This replaces the line of ADR-0023's amendment for the public repository that says it is not run while public.
+- The first release costs one `release.yml` run (four runtime jobs, two of them on Windows and macOS) and the checklist's full CI run: free while the repository is public.
+- A draft's assets stay until the draft is deleted, and count against no artifact storage.
+- New diagnostic code: `RE0976` (the runtime is another build of this version), a warning in WP31's range of `re_cli`, with its explain page.
 
 ## Open questions for the owner
 

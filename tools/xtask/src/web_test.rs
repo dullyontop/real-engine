@@ -1,7 +1,7 @@
 //! `cargo xtask web-test`: the browser build's checks (ADR-0049 §8), as CI's
 //! `build-web` job runs them. It builds `real`, builds the island, the plaza and the
 //! town with `real build --target web` into `target/web-games/` (failing when
-//! `real_bg.wasm` gzips above the 8 MB budget), and in headless Chromium with WebGPU
+//! `real_bg.wasm` gzips above the 10 MB budget), and in headless Chromium with WebGPU
 //! plays each one's replays from its game.rpak, plays the plaza's again as a network
 //! client of a native server (`real run --package` on the plaza's build, ADR-0050's
 //! amendment for PR "web") and starts the island's game page, with `tools/web-test`'s
@@ -19,8 +19,9 @@ use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 
-/// The web runtime's budget: `real_bg.wasm` gzipped (ADR-0049).
-const BUDGET: u64 = 8_000_000;
+/// The web runtime's budget: `real_bg.wasm` gzipped (ADR-0049, and its amendment for
+/// WP31 PR "web budget").
+const BUDGET: u64 = 10_000_000;
 
 /// The Roblox-style project whose replays a browser also plays online.
 const ONLINE: &str = "plaza";
@@ -109,9 +110,10 @@ pub fn run(root: &Path, reported: bool) -> Result<()> {
     }
     let wasm = out.join(PROJECTS[0].0).join("real_bg.wasm");
     let size = gzipped_size(root, &wasm)?;
+    // build-web's job summary (tools/ci/web-budget.sh) reads this line.
     println!("real_bg.wasm: {size} bytes gzipped (budget {BUDGET})");
     if size > BUDGET {
-        bail!("real_bg.wasm is {size} bytes gzipped, over the 8 MB budget (ADR-0049)");
+        bail!("real_bg.wasm is {size} bytes gzipped, over the 10 MB budget (ADR-0049)");
     }
     for (name, replays) in PROJECTS {
         let project = root.join("examples").join(name);
