@@ -75,6 +75,7 @@ impl App {
         self.physics.vehicle_poses_into(&mut self.wheel_poses);
         self.contacts.extend_from_slice(self.physics.events());
         self.diagnostics.extend(self.physics.take_diagnostics());
+        self.physics_sync.end_step();
         self.perf.add(Phase::Physics, t.elapsed());
     }
 

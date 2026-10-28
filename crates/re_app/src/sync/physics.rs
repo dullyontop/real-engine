@@ -20,15 +20,26 @@
 //! replaces the body (remove, then add at the current pose, a dynamic body keeping
 //! its velocity). A `Transform` written by anything other than [`pull`] (a
 //! script, an edit) teleports the body, or moves a kinematic body's target.
+//!
+//! [`push`] looks only at what may have changed since the last push: entities
+//! whose `Collider`, `CharacterController`, `RigidBody`, `Transform` or parent
+//! changed or went (by their change ticks and the World's removal messages),
+//! static bodies under a parent whose `GlobalTransform` changed, every moving
+//! body and character, and, when the [`ShapeLibrary`] changes, the bodies whose
+//! shape it holds and the entities that failed. The first push in a World, and
+//! one after removal messages were missed, looks at every entity.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use glam::{Affine3A, Quat, Vec3};
 use re_core::{Diagnostic, Location};
-use re_scene::ecs::change_detection::Tick;
-use re_scene::ecs::query::{Or, With};
-use re_scene::ecs::world::WorldId;
+use re_scene::ecs::change_detection::{DetectChanges, Ref, Tick};
+use re_scene::ecs::hierarchy::{ChildOf, Children};
+use re_scene::ecs::lifecycle::RemovedComponentEntity;
+use re_scene::ecs::message::{MessageCursor, Messages};
+use re_scene::ecs::query::{Or, QueryState, With};
+use re_scene::ecs::world::{World as EcsWorld, WorldId};
 use re_scene::{
     BodyKind as SceneBodyKind, CharacterController, Collider, ColliderShape, Entity,
     GlobalTransform, RigidBody, Transform, Vehicle, VehicleKind as SceneVehicleKind, VehicleWheel,
@@ -210,6 +221,14 @@ struct WheelMount {
 #[derive(Clone, Debug, Default)]
 pub struct PhysicsSync {
     links: BTreeMap<EntityId, Link>,
+    /// The links that are not static bodies: [`push`] looks at each on every
+    /// push, and [`PhysicsSync::begin_step`] moves their poses on.
+    moving: BTreeSet<EntityId>,
+    /// The links whose shape comes from the [`ShapeLibrary`].
+    library: BTreeSet<EntityId>,
+    /// Entities with a `Collider` or a `CharacterController` and no body because
+    /// their description failed: looked at again when the library changes.
+    failed: BTreeSet<EntityId>,
     vehicles: BTreeMap<EntityId, VehicleLink>,
     mounts: BTreeMap<EntityId, WheelMount>,
     /// (entity, fingerprint) pairs already reported as failing, so a broken
@@ -219,6 +238,11 @@ pub struct PhysicsSync {
     /// The world and change tick of the last [`push`]: a static body none of
     /// whose components changed since is not looked at again.
     last_push: Option<(WorldId, Tick)>,
+    /// How [`push`] finds what changed in its World.
+    watch: Watch,
+    /// The links pushes added or replaced since the last
+    /// [`PhysicsSync::end_step`].
+    added: BTreeSet<EntityId>,
 }
 
 impl PhysicsSync {
@@ -267,11 +291,216 @@ impl PhysicsSync {
         ))
     }
 
-    /// Starts a step: the pose after the last step becomes the pose before this one.
+    /// Starts a step: the pose after the last step becomes the pose before this
+    /// one (static bodies are not interpolated).
     pub fn begin_step(&mut self) {
-        for link in self.links.values_mut() {
-            link.prev = link.cur;
+        for id in &self.moving {
+            if let Some(link) = self.links.get_mut(id) {
+                link.prev = link.cur;
+            }
         }
+    }
+
+    /// The bodies and characters that pushes added, or replaced, since the
+    /// last [`PhysicsSync::end_step`], in id order: what a check after the
+    /// step's commands are applied looks at (`stream.ground_ready`, ADR-0057
+    /// §2). A body waiting out of reach of a moved origin is among them before
+    /// it is in Jolt.
+    pub fn added(&self) -> &BTreeSet<EntityId> {
+        &self.added
+    }
+
+    /// Ends a step's pushes: forgets what they added.
+    pub fn end_step(&mut self) {
+        self.added.clear();
+    }
+
+    /// Links `id`, keeping the sets of moving and library-shaped links.
+    fn insert_link(&mut self, id: EntityId, link: Link) {
+        if link.kind == LinkKind::Body(BodyKind::Static) {
+            self.moving.remove(&id);
+        } else {
+            self.moving.insert(id);
+        }
+        if link.library {
+            self.library.insert(id);
+        } else {
+            self.library.remove(&id);
+        }
+        self.links.insert(id, link);
+    }
+
+    /// Unlinks `id`, queueing the removal of its body or character.
+    fn remove_link(&mut self, id: EntityId, cmds: &mut Vec<PhysicsCmd>) {
+        if let Some(link) = self.links.remove(&id) {
+            self.moving.remove(&id);
+            self.library.remove(&id);
+            self.added.remove(&id);
+            cmds.push(remove_cmd(id, link.kind));
+        }
+    }
+}
+
+/// The queries and removal cursors [`push`] uses to find what changed in one
+/// World. A copy starts without them, so its first push looks at every entity.
+#[derive(Default)]
+struct Watch(Option<Box<WatchState>>);
+
+impl Clone for Watch {
+    fn clone(&self) -> Self {
+        Watch(None)
+    }
+}
+
+impl std::fmt::Debug for Watch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Watch")
+            .field(&self.0.as_ref().map(|w| w.world))
+            .finish()
+    }
+}
+
+/// An entity with physics: a `Collider` or a `CharacterController`.
+type Candidate = Or<(With<Collider>, With<CharacterController>)>;
+
+/// The change ticks of what a candidate's description and pose read.
+type CandidateTicks = (
+    Entity,
+    Option<Ref<'static, Collider>>,
+    Option<Ref<'static, CharacterController>>,
+    Option<Ref<'static, RigidBody>>,
+    Option<Ref<'static, Transform>>,
+    Option<Ref<'static, ChildOf>>,
+);
+
+struct WatchState {
+    /// The World the queries belong to.
+    world: WorldId,
+    /// Every entity with physics.
+    candidates: QueryState<Entity, Candidate>,
+    /// What every entity with physics reads, with its change ticks.
+    ticks: QueryState<CandidateTicks, Candidate>,
+    /// Every parent's `GlobalTransform`, with its children.
+    parents: QueryState<(Ref<'static, GlobalTransform>, &'static Children)>,
+    /// Every entity with a `Vehicle`.
+    vehicles: QueryState<Entity, With<Vehicle>>,
+    /// Where the last push stopped reading the removals of `Collider`,
+    /// `CharacterController`, `RigidBody`, `ChildOf` and `GlobalTransform`.
+    removed: [MessageCursor<RemovedComponentEntity>; 5],
+    /// The cursors stand at the end of the removals as of the last push.
+    current: bool,
+}
+
+impl WatchState {
+    fn new(world: &mut EcsWorld) -> WatchState {
+        WatchState {
+            world: world.id(),
+            candidates: world.query_filtered(),
+            ticks: world.query_filtered(),
+            parents: world.query(),
+            vehicles: world.query_filtered(),
+            removed: Default::default(),
+            current: false,
+        }
+    }
+
+    /// The removal messages of the five components the cursors follow, where
+    /// any were sent.
+    fn removals(world: &EcsWorld) -> [Option<&Messages<RemovedComponentEntity>>; 5] {
+        let removed = world.removed_components();
+        [
+            world.component_id::<Collider>(),
+            world.component_id::<CharacterController>(),
+            world.component_id::<RigidBody>(),
+            world.component_id::<ChildOf>(),
+            world.component_id::<GlobalTransform>(),
+        ]
+        .map(|id| id.and_then(|id| removed.get(id)))
+    }
+
+    /// Moves the cursors past every removal so far.
+    fn catch_up(&mut self, world: &EcsWorld) {
+        for (cursor, messages) in self.removed.iter_mut().zip(Self::removals(world)) {
+            if let Some(messages) = messages {
+                cursor.clear(messages);
+            }
+        }
+        self.current = true;
+    }
+
+    /// The entities whose push may differ from the last one, which ran at
+    /// `since`: a candidate whose collider, character, rigid body, transform
+    /// or parent changed, a link whose parent's `GlobalTransform` changed,
+    /// and an entity that lost one of those components or was despawned
+    /// (a link under a parent that lost its `GlobalTransform` too). `None`
+    /// before the first look at every entity in this World, or when removals
+    /// were missed: only a look at every entity can tell then.
+    fn changed(
+        &mut self,
+        world: &EcsWorld,
+        links: &BTreeMap<EntityId, Link>,
+        since: Tick,
+        now: Tick,
+    ) -> Option<Vec<EntityId>> {
+        if !self.current {
+            return None;
+        }
+        let new = |tick: Option<Tick>| tick.is_some_and(|t| t.is_newer_than(since, now));
+        let mut changed = Vec::new();
+        for (entity, collider, character, body, transform, child_of) in self.ticks.iter(world) {
+            let ticks = [
+                collider.map(|r| r.last_changed()),
+                character.map(|r| r.last_changed()),
+                body.map(|r| r.last_changed()),
+                transform.map(|r| r.last_changed()),
+                child_of.map(|r| r.last_changed()),
+            ];
+            if ticks.into_iter().any(new) {
+                changed.push(entity_id(entity));
+            }
+        }
+        for (global, children) in self.parents.iter(world) {
+            if new(Some(global.last_changed())) {
+                changed.extend(
+                    children
+                        .iter()
+                        .map(|&c| entity_id(c))
+                        .filter(|id| links.contains_key(id)),
+                );
+            }
+        }
+        let [collider, character, body, child_of, global] = &mut self.removed;
+        let messages = Self::removals(world);
+        for (cursor, messages) in [collider, character, body, child_of]
+            .into_iter()
+            .zip(messages)
+        {
+            let Some(messages) = messages else {
+                continue;
+            };
+            if cursor.missed_messages(messages) > 0 {
+                return None;
+            }
+            changed.extend(
+                cursor
+                    .read(messages)
+                    .map(|e| entity_id(Entity::from(e.clone()))),
+            );
+        }
+        if let Some(messages) = messages[4] {
+            if global.missed_messages(messages) > 0 {
+                return None;
+            }
+            for e in global.read(messages) {
+                changed.extend(
+                    hierarchy::children(world, Entity::from(e.clone()))
+                        .iter()
+                        .map(|&c| entity_id(c))
+                        .filter(|id| links.contains_key(id)),
+                );
+            }
+        }
+        Some(changed)
     }
 }
 
@@ -517,35 +746,289 @@ impl Wanted {
     }
 }
 
-/// The fingerprints of a description, ignoring its pose: of everything but the
-/// shape, and of the shape. A library shape counts by its content hash and
-/// scale, so its data is neither copied nor hashed on each push.
-fn fingerprints(w: &Wanted) -> (blake3::Hash, blake3::Hash) {
-    let (mut rest, mut shape) = (blake3::Hasher::new(), blake3::Hasher::new());
-    match w {
-        Wanted::Body(d, lib) => {
-            let _ = serde_json::to_writer(&mut shape, &d.shape);
-            if let Some(lib) = lib {
-                shape.update(&[lib.kind]);
-                shape.update(lib.content.as_bytes());
-                for c in lib.scale.to_array() {
-                    shape.update(&c.to_le_bytes());
-                }
-            }
-            // The shape is small here: a primitive, or the stand-in for a library one.
-            let d = BodyDesc {
-                shape: PENDING_SHAPE,
-                pos: Vec3::ZERO,
-                rot: Quat::IDENTITY,
-                ..d.clone()
-            };
-            let _ = serde_json::to_writer(&mut rest, &d);
+/// A fingerprint written field by field. Equal fingerprints mean equal
+/// fields, where every number that is not finite counts as one value (as in
+/// the JSON that fingerprints were once made of, which wrote each as `null`).
+struct Fingerprint(blake3::Hasher);
+
+impl Fingerprint {
+    /// A fingerprint of the kind of value `tag` names.
+    fn new(tag: u8) -> Fingerprint {
+        let mut h = blake3::Hasher::new();
+        h.update(&[tag]);
+        Fingerprint(h)
+    }
+
+    fn tag(&mut self, v: u8) -> &mut Self {
+        self.0.update(&[v]);
+        self
+    }
+
+    fn bool(&mut self, v: bool) -> &mut Self {
+        self.tag(u8::from(v))
+    }
+
+    fn u32(&mut self, v: u32) -> &mut Self {
+        self.0.update(&v.to_le_bytes());
+        self
+    }
+
+    fn len(&mut self, n: usize) -> &mut Self {
+        self.0.update(&(n as u64).to_le_bytes());
+        self
+    }
+
+    fn f32(&mut self, v: f32) -> &mut Self {
+        if v.is_finite() {
+            self.0.update(&[1]);
+            self.0.update(&v.to_le_bytes());
+        } else {
+            self.0.update(&[0]);
         }
-        Wanted::Character(d) => {
-            let _ = serde_json::to_writer(&mut rest, d);
+        self
+    }
+
+    fn vec3(&mut self, v: Vec3) -> &mut Self {
+        self.f32(v.x).f32(v.y).f32(v.z)
+    }
+
+    fn bytes(&mut self, b: &[u8]) -> &mut Self {
+        self.0.update(b);
+        self
+    }
+
+    fn finish(&self) -> blake3::Hash {
+        self.0.finalize()
+    }
+}
+
+/// The fingerprint of a body's description without its pose and its shape,
+/// which [`push`] compares apart.
+fn body_fingerprint(d: &BodyDesc) -> blake3::Hash {
+    let BodyDesc {
+        kind,
+        shape: _,
+        pos: _,
+        rot: _,
+        mass,
+        friction,
+        restitution,
+        linear_damping,
+        angular_damping,
+        layer,
+        groups,
+        sensor,
+        center_of_mass_offset,
+    } = d;
+    let mut f = Fingerprint::new(b'b');
+    f.tag(match kind {
+        BodyKind::Static => 0,
+        BodyKind::Dynamic => 1,
+        BodyKind::Kinematic => 2,
+    })
+    .f32(*mass)
+    .f32(*friction)
+    .f32(*restitution)
+    .f32(*linear_damping)
+    .f32(*angular_damping)
+    .u32(u32::from(layer.0))
+    .u32(groups.0)
+    .bool(*sensor);
+    // A zero offset is the same as none, as in the description's serialized form.
+    if *center_of_mass_offset == Vec3::ZERO {
+        f.tag(0);
+    } else {
+        f.tag(1).vec3(*center_of_mass_offset);
+    }
+    f.finish()
+}
+
+/// The fingerprint of a character's description.
+fn character_fingerprint(d: &CharacterDesc) -> blake3::Hash {
+    let CharacterDesc {
+        height,
+        radius,
+        max_slope_deg,
+        step_height,
+        mass,
+        inner_body,
+        layer,
+        groups,
+    } = d;
+    Fingerprint::new(b'c')
+        .f32(*height)
+        .f32(*radius)
+        .f32(*max_slope_deg)
+        .f32(*step_height)
+        .f32(*mass)
+        .bool(*inner_body)
+        .u32(u32::from(layer.0))
+        .u32(groups.0)
+        .finish()
+}
+
+/// The fingerprint of a body's shape. A library shape counts by its content
+/// hash and scale, so its data is neither copied nor hashed on each push.
+fn shape_fingerprint(shape: &ShapeDesc, lib: Option<&LibraryShape>) -> blake3::Hash {
+    let mut f = Fingerprint::new(b's');
+    match shape {
+        ShapeDesc::Box { half_extents } => {
+            f.tag(0).vec3(*half_extents);
+        }
+        ShapeDesc::Sphere { radius } => {
+            f.tag(1).f32(*radius);
+        }
+        ShapeDesc::Capsule {
+            half_height,
+            radius,
+        } => {
+            f.tag(2).f32(*half_height).f32(*radius);
+        }
+        ShapeDesc::ConvexHull { points } => {
+            f.tag(3).len(points.len());
+            for p in points {
+                f.vec3(*p);
+            }
+        }
+        ShapeDesc::TriangleMesh {
+            vertices,
+            triangles,
+        } => {
+            f.tag(4).len(vertices.len());
+            for v in vertices {
+                f.vec3(*v);
+            }
+            f.len(triangles.len());
+            for t in triangles.as_flattened() {
+                f.u32(*t);
+            }
+        }
+        ShapeDesc::Heightfield {
+            n,
+            samples,
+            spacing,
+            offset,
+            precision,
+        } => {
+            f.tag(5).u32(*n).len(samples.len());
+            for s in samples {
+                f.f32(*s);
+            }
+            f.f32(*spacing).vec3(*offset);
+            if let Some(re_types::physics::HeightfieldPrecision {
+                bits_per_sample,
+                block_size,
+            }) = precision
+            {
+                f.tag(1).tag(*bits_per_sample).tag(*block_size);
+            } else {
+                f.tag(0);
+            }
         }
     }
-    (rest.finalize(), shape.finalize())
+    if let Some(LibraryShape {
+        kind,
+        content,
+        scale,
+    }) = lib
+    {
+        f.tag(1).tag(*kind).bytes(content.as_bytes());
+        for c in scale.to_array() {
+            f.bytes(&c.to_le_bytes());
+        }
+    } else {
+        f.tag(0);
+    }
+    f.finish()
+}
+
+/// The fingerprints of a description, ignoring its pose: of everything but the
+/// shape, and of the shape.
+fn fingerprints(w: &Wanted) -> (blake3::Hash, blake3::Hash) {
+    match w {
+        Wanted::Body(d, lib) => (
+            body_fingerprint(d),
+            shape_fingerprint(&d.shape, lib.as_ref()),
+        ),
+        Wanted::Character(d) => (character_fingerprint(d), Fingerprint::new(b'n').finish()),
+    }
+}
+
+/// The fingerprint of a vehicle's description.
+fn vehicle_fingerprint(d: &VehicleDesc) -> blake3::Hash {
+    let VehicleDesc {
+        kind,
+        wheels,
+        engine,
+        transmission,
+        anti_roll_stiffness,
+        max_pitch_roll_deg,
+        tester,
+    } = d;
+    let mut f = Fingerprint::new(b'v');
+    f.tag(match kind {
+        VehicleKind::Wheeled => 0,
+        VehicleKind::Motorcycle => 1,
+    })
+    .len(wheels.len());
+    for w in wheels {
+        let WheelDesc {
+            pos,
+            radius,
+            width,
+            suspension_min,
+            suspension_max,
+            suspension_frequency,
+            suspension_damping,
+            max_steer_deg,
+            max_brake_torque,
+            max_hand_brake_torque,
+            driven,
+        } = w;
+        f.vec3(*pos)
+            .f32(*radius)
+            .f32(*width)
+            .f32(*suspension_min)
+            .f32(*suspension_max)
+            .f32(*suspension_frequency)
+            .f32(*suspension_damping)
+            .f32(*max_steer_deg)
+            .f32(*max_brake_torque)
+            .f32(*max_hand_brake_torque)
+            .bool(*driven);
+    }
+    let EngineDesc {
+        max_torque,
+        min_rpm,
+        max_rpm,
+    } = engine;
+    f.f32(*max_torque).f32(*min_rpm).f32(*max_rpm);
+    let TransmissionDesc {
+        gears,
+        reverse_gears,
+        shift_up_rpm,
+        shift_down_rpm,
+        differential_ratio,
+    } = transmission;
+    f.len(gears.len());
+    for g in gears {
+        f.f32(*g);
+    }
+    f.len(reverse_gears.len());
+    for g in reverse_gears {
+        f.f32(*g);
+    }
+    f.f32(*shift_up_rpm)
+        .f32(*shift_down_rpm)
+        .f32(*differential_ratio)
+        .f32(*anti_roll_stiffness)
+        .f32(*max_pitch_roll_deg);
+    match tester {
+        WheelTester::Ray => f.tag(0),
+        WheelTester::CastSphere { radius } => f.tag(1).f32(*radius),
+        WheelTester::CastCylinder => f.tag(2),
+    }
+    .finish()
 }
 
 fn wanted(
@@ -600,6 +1083,33 @@ fn wanted(
         },
         lib,
     )))
+}
+
+/// The shape physics simulates for `entity`, with the world pose the next
+/// [`push`] gives it: a collider's shape, scaled as its body's is, or a
+/// character's capsule about its centre (ADR-0057 §9's `debug.physics`
+/// outlines). `None` for an entity without physics, with a disabled collider,
+/// or with a description `push` refuses (its diagnostic says why). A mesh's or
+/// a heightfield's data is copied.
+pub fn shape_and_pose(
+    world: &World,
+    entity: Entity,
+    shapes: &ShapeLibrary,
+) -> Option<(ShapeDesc, Vec3, Quat)> {
+    let pose = world_pose(world, entity);
+    let (pos, rot, _) = pose;
+    let shape = match wanted(world, entity, shapes, pose)
+        .ok()??
+        .complete(world, entity, shapes)
+        .ok()?
+    {
+        Wanted::Body(desc, _) => desc.shape,
+        Wanted::Character(d) => ShapeDesc::Capsule {
+            half_height: d.height * 0.5 - d.radius,
+            radius: d.radius,
+        },
+    };
+    Some((shape, pos, rot))
 }
 
 fn add_cmd(id: EntityId, w: Wanted, pos: Vec3, rot: Quat) -> PhysicsCmd {
@@ -670,49 +1180,144 @@ pub fn push(
     // Changes since the last push in this world (a copied sync state in a
     // forked world looks at everything once).
     let now = world.ecs.change_tick();
+    let world_id = world.ecs.id();
     let since = sync
         .last_push
-        .filter(|(w, _)| *w == world.ecs.id())
+        .filter(|(w, _)| *w == world_id)
         .map(|(_, t)| t);
-    let mut candidates: Vec<Entity> = world
-        .ecs
-        .query_filtered::<Entity, Or<(With<CharacterController>, With<Collider>)>>()
-        .iter(&world.ecs)
-        .collect();
-    candidates.sort_by_key(|e| e.to_bits());
+    if sync.watch.0.as_ref().is_none_or(|w| w.world != world_id) {
+        sync.watch.0 = Some(Box::new(WatchState::new(&mut world.ecs)));
+    }
     let world_mut = world;
     let world = &*world_mut;
+    let mut watch = sync.watch.0.take().expect("made above");
+    let changed = since.and_then(|since| watch.changed(&world.ecs, &sync.links, since, now));
+    let mut push = Push {
+        world,
+        shapes,
+        since,
+        now,
+        shapes_changed,
+        cmds,
+        diagnostics,
+        added: BTreeSet::new(),
+    };
+    match changed {
+        Some(mut changed) => {
+            // What may have changed, and what moves.
+            if shapes_changed {
+                changed.extend(sync.library.iter().chain(&sync.failed));
+            }
+            changed.extend(&sync.moving);
+            changed.sort_unstable();
+            changed.dedup();
+            for id in changed {
+                let candidate = entity_from_id(id).filter(|&e| {
+                    world.ecs.get_entity(e).is_ok_and(|e| {
+                        e.contains::<Collider>() || e.contains::<CharacterController>()
+                    })
+                });
+                let kept = match candidate {
+                    Some(entity) => push.visit(sync, entity),
+                    None => {
+                        sync.failed.remove(&id);
+                        false
+                    }
+                };
+                if !kept {
+                    sync.remove_link(id, push.cmds);
+                }
+            }
+        }
+        None => {
+            // Every entity: the first push in this World, or one that cannot
+            // tell what changed.
+            let mut candidates: Vec<Entity> = watch.candidates.iter(&world.ecs).collect();
+            candidates.sort_by_key(|e| e.to_bits());
+            sync.failed.clear();
+            let mut seen: BTreeSet<EntityId> = BTreeSet::new();
+            for entity in candidates {
+                if push.visit(sync, entity) {
+                    seen.insert(entity_id(entity));
+                }
+            }
+            let gone: Vec<EntityId> = sync
+                .links
+                .keys()
+                .filter(|id| !seen.contains(id))
+                .copied()
+                .collect();
+            for id in gone {
+                sync.remove_link(id, push.cmds);
+            }
+        }
+    }
+    watch.catch_up(&world.ecs);
+    let mut chassis: Vec<Entity> = watch.vehicles.iter(&world.ecs).collect();
+    chassis.sort_by_key(|e| e.to_bits());
+    sync.watch.0 = Some(watch);
+    let Push { cmds, added, .. } = push;
+    push_vehicles(world, sync, &chassis, &added, cmds);
+    sync.added.extend(added);
+    // Changes from here on carry a later tick than the one recorded.
+    sync.last_push = Some((world_id, now));
+    world_mut.ecs.increment_change_tick();
+}
 
-    let mut seen: BTreeSet<EntityId> = BTreeSet::new();
-    let mut added: BTreeSet<EntityId> = BTreeSet::new();
-    for entity in candidates {
+/// One [`push`]: what it reads, and where its commands and diagnostics go.
+struct Push<'a> {
+    world: &'a World,
+    shapes: &'a ShapeLibrary,
+    /// The tick of the last push in this World, if any.
+    since: Option<Tick>,
+    now: Tick,
+    shapes_changed: bool,
+    cmds: &'a mut Vec<PhysicsCmd>,
+    diagnostics: &'a mut Vec<Diagnostic>,
+    /// The bodies this push added or replaced.
+    added: BTreeSet<EntityId>,
+}
+
+impl Push<'_> {
+    /// Reports `d` for `id`, once for each problem, and remembers that the
+    /// entity failed.
+    fn fail(&mut self, sync: &mut PhysicsSync, id: EntityId, d: Diagnostic) {
+        let key = (id, *blake3::hash(d.message.as_bytes()).as_bytes());
+        if sync.reported.insert(key) {
+            self.diagnostics.push(d);
+        }
+        sync.failed.insert(id);
+    }
+
+    /// Compares an entity with a `Collider` or a `CharacterController` with
+    /// its link, queueing what changed. Returns whether it keeps (or now
+    /// has) a link; the caller removes one it does not keep.
+    fn visit(&mut self, sync: &mut PhysicsSync, entity: Entity) -> bool {
+        let world = self.world;
         let id = entity_id(entity);
-        if let Some(since) = since
+        if let Some(since) = self.since
             && let Some(link) = sync.links.get(&id)
-            && unchanged_static(world, entity, link, since, now, shapes_changed)
+            && unchanged_static(world, entity, link, since, self.now, self.shapes_changed)
         {
-            seen.insert(id);
-            continue;
+            return true;
         }
         let world_pose = world_pose(world, entity);
-        let wanted = match wanted(world, entity, shapes, world_pose) {
-            Ok(w) => w,
-            Err(d) => {
-                let key = (id, *blake3::hash(d.message.as_bytes()).as_bytes());
-                if sync.reported.insert(key) {
-                    diagnostics.push(d);
-                }
-                // A broken description removes an existing body rather than
-                // leaving a stale one.
-                None
+        let w = match wanted(world, entity, self.shapes, world_pose) {
+            Ok(Some(w)) => w,
+            // A disabled collider has no body.
+            Ok(None) => {
+                sync.failed.remove(&id);
+                return false;
             }
-        };
-        let Some(w) = wanted else {
-            continue;
+            // A broken description removes an existing body rather than
+            // leaving a stale one.
+            Err(d) => {
+                self.fail(sync, id, d);
+                return false;
+            }
         };
         let library = matches!(w, Wanted::Body(_, Some(_)));
         let rigid_body = world.ecs.get::<RigidBody>(entity).is_some();
-        seen.insert(id);
         let (pos, rot, _) = world_pose;
         let (fp, shape_fp) = fingerprints(&w);
         let local = local_tr(world, entity);
@@ -727,23 +1332,19 @@ pub fn push(
             {
                 if link.shape != shape_fp {
                     // Only the shape changed: the body keeps its motion and contacts.
-                    match w.complete(world, entity, shapes) {
+                    match w.complete(world, entity, self.shapes) {
                         Ok(Wanted::Body(desc, _)) => {
                             link.shape = shape_fp;
                             link.library = library;
-                            cmds.push(PhysicsCmd::SetShape {
+                            self.cmds.push(PhysicsCmd::SetShape {
                                 id,
                                 shape: desc.shape,
                             });
                         }
                         Ok(Wanted::Character(_)) => {}
                         Err(d) => {
-                            let key = (id, *blake3::hash(d.message.as_bytes()).as_bytes());
-                            if sync.reported.insert(key) {
-                                diagnostics.push(d);
-                            }
-                            seen.remove(&id);
-                            continue;
+                            self.fail(sync, id, d);
+                            return false;
                         }
                     }
                 }
@@ -765,34 +1366,36 @@ pub fn push(
                         link.prev = (pos, rot);
                         link.cur = (pos, rot);
                     }
-                    cmds.push(match link.kind {
+                    self.cmds.push(match link.kind {
                         LinkKind::Body(BodyKind::Kinematic) => {
                             PhysicsCmd::SetKinematicTarget { id, pos, rot }
                         }
                         _ => PhysicsCmd::SetTransform { id, pos, rot },
                     });
                 }
+                if library {
+                    sync.library.insert(id);
+                } else {
+                    sync.library.remove(&id);
+                }
             }
             existing => {
+                let old = existing.map(|l| l.kind);
                 // Only now is a library shape's data copied into the body.
-                let w = match w.complete(world, entity, shapes) {
+                let w = match w.complete(world, entity, self.shapes) {
                     Ok(w) => w,
                     Err(d) => {
-                        let key = (id, *blake3::hash(d.message.as_bytes()).as_bytes());
-                        if sync.reported.insert(key) {
-                            diagnostics.push(d);
-                        }
-                        seen.remove(&id);
-                        continue;
+                        self.fail(sync, id, d);
+                        return false;
                     }
                 };
-                if let Some(old) = existing {
-                    cmds.push(remove_cmd(id, old.kind));
+                if let Some(old) = old {
+                    self.cmds.push(remove_cmd(id, old));
                 }
                 let kind = w.kind();
-                added.insert(id);
-                cmds.push(add_cmd(id, w, pos, rot));
-                sync.links.insert(
+                self.added.insert(id);
+                self.cmds.push(add_cmd(id, w, pos, rot));
+                sync.insert_link(
                     id,
                     Link {
                         entity,
@@ -809,22 +1412,9 @@ pub fn push(
                 );
             }
         }
+        sync.failed.remove(&id);
+        true
     }
-    let gone: Vec<EntityId> = sync
-        .links
-        .keys()
-        .filter(|id| !seen.contains(id))
-        .copied()
-        .collect();
-    for id in gone {
-        if let Some(link) = sync.links.remove(&id) {
-            cmds.push(remove_cmd(id, link.kind));
-        }
-    }
-    push_vehicles(world, sync, &added, cmds);
-    // Changes from here on carry a later tick than the one recorded.
-    sync.last_push = Some((world.ecs.id(), now));
-    world_mut.ecs.increment_change_tick();
 }
 
 /// True when `entity` is a static body whose `Transform`, `Collider` and
@@ -912,27 +1502,22 @@ fn vehicle_desc(v: &Vehicle, wheels: &[(&VehicleWheel, Vec3)], scale: Vec3) -> V
     }
 }
 
-/// Adds, replaces and removes vehicles on linked bodies. `added` holds the
-/// bodies this push added or replaced: replacing a body drops its vehicle, so
-/// those get theirs added again.
+/// Adds, replaces and removes vehicles on linked bodies: `chassis` holds the
+/// entities with a `Vehicle`, in id order. `added` holds the bodies this push
+/// added or replaced: replacing a body drops its vehicle, so those get theirs
+/// added again.
 fn push_vehicles(
     world: &World,
     sync: &mut PhysicsSync,
+    chassis: &[Entity],
     added: &BTreeSet<EntityId>,
     cmds: &mut Vec<PhysicsCmd>,
 ) {
     sync.mounts.retain(|&wheel, _| {
         entity_from_id(wheel).is_some_and(|e| world.ecs.get::<VehicleWheel>(e).is_some())
     });
-    let mut chassis: Vec<Entity> = world
-        .ecs
-        .iter_entities()
-        .filter(|e| e.contains::<Vehicle>())
-        .map(|e| e.id())
-        .collect();
-    chassis.sort_by_key(|e| e.to_bits());
     let mut seen: BTreeSet<EntityId> = BTreeSet::new();
-    for entity in chassis {
+    for &entity in chassis {
         let id = entity_id(entity);
         // A vehicle needs a body.
         let Some(kind) = sync
@@ -970,7 +1555,7 @@ fn push_vehicles(
             wheels.push((w, mount.attach));
         }
         let desc = vehicle_desc(v, &wheels, world_scale(world, entity).abs());
-        let fp = blake3::hash(serde_json::to_string(&desc).unwrap_or_default().as_bytes());
+        let fp = vehicle_fingerprint(&desc);
         if kind != LinkKind::Body(BodyKind::Dynamic) {
             // `re_physics` refuses it (RE5018): send it once per description so the
             // problem is reported, and record no vehicle.
@@ -1397,5 +1982,865 @@ mod skip_tests {
             matches!(gone.as_slice(), [PhysicsCmd::RemoveBody { .. }]),
             "{gone:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod change_tests {
+    //! The change-driven push against one that looks at every entity, and the
+    //! structural fingerprints against the JSON ones they replaced.
+    use super::*;
+
+    /// A small deterministic random number generator (xorshift64*).
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
+        }
+
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+
+        fn chance(&mut self, percent: u64) -> bool {
+            self.next() % 100 < percent
+        }
+
+        fn pick<T: Clone>(&mut self, items: &[T]) -> T {
+            items[self.below(items.len())].clone()
+        }
+
+        fn unit(&mut self) -> f32 {
+            (self.next() >> 40) as f32 / (1u64 << 24) as f32
+        }
+
+        fn vec3(&mut self, scale: f32) -> Vec3 {
+            Vec3::new(self.unit() - 0.5, self.unit() - 0.5, self.unit() - 0.5) * 2.0 * scale
+        }
+
+        fn quat(&mut self) -> Quat {
+            let axis = self.vec3(1.0).try_normalize().unwrap_or(Vec3::Y);
+            Quat::from_axis_angle(axis, self.unit() * 6.0)
+        }
+    }
+
+    /// Numbers whose JSON forms are equal or differ in every way that
+    /// matters: signed zeros, two NaNs and the infinities (all `null`).
+    const NUMBERS: [f32; 7] = [
+        0.0,
+        -0.0,
+        1.5,
+        f32::NAN,
+        f32::from_bits(0x7fc0_0001),
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+    ];
+
+    /// The fingerprints `push` used to make, from each description's JSON.
+    fn json_fingerprints(w: &Wanted) -> (blake3::Hash, blake3::Hash) {
+        let (mut rest, mut shape) = (blake3::Hasher::new(), blake3::Hasher::new());
+        match w {
+            Wanted::Body(d, lib) => {
+                let _ = serde_json::to_writer(&mut shape, &d.shape);
+                if let Some(lib) = lib {
+                    shape.update(&[lib.kind]);
+                    shape.update(lib.content.as_bytes());
+                    for c in lib.scale.to_array() {
+                        shape.update(&c.to_le_bytes());
+                    }
+                }
+                let d = BodyDesc {
+                    shape: PENDING_SHAPE,
+                    pos: Vec3::ZERO,
+                    rot: Quat::IDENTITY,
+                    ..d.clone()
+                };
+                let _ = serde_json::to_writer(&mut rest, &d);
+            }
+            Wanted::Character(d) => {
+                let _ = serde_json::to_writer(&mut rest, d);
+            }
+        }
+        (rest.finalize(), shape.finalize())
+    }
+
+    fn random_wanted(rng: &mut Rng) -> Wanted {
+        let n = |rng: &mut Rng| rng.pick(&NUMBERS);
+        if rng.chance(25) {
+            let mut d = CharacterDesc::default();
+            for _ in 0..rng.below(3) {
+                match rng.below(8) {
+                    0 => d.height = n(rng),
+                    1 => d.radius = n(rng),
+                    2 => d.max_slope_deg = n(rng),
+                    3 => d.step_height = n(rng),
+                    4 => d.mass = n(rng),
+                    5 => d.inner_body = !d.inner_body,
+                    6 => d.layer = Layer(rng.pick(&[0, 1, 256])),
+                    _ => d.groups = GroupMask(rng.pick(&[1, 2, 257])),
+                }
+            }
+            return Wanted::Character(d);
+        }
+        let mut d = BodyDesc::default();
+        for _ in 0..rng.below(3) {
+            match rng.below(11) {
+                0 => d.kind = rng.pick(&[BodyKind::Static, BodyKind::Dynamic, BodyKind::Kinematic]),
+                1 => d.mass = n(rng),
+                2 => d.friction = n(rng),
+                3 => d.restitution = n(rng),
+                4 => d.linear_damping = n(rng),
+                5 => d.angular_damping = n(rng),
+                6 => d.layer = Layer(rng.pick(&[0, 1, 256])),
+                7 => d.groups = GroupMask(rng.pick(&[1, 2, 257])),
+                8 => d.sensor = !d.sensor,
+                9 => d.center_of_mass_offset = Vec3::new(n(rng), n(rng), 0.0),
+                _ => d.pos = Vec3::new(n(rng), 1.0, 2.0),
+            }
+        }
+        let lib = rng.chance(30).then(|| LibraryShape {
+            kind: rng.pick(&[0, 1, 2]),
+            content: blake3::hash(&[rng.pick(&[0u8, 1])]),
+            scale: Vec3::new(n(rng), 1.0, 1.0),
+        });
+        d.shape = match (lib, rng.below(3)) {
+            (Some(_), _) => PENDING_SHAPE,
+            (None, 0) => ShapeDesc::Box {
+                half_extents: Vec3::new(n(rng), n(rng), 0.5),
+            },
+            (None, 1) => ShapeDesc::Sphere { radius: n(rng) },
+            (None, _) => ShapeDesc::Capsule {
+                half_height: n(rng),
+                radius: 0.25,
+            },
+        };
+        Wanted::Body(d, lib)
+    }
+
+    fn random_vehicle(rng: &mut Rng) -> VehicleDesc {
+        let n = |rng: &mut Rng| rng.pick(&NUMBERS);
+        let mut d = VehicleDesc {
+            wheels: vec![WheelDesc::default(); rng.below(3)],
+            ..VehicleDesc::default()
+        };
+        for _ in 0..rng.below(3) {
+            match rng.below(9) {
+                0 => d.kind = VehicleKind::Motorcycle,
+                1 => {
+                    if let Some(w) = d.wheels.first_mut() {
+                        w.radius = n(rng);
+                        w.driven = rng.chance(50);
+                    }
+                }
+                2 => {
+                    if let Some(w) = d.wheels.last_mut() {
+                        w.pos = Vec3::new(n(rng), 0.0, 1.0);
+                    }
+                }
+                3 => d.engine.max_torque = n(rng),
+                4 => d.transmission.gears.push(n(rng)),
+                5 => d.transmission.reverse_gears.clear(),
+                6 => d.anti_roll_stiffness = n(rng),
+                7 => d.tester = WheelTester::CastSphere { radius: n(rng) },
+                _ => d.tester = WheelTester::CastCylinder,
+            }
+        }
+        d
+    }
+
+    /// Two descriptions get equal fingerprints exactly when their JSON did.
+    #[test]
+    fn fingerprints_tell_apart_what_the_json_ones_did() {
+        let mut rng = Rng(0x5eed);
+        let wanted: Vec<_> = (0..600).map(|_| random_wanted(&mut rng)).collect();
+        let prints: Vec<_> = wanted
+            .iter()
+            .map(|w| (json_fingerprints(w), fingerprints(w)))
+            .collect();
+        let mut equal = 0;
+        for (i, (json_a, new_a)) in prints.iter().enumerate() {
+            for (j, (json_b, new_b)) in prints.iter().enumerate() {
+                assert_eq!(
+                    json_a.0 == json_b.0,
+                    new_a.0 == new_b.0,
+                    "{:?} and {:?}",
+                    wanted[i],
+                    wanted[j]
+                );
+                assert_eq!(
+                    json_a.1 == json_b.1,
+                    new_a.1 == new_b.1,
+                    "the shapes of {:?} and {:?}",
+                    wanted[i],
+                    wanted[j]
+                );
+                equal += usize::from(i != j && new_a == new_b);
+            }
+        }
+        assert!(equal > 1000, "only {equal} equal pairs");
+        let vehicles: Vec<_> = (0..300).map(|_| random_vehicle(&mut rng)).collect();
+        let prints: Vec<_> = vehicles
+            .iter()
+            .map(|v| {
+                let json = blake3::hash(serde_json::to_string(v).unwrap().as_bytes());
+                (json, vehicle_fingerprint(v))
+            })
+            .collect();
+        let mut equal = 0;
+        for (i, a) in prints.iter().enumerate() {
+            for (j, b) in prints.iter().enumerate() {
+                assert_eq!(
+                    a.0 == b.0,
+                    a.1 == b.1,
+                    "{:?} and {:?}",
+                    vehicles[i],
+                    vehicles[j]
+                );
+                equal += usize::from(i != j && a.1 == b.1);
+            }
+        }
+        assert!(equal > 500, "only {equal} equal vehicle pairs");
+    }
+
+    impl std::fmt::Debug for Wanted {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Wanted::Body(d, lib) => write!(f, "{d:?} {lib:?}"),
+                Wanted::Character(d) => write!(f, "{d:?}"),
+            }
+        }
+    }
+
+    /// One World with its sync state, edited at random.
+    struct Side {
+        world: World,
+        shapes: ShapeLibrary,
+        sync: PhysicsSync,
+        entities: Vec<Entity>,
+        rng: Rng,
+        /// Look at every entity on each push, as `push` did before it
+        /// followed changes.
+        everything: bool,
+    }
+
+    fn mesh(points: &[[f32; 3]]) -> Arc<MeshData> {
+        Arc::new(MeshData {
+            vertices: points
+                .iter()
+                .map(|&pos| re_types::Vertex {
+                    pos,
+                    ..Default::default()
+                })
+                .collect(),
+            indices: vec![0, 1, 2, 0, 2, 3],
+        })
+    }
+
+    fn heightfield(h: f32) -> Arc<HeightfieldData> {
+        Arc::new(HeightfieldData {
+            n: 3,
+            spacing: 1.0,
+            offset: Vec3::ZERO,
+            samples: vec![h; 9],
+            precision: None,
+        })
+    }
+
+    impl Side {
+        fn new(seed: u64, everything: bool) -> Side {
+            let mut shapes = ShapeLibrary::default();
+            shapes.insert_mesh(
+                "m0",
+                mesh(&[[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]),
+            );
+            shapes.insert_heightfield("h0", heightfield(0.0));
+            Side {
+                world: World::new(),
+                shapes,
+                sync: PhysicsSync::new(),
+                entities: Vec::new(),
+                rng: Rng(seed),
+                everything,
+            }
+        }
+
+        fn random_collider(&mut self) -> Collider {
+            let rng = &mut self.rng;
+            Collider {
+                shape: rng.pick(&[
+                    ColliderShape::Box,
+                    ColliderShape::Box,
+                    ColliderShape::Sphere,
+                    ColliderShape::Capsule,
+                    ColliderShape::Convex,
+                    ColliderShape::Mesh,
+                    ColliderShape::Heightfield,
+                ]),
+                half_extents: Vec3::splat(rng.pick(&[0.5, 1.0])),
+                source: rng.pick(&["m0", "m1", "h0", "", "gone"]).to_string(),
+                layer: rng.pick(&[0, 0, 0, 2, -1]),
+                sensor: rng.chance(10),
+                enabled: !rng.chance(10),
+                ..Collider::default()
+            }
+        }
+
+        fn random_body(&mut self) -> RigidBody {
+            RigidBody {
+                kind: self.rng.pick(&[
+                    SceneBodyKind::Static,
+                    SceneBodyKind::Dynamic,
+                    SceneBodyKind::Kinematic,
+                ]),
+                friction: self.rng.pick(&[0.5, 0.9]),
+                ..RigidBody::default()
+            }
+        }
+
+        fn random_entity(&mut self) -> Option<Entity> {
+            (!self.entities.is_empty()).then(|| self.rng.pick(&self.entities))
+        }
+
+        fn spawn(&mut self) {
+            let transform = Transform {
+                translation: self.rng.vec3(5.0),
+                rotation: self.rng.quat(),
+                scale: self.rng.pick(&[
+                    Vec3::ONE,
+                    Vec3::ONE,
+                    Vec3::splat(2.0),
+                    Vec3::new(1.0, 2.0, 0.5),
+                ]),
+            };
+            let mut e = self.world.ecs.spawn(transform);
+            let id = e.id();
+            if self.rng.chance(70) {
+                let c = self.random_collider();
+                self.world.ecs.entity_mut(id).insert(c);
+            }
+            if self.rng.chance(40) {
+                let b = self.random_body();
+                self.world.ecs.entity_mut(id).insert(b);
+            }
+            if self.rng.chance(10) {
+                self.world
+                    .ecs
+                    .entity_mut(id)
+                    .insert(CharacterController::default());
+            }
+            if self.rng.chance(40)
+                && let Some(parent) = self.random_entity()
+            {
+                self.world.ecs.entity_mut(id).insert(ChildOf(parent));
+            }
+            if self.rng.chance(5) {
+                e = self.world.ecs.entity_mut(id);
+                e.insert((
+                    RigidBody {
+                        kind: SceneBodyKind::Dynamic,
+                        ..RigidBody::default()
+                    },
+                    Vehicle::default(),
+                ));
+                for x in [-1.0, 1.0] {
+                    let wheel = self
+                        .world
+                        .ecs
+                        .spawn((
+                            Transform::from_translation(Vec3::new(x, -0.5, 1.0)),
+                            VehicleWheel::default(),
+                            ChildOf(id),
+                        ))
+                        .id();
+                    self.entities.push(wheel);
+                }
+            }
+            self.entities.push(id);
+        }
+
+        /// True when `ancestor` is `e` or above it.
+        fn is_above(&self, ancestor: Entity, mut e: Entity) -> bool {
+            loop {
+                if e == ancestor {
+                    return true;
+                }
+                match hierarchy::parent(&self.world.ecs, e) {
+                    Some(p) => e = p,
+                    None => return false,
+                }
+            }
+        }
+
+        /// A few random edits, as scripts, the editor, streaming and the
+        /// library make them.
+        fn edit(&mut self) {
+            for _ in 0..1 + self.rng.below(4) {
+                let roll = self.rng.below(100);
+                if roll < 25 || self.entities.is_empty() {
+                    if self.entities.len() < 80 {
+                        self.spawn();
+                    }
+                    continue;
+                }
+                let e = self.random_entity().expect("not empty");
+                let world = &mut self.world.ecs;
+                match roll {
+                    25..40 => {
+                        if let Some(mut c) = world.get_mut::<Collider>(e) {
+                            match self.rng.below(7) {
+                                0 => c.half_extents *= 1.5,
+                                1 => c.enabled = !c.enabled,
+                                2 => c.layer = self.rng.pick(&[0, 3, -1, 70_000]),
+                                3 => c.groups = self.rng.pick(&[1, 6, -5]),
+                                4 => c.sensor = !c.sensor,
+                                5 => c.source = self.rng.pick(&["m0", "m1", "h0", "gone"]).into(),
+                                _ => {
+                                    c.shape = self.rng.pick(&[
+                                        ColliderShape::Box,
+                                        ColliderShape::Sphere,
+                                        ColliderShape::Convex,
+                                        ColliderShape::Heightfield,
+                                    ])
+                                }
+                            }
+                        }
+                    }
+                    40..50 => match self.rng.below(3) {
+                        0 => {
+                            let b = self.random_body();
+                            self.world.ecs.entity_mut(e).insert(b);
+                        }
+                        1 => {
+                            world.entity_mut(e).remove::<RigidBody>();
+                        }
+                        _ => {
+                            if let Some(mut b) = world.get_mut::<RigidBody>(e) {
+                                b.mass += 1.0;
+                            }
+                        }
+                    },
+                    50..54 => {
+                        if world.get::<CharacterController>(e).is_some() {
+                            world.entity_mut(e).remove::<CharacterController>();
+                        } else {
+                            world.entity_mut(e).insert(CharacterController::default());
+                        }
+                    }
+                    54..59 => {
+                        if world.get::<Collider>(e).is_some() {
+                            world.entity_mut(e).remove::<Collider>();
+                        } else {
+                            let c = self.random_collider();
+                            self.world.ecs.entity_mut(e).insert(c);
+                        }
+                    }
+                    59..77 => {
+                        let (v, q) = (self.rng.vec3(1.0), self.rng.quat());
+                        let which = self.rng.below(4);
+                        if let Some(mut t) = world.get_mut::<Transform>(e) {
+                            match which {
+                                0 | 1 => t.translation += v,
+                                2 => t.rotation = q,
+                                _ => t.scale = Vec3::splat(1.0 + v.x.abs()),
+                            }
+                        }
+                    }
+                    77..83 => {
+                        let parent = self.random_entity().expect("not empty");
+                        if self.rng.chance(30) {
+                            self.world.ecs.entity_mut(e).remove::<ChildOf>();
+                        } else if !self.is_above(e, parent) {
+                            self.world.ecs.entity_mut(e).insert(ChildOf(parent));
+                        }
+                    }
+                    83..89 => {
+                        world.despawn(e);
+                        let world = &self.world.ecs;
+                        self.entities.retain(|&e| world.get_entity(e).is_ok());
+                    }
+                    89..92 => {
+                        if world.get::<GlobalTransform>(e).is_some() {
+                            world.entity_mut(e).remove::<GlobalTransform>();
+                        } else {
+                            world.entity_mut(e).insert(GlobalTransform::default());
+                        }
+                    }
+                    92..93 => {
+                        world.entity_mut(e).remove::<Transform>();
+                    }
+                    93..97 => match self.rng.below(3) {
+                        0 => self.shapes.insert_mesh(
+                            "m1",
+                            mesh(&[[0.0; 3], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]]),
+                        ),
+                        1 => self.shapes.remove("h0"),
+                        _ => self
+                            .shapes
+                            .insert_heightfield("h0", heightfield(self.rng.unit())),
+                    },
+                    _ => {
+                        // Twice drops every removal message sent before.
+                        world.clear_trackers();
+                        if self.rng.chance(50) {
+                            world.clear_trackers();
+                        }
+                    }
+                }
+            }
+            if self.rng.chance(50) {
+                self.world.propagate();
+            }
+        }
+
+        /// One push, with what it queued and reported.
+        fn push(&mut self) -> (Vec<String>, Vec<String>) {
+            if self.everything {
+                self.sync.watch = Watch(None);
+            }
+            let (mut cmds, mut diagnostics) = (Vec::new(), Vec::new());
+            push(
+                &mut self.world,
+                &mut self.sync,
+                &self.shapes,
+                &mut cmds,
+                &mut diagnostics,
+            );
+            PhysicsCmd::sort(&mut cmds);
+            (
+                cmds.iter().map(|c| format!("{c:?}")).collect(),
+                diagnostics.iter().map(|d| format!("{d:?}")).collect(),
+            )
+        }
+
+        /// Physics moving every moving body a little.
+        fn step(&mut self) {
+            self.sync.begin_step();
+            let poses: Vec<BodyPose> = self
+                .sync
+                .linked()
+                .filter(|(_, kind)| *kind != LinkKind::Body(BodyKind::Static))
+                .map(|(id, _)| BodyPose {
+                    id,
+                    pos: self.rng.vec3(3.0),
+                    rot: self.rng.quat(),
+                })
+                .collect();
+            if self.rng.chance(70) {
+                pull(&mut self.world, &mut self.sync, &poses);
+            }
+        }
+
+        fn state(&self) -> Vec<String> {
+            self.sync
+                .linked()
+                .map(|(id, kind)| format!("{id:?} {kind:?} {:?}", self.sync.interpolated(id, 0.5)))
+                .collect()
+        }
+    }
+
+    fn push_once(world: &mut World, sync: &mut PhysicsSync) -> Vec<PhysicsCmd> {
+        let (mut cmds, mut diagnostics) = (Vec::new(), Vec::new());
+        push(
+            world,
+            sync,
+            &ShapeLibrary::default(),
+            &mut cmds,
+            &mut diagnostics,
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        cmds
+    }
+
+    /// A static body under a parent follows the parent once the World is
+    /// propagated: the push sees the parent's `GlobalTransform` change, not the
+    /// child's own components.
+    #[test]
+    fn a_static_body_follows_its_parent_once_propagated() {
+        let mut world = World::new();
+        let parent = world.ecs.spawn(Transform::default()).id();
+        world.ecs.spawn((
+            Transform::from_translation(Vec3::X),
+            Collider::default(),
+            ChildOf(parent),
+        ));
+        world.propagate();
+        let mut sync = PhysicsSync::new();
+        assert!(matches!(
+            push_once(&mut world, &mut sync)[..],
+            [PhysicsCmd::AddBody { .. }]
+        ));
+        assert!(push_once(&mut world, &mut sync).is_empty());
+        world.ecs.get_mut::<Transform>(parent).unwrap().translation = Vec3::Y;
+        // Until propagation, the parent's world pose is what it was.
+        assert!(push_once(&mut world, &mut sync).is_empty());
+        world.propagate();
+        let cmds = push_once(&mut world, &mut sync);
+        assert!(
+            matches!(cmds[..], [PhysicsCmd::SetTransform { pos, .. }] if pos == Vec3::new(1.0, 1.0, 0.0)),
+            "{cmds:?}"
+        );
+        assert!(push_once(&mut world, &mut sync).is_empty());
+    }
+
+    /// Removals the push did not read (the World's trackers cleared twice
+    /// since) make it look at every entity, so a despawned body still goes.
+    #[test]
+    fn missed_removals_make_the_push_look_at_everything() {
+        let mut world = World::new();
+        let e = world
+            .ecs
+            .spawn((Transform::default(), Collider::default()))
+            .id();
+        let kept = world
+            .ecs
+            .spawn((Transform::default(), Collider::default()))
+            .id();
+        let mut sync = PhysicsSync::new();
+        assert_eq!(push_once(&mut world, &mut sync).len(), 2);
+        world.ecs.despawn(e);
+        world.ecs.clear_trackers();
+        world.ecs.clear_trackers();
+        let cmds = push_once(&mut world, &mut sync);
+        assert!(
+            matches!(cmds[..], [PhysicsCmd::RemoveBody { id }] if id == entity_id(e)),
+            "{cmds:?}"
+        );
+        assert_eq!(
+            sync.kind(entity_id(kept)),
+            Some(LinkKind::Body(BodyKind::Static))
+        );
+        assert!(push_once(&mut world, &mut sync).is_empty());
+    }
+
+    /// The same when a parent's `GlobalTransform` went: its static child is
+    /// put where its parent's pose now puts it.
+    #[test]
+    fn a_missed_parent_pose_removal_makes_the_push_look_at_everything() {
+        let mut world = World::new();
+        let parent = world.ecs.spawn(Transform::from_translation(Vec3::Y)).id();
+        let child = world
+            .ecs
+            .spawn((Transform::default(), Collider::default(), ChildOf(parent)))
+            .id();
+        world.propagate();
+        let mut sync = PhysicsSync::new();
+        assert_eq!(push_once(&mut world, &mut sync).len(), 1);
+        world.ecs.entity_mut(parent).remove::<GlobalTransform>();
+        world.ecs.clear_trackers();
+        world.ecs.clear_trackers();
+        let cmds = push_once(&mut world, &mut sync);
+        assert!(
+            matches!(cmds[..], [PhysicsCmd::SetTransform { id, pos, .. }]
+                if id == entity_id(child) && pos == Vec3::ZERO),
+            "{cmds:?}"
+        );
+        assert!(push_once(&mut world, &mut sync).is_empty());
+    }
+
+    /// A moving body reparented where it stands (`e:set_parent(p)` keeps the
+    /// world pose by default, ADR-0057 §3) stays there and keeps its velocity:
+    /// the push sees the new parent and local transform and teleports the body
+    /// to the pose it has, which keeps its motion.
+    #[test]
+    fn a_body_reparented_in_place_keeps_its_pose_and_velocity() {
+        let mut world = World::new();
+        let a = world
+            .ecs
+            .spawn(Transform::from_translation(Vec3::new(1.0, 0.0, 0.0)))
+            .id();
+        let b = world
+            .ecs
+            .spawn(Transform {
+                translation: Vec3::new(-3.0, 2.0, 0.5),
+                rotation: Quat::from_rotation_y(0.7),
+                ..Transform::default()
+            })
+            .id();
+        let e = world
+            .ecs
+            .spawn((
+                Transform::from_translation(Vec3::new(0.0, 5.0, 0.0)),
+                RigidBody {
+                    kind: SceneBodyKind::Dynamic,
+                    ..RigidBody::default()
+                },
+                Collider::default(),
+                ChildOf(a),
+            ))
+            .id();
+        world.propagate();
+        let config = re_physics::PhysicsConfig {
+            gravity: Vec3::ZERO,
+            ..re_physics::PhysicsConfig::default()
+        };
+        let mut physics = re_physics::Physics::new(config, re_core::TaskPool::global()).unwrap();
+        let (mut sync, shapes) = (PhysicsSync::new(), ShapeLibrary::default());
+        let (mut cmds, mut diagnostics, mut poses) = (Vec::new(), Vec::new(), Vec::new());
+        let id = entity_id(e);
+        for step in 0..4 {
+            sync.begin_step();
+            push(&mut world, &mut sync, &shapes, &mut cmds, &mut diagnostics);
+            if step == 0 {
+                cmds.push(PhysicsCmd::SetVelocity {
+                    id,
+                    linear: Vec3::new(2.0, 0.0, 1.0),
+                    angular: Vec3::new(0.0, 0.5, 0.0),
+                });
+            }
+            physics.apply(&mut cmds);
+            physics.step(1.0 / 60.0).unwrap();
+            physics.poses_into(&mut poses);
+            pull(&mut world, &mut sync, &poses);
+            world.propagate();
+        }
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let (pos, rot) = physics.pose(id).unwrap();
+        let velocity = physics.velocity(id).unwrap();
+        assert!(velocity.0.length() > 1.0, "{velocity:?}");
+        // What `set_parent` does with the world pose kept.
+        let local =
+            world.ecs.get::<GlobalTransform>(b).unwrap().0.inverse() * world_affine(&world, e);
+        let (_, r, t) = local.to_scale_rotation_translation();
+        {
+            let mut tr = world.ecs.get_mut::<Transform>(e).unwrap();
+            tr.translation = t;
+            tr.rotation = r;
+        }
+        world.ecs.entity_mut(e).insert(ChildOf(b));
+        push(&mut world, &mut sync, &shapes, &mut cmds, &mut diagnostics);
+        let [
+            PhysicsCmd::SetTransform {
+                pos: to,
+                rot: turned,
+                ..
+            },
+        ] = cmds[..]
+        else {
+            panic!("{cmds:?}");
+        };
+        assert!(to.abs_diff_eq(pos, 1e-5), "{to} {pos}");
+        assert!(turned.abs_diff_eq(rot, 1e-5), "{turned} {rot}");
+        physics.apply(&mut cmds);
+        assert_eq!(physics.velocity(id), Some(velocity));
+        let (now, _) = physics.pose(id).unwrap();
+        assert!(now.abs_diff_eq(pos, 1e-5), "{now} {pos}");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+
+    /// The shape and pose an outline draws are the ones physics gets: a scaled
+    /// collider at the entity's world pose, and a character's capsule.
+    #[test]
+    fn shapes_and_poses_are_what_physics_gets() {
+        let mut world = World::new();
+        let parent = world
+            .ecs
+            .spawn(Transform::from_translation(Vec3::new(0.0, 2.0, 0.0)))
+            .id();
+        let body = world
+            .ecs
+            .spawn((
+                Transform {
+                    translation: Vec3::X,
+                    scale: Vec3::new(2.0, 1.0, 1.0),
+                    ..Transform::default()
+                },
+                Collider::default(),
+                ChildOf(parent),
+            ))
+            .id();
+        let character = world
+            .ecs
+            .spawn((
+                Transform::from_translation(Vec3::Z),
+                CharacterController::default(),
+            ))
+            .id();
+        let none = world.ecs.spawn(Transform::default()).id();
+        world.propagate();
+        let shapes = ShapeLibrary::default();
+        let (shape, pos, _) = shape_and_pose(&world, body, &shapes).unwrap();
+        assert_eq!(
+            shape,
+            ShapeDesc::Box {
+                half_extents: Vec3::new(1.0, 0.5, 0.5)
+            }
+        );
+        assert_eq!(pos, Vec3::new(1.0, 2.0, 0.0));
+        let (shape, pos, _) = shape_and_pose(&world, character, &shapes).unwrap();
+        let c = CharacterController::default();
+        assert_eq!(
+            shape,
+            ShapeDesc::Capsule {
+                half_height: c.height * 0.5 - c.radius,
+                radius: c.radius
+            }
+        );
+        assert_eq!(pos, Vec3::Z);
+        assert_eq!(shape_and_pose(&world, none, &shapes), None);
+        // The same shape the push adds.
+        let mut sync = PhysicsSync::new();
+        let cmds = push_once(&mut world, &mut sync);
+        assert!(
+            cmds.iter().any(|c| matches!(c, PhysicsCmd::AddBody { desc, .. }
+                if Some((desc.shape.clone(), desc.pos, desc.rot)) == shape_and_pose(&world, body, &shapes))),
+            "{cmds:?}"
+        );
+    }
+
+    /// `added` gathers what a step's pushes added, until the step ends.
+    #[test]
+    fn added_holds_a_steps_new_bodies() {
+        let mut world = World::new();
+        let a = world
+            .ecs
+            .spawn((Transform::default(), Collider::default()))
+            .id();
+        let mut sync = PhysicsSync::new();
+        push_once(&mut world, &mut sync);
+        let b = world
+            .ecs
+            .spawn((Transform::default(), Collider::default()))
+            .id();
+        push_once(&mut world, &mut sync);
+        assert_eq!(sync.added(), &BTreeSet::from([entity_id(a), entity_id(b)]));
+        // A body removed again within the step is not among them.
+        world.ecs.despawn(b);
+        push_once(&mut world, &mut sync);
+        assert_eq!(sync.added(), &BTreeSet::from([entity_id(a)]));
+        sync.end_step();
+        assert!(sync.added().is_empty());
+        push_once(&mut world, &mut sync);
+        assert!(sync.added().is_empty());
+    }
+
+    /// Whatever changes, the push that follows changes queues and reports what
+    /// a push looking at every entity does.
+    #[test]
+    fn the_push_follows_changes_as_a_look_at_everything_does() {
+        let mut commands = 0;
+        for seed in 1..=12u64 {
+            let mut changes = Side::new(seed, false);
+            let mut everything = Side::new(seed, true);
+            for round in 0..250 {
+                changes.edit();
+                everything.edit();
+                let a = changes.push();
+                let b = everything.push();
+                assert_eq!(a, b, "seed {seed}, round {round}");
+                commands += a.0.len();
+                changes.step();
+                everything.step();
+                assert_eq!(
+                    changes.state(),
+                    everything.state(),
+                    "seed {seed}, round {round}"
+                );
+            }
+        }
+        assert!(commands > 2000, "only {commands} commands");
     }
 }
