@@ -346,4 +346,6 @@ pub fn register(registry: &mut CommandRegistry<App>) {
         },
     );
     crate::animgraph::register(registry);
+    #[cfg(not(target_arch = "wasm32"))]
+    crate::documents::register(registry);
 }

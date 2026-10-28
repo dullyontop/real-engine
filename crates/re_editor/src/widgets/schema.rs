@@ -1162,6 +1162,42 @@ mod tests {
         Shape::of(&prop, &json!({}))
     }
 
+    /// The material file's schema, as `real schema` writes it: the Material
+    /// panel (ADR-0064) edits each key with these widgets.
+    #[test]
+    fn every_material_key_has_its_widget() {
+        let root: Json =
+            serde_json::from_str(include_str!("../../../../schemas/material.schema.json")).unwrap();
+        let shape = |key: &str| Shape::of(&root["properties"][key], &root);
+        let unit = Shape::Number {
+            range: (0.0, 1.0),
+            slider: true,
+            single: true,
+        };
+        assert_eq!(shape("base_color"), Shape::Colour { alpha: true });
+        assert_eq!(shape("emissive"), Shape::Colour { alpha: false });
+        for key in [
+            "base_color_texture",
+            "metallic_roughness_texture",
+            "normal_texture",
+        ] {
+            assert_eq!(
+                shape(key),
+                Shape::Nullable(Box::new(Shape::Asset("texture".into()))),
+                "{key}"
+            );
+        }
+        assert_eq!(shape("metallic"), unit);
+        assert_eq!(shape("roughness"), unit);
+        assert_eq!(shape("alpha_cutoff"), Shape::Nullable(Box::new(unit)));
+        assert!(matches!(shape("alpha_mode"), Shape::Choice(c) if c.len() == 3));
+        assert_eq!(shape("double_sided"), Shape::Bool);
+        assert!(matches!(
+            shape("emissive_strength"),
+            Shape::Number { range: (0.0, hi), slider: false, single: true } if hi.is_infinite()
+        ));
+    }
+
     #[test]
     fn each_kind_of_property_gets_its_widget() {
         assert_eq!(of(json!({"type": "boolean"})), Shape::Bool);

@@ -5,7 +5,7 @@ mod common;
 
 use std::path::Path;
 
-use re_assets::{AssetId, AssetMeta, load_material, load_material_in};
+use re_assets::{AssetId, AssetMeta, check_material, load_material, load_material_in};
 use re_types::render::{AlphaMode, MaterialDesc, TextureRef};
 
 const ROCK: &str = r#"{
@@ -154,4 +154,37 @@ fn unknown_key_and_bad_values_are_diagnostics() {
             .to_string(),
         "RE7001"
     );
+}
+
+/// `check_material` refuses what the loader refuses, without reading any
+/// file, so a material made by a command loads (ADR-0064).
+#[test]
+fn check_material_agrees_with_the_loader() {
+    let dir = project();
+    let valid: serde_json::Value = serde_json::from_str(ROCK).unwrap();
+    let file = check_material(&valid).unwrap();
+    assert_eq!(file.roughness, 0.9);
+    assert!(check_material(&serde_json::json!({})).is_ok());
+
+    let path = dir.path().join("materials/bad.material.json");
+    for (bad, says) in [
+        (r#"{ "colour": [1, 0, 0, 1] }"#, "unknown field `colour`"),
+        (r#"{ "roughness": 1.5 }"#, "material `roughness` is 1.5"),
+        (r#"{ "alpha_cutoff": -0.5 }"#, "material `alpha_cutoff`"),
+        (r#"{ "emissive": [0, -1, 0] }"#, "material `emissive`"),
+        (
+            r#"{ "emissive_strength": -2 }"#,
+            "material `emissive_strength`",
+        ),
+        (r#"{ "alpha_mode": "cutout" }"#, "unknown variant `cutout`"),
+    ] {
+        let why = check_material(&serde_json::from_str(bad).unwrap()).unwrap_err();
+        assert!(why.contains(says), "{bad}: {why}");
+        std::fs::write(&path, bad).unwrap();
+        let err = load_material_in(dir.path(), "materials/bad.material.json").unwrap_err();
+        assert!(err.message.contains(says), "{bad}: {}", err.message);
+    }
+    // A texture that does not exist is for the loader (and the commands) to
+    // find; the check reads nothing.
+    assert!(check_material(&serde_json::json!({ "normal_texture": "assets/none.png" })).is_ok());
 }

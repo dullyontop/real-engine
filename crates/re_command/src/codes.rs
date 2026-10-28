@@ -40,7 +40,25 @@ pub const INVALID_DOCUMENT: Code = Code::new("RE2008");
 /// file: a save removes only files the session made (ADR-0064).
 pub const DOCUMENT_FILE_KEPT: Code = Code::new("RE2050");
 
+/// A document command would make a file, or a name, that exists already
+/// (ADR-0064).
+pub const DOCUMENT_EXISTS: Code = Code::new("RE2051");
+
+/// A document command was given a path that is not of its kind (such as a
+/// material path not ending in `.material.json`), or outside the project
+/// (ADR-0064).
+pub const DOCUMENT_PATH: Code = Code::new("RE2052");
+
+/// A document names a file that does not exist, such as a material's texture
+/// (ADR-0064).
+pub const NAMED_FILE_MISSING: Code = Code::new("RE2054");
+
 /// A transaction would leave the World breaking the rule of what is being
 /// edited, such as one root and no `Procedural` while a prefab is open
 /// (ADR-0064), so it was rolled back.
 pub const WORLD_RULE: Code = Code::new("RE2056");
+
+/// A configuration key or value that `real.toml` cannot hold: a key that is
+/// not a dotted path of bare TOML keys and array indices, or a `null`
+/// (ADR-0064).
+pub const CONFIG_NOT_TOML: Code = Code::new("RE2057");

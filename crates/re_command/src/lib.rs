@@ -91,9 +91,29 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE2050.md"),
     },
     DiagInfo {
+        code: codes::DOCUMENT_EXISTS,
+        title: "The file or name exists",
+        page: include_str!("../explain/RE2051.md"),
+    },
+    DiagInfo {
+        code: codes::DOCUMENT_PATH,
+        title: "Not a path of the document's kind",
+        page: include_str!("../explain/RE2052.md"),
+    },
+    DiagInfo {
+        code: codes::NAMED_FILE_MISSING,
+        title: "A file the document names does not exist",
+        page: include_str!("../explain/RE2054.md"),
+    },
+    DiagInfo {
         code: codes::WORLD_RULE,
         title: "Transaction breaks the rule of what is being edited",
         page: include_str!("../explain/RE2056.md"),
+    },
+    DiagInfo {
+        code: codes::CONFIG_NOT_TOML,
+        title: "A configuration key or value real.toml cannot hold",
+        page: include_str!("../explain/RE2057.md"),
     },
 ];
 

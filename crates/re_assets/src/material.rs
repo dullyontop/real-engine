@@ -37,24 +37,33 @@ pub struct MaterialFile {
     #[serde(rename = "$schema", skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
     /// Linear RGBA base colour.
+    #[cfg_attr(feature = "schemars", schemars(extend("x-real-widget" = "colour")))]
     pub base_color: [f32; 4],
     /// Base colour texture path.
+    #[cfg_attr(feature = "schemars", schemars(extend("x-real-asset" = "texture")))]
     pub base_color_texture: Option<String>,
     /// Metalness in `[0, 1]`.
+    #[cfg_attr(feature = "schemars", schemars(range(min = 0.0, max = 1.0)))]
     pub metallic: f32,
     /// Perceptual roughness in `[0, 1]`.
+    #[cfg_attr(feature = "schemars", schemars(range(min = 0.0, max = 1.0)))]
     pub roughness: f32,
     /// Metallic (blue) and roughness (green) texture path.
+    #[cfg_attr(feature = "schemars", schemars(extend("x-real-asset" = "texture")))]
     pub metallic_roughness_texture: Option<String>,
     /// Tangent-space normal map path.
+    #[cfg_attr(feature = "schemars", schemars(extend("x-real-asset" = "texture")))]
     pub normal_texture: Option<String>,
     /// Linear RGB emissive colour.
+    #[cfg_attr(feature = "schemars", schemars(extend("x-real-widget" = "colour")))]
     pub emissive: [f32; 3],
     /// Multiplier for `emissive`.
+    #[cfg_attr(feature = "schemars", schemars(range(min = 0.0)))]
     pub emissive_strength: f32,
     /// `opaque`, `mask` or `blend`.
     pub alpha_mode: AlphaModeName,
     /// The alpha threshold of `mask` (0.5 when left out).
+    #[cfg_attr(feature = "schemars", schemars(range(min = 0.0, max = 1.0)))]
     pub alpha_cutoff: Option<f32>,
     /// Draw back faces too.
     pub double_sided: bool,
@@ -145,44 +154,13 @@ pub fn load_material_from(files: &ProjectFiles, path: &str) -> Result<MaterialDe
         None => Location::file(&rel),
     };
 
-    let out_of_range = |key: &str, why: String| {
+    check_ranges(&file).map_err(|(key, why)| {
         Diagnostic::error(
             codes::MATERIAL_VALUE_OUT_OF_RANGE,
             format!("material `{key}` {why}"),
         )
         .at(located(key))
-    };
-    for (key, v) in [("metallic", file.metallic), ("roughness", file.roughness)] {
-        if !(0.0..=1.0).contains(&v) {
-            return Err(out_of_range(key, format!("is {v}; it must be in [0, 1]")));
-        }
-    }
-    if let Some(c) = file.alpha_cutoff
-        && !(0.0..=1.0).contains(&c)
-    {
-        return Err(out_of_range(
-            "alpha_cutoff",
-            format!("is {c}; it must be in [0, 1]"),
-        ));
-    }
-    let colours = [
-        ("base_color", &file.base_color[..]),
-        ("emissive", &file.emissive[..]),
-    ];
-    for (key, values) in colours {
-        if values.iter().any(|v| !v.is_finite() || *v < 0.0) {
-            return Err(out_of_range(
-                key,
-                "has a negative or non-finite component".into(),
-            ));
-        }
-    }
-    if !file.emissive_strength.is_finite() || file.emissive_strength < 0.0 {
-        return Err(out_of_range(
-            "emissive_strength",
-            format!("is {}; it must be >= 0", file.emissive_strength),
-        ));
-    }
+    })?;
 
     let texture = |key: &str,
                    value: &Option<String>,
@@ -234,6 +212,50 @@ pub fn load_material_from(files: &ProjectFiles, path: &str) -> Result<MaterialDe
         double_sided: file.double_sided,
         unlit: file.unlit,
     })
+}
+
+/// Checks a material file's content as [`load_material_from`] does, without
+/// reading anything: its keys (an unknown one is refused) and the range of
+/// each value. It is the validator of open `*.material.json` documents
+/// (ADR-0064), so a material made or edited by a command loads.
+///
+/// # Errors
+///
+/// What is wrong, as the loader's message says it.
+pub fn check_material(value: &serde_json::Value) -> Result<MaterialFile, String> {
+    let file = MaterialFile::deserialize(value).map_err(|e| format!("invalid material: {e}"))?;
+    check_ranges(&file).map_err(|(key, why)| format!("material `{key}` {why}"))?;
+    Ok(file)
+}
+
+/// The first value of `file` outside its range: its key, and why.
+fn check_ranges(file: &MaterialFile) -> Result<(), (&'static str, String)> {
+    for (key, v) in [("metallic", file.metallic), ("roughness", file.roughness)] {
+        if !(0.0..=1.0).contains(&v) {
+            return Err((key, format!("is {v}; it must be in [0, 1]")));
+        }
+    }
+    if let Some(c) = file.alpha_cutoff
+        && !(0.0..=1.0).contains(&c)
+    {
+        return Err(("alpha_cutoff", format!("is {c}; it must be in [0, 1]")));
+    }
+    let colours = [
+        ("base_color", &file.base_color[..]),
+        ("emissive", &file.emissive[..]),
+    ];
+    for (key, values) in colours {
+        if values.iter().any(|v| !v.is_finite() || *v < 0.0) {
+            return Err((key, "has a negative or non-finite component".into()));
+        }
+    }
+    if !file.emissive_strength.is_finite() || file.emissive_strength < 0.0 {
+        return Err((
+            "emissive_strength",
+            format!("is {}; it must be >= 0", file.emissive_strength),
+        ));
+    }
+    Ok(())
 }
 
 /// The nearest ancestor directory of `file` holding a `real.toml`, or the file's

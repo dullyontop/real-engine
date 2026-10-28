@@ -25,7 +25,8 @@
         1.0,
         1.0,
         1.0
-      ]
+      ],
+      "x-real-widget": "colour"
     },
     "base_color_texture": {
       "description": "Base colour texture path.",
@@ -33,18 +34,23 @@
         "string",
         "null"
       ],
-      "default": null
+      "default": null,
+      "x-real-asset": "texture"
     },
     "metallic": {
       "description": "Metalness in `[0, 1]`.",
       "type": "number",
       "format": "float",
+      "minimum": 0.0,
+      "maximum": 1.0,
       "default": 0.0
     },
     "roughness": {
       "description": "Perceptual roughness in `[0, 1]`.",
       "type": "number",
       "format": "float",
+      "minimum": 0.0,
+      "maximum": 1.0,
       "default": 0.5
     },
     "metallic_roughness_texture": {
@@ -53,7 +59,8 @@
         "string",
         "null"
       ],
-      "default": null
+      "default": null,
+      "x-real-asset": "texture"
     },
     "normal_texture": {
       "description": "Tangent-space normal map path.",
@@ -61,7 +68,8 @@
         "string",
         "null"
       ],
-      "default": null
+      "default": null,
+      "x-real-asset": "texture"
     },
     "emissive": {
       "description": "Linear RGB emissive colour.",
@@ -76,12 +84,14 @@
         0.0,
         0.0,
         0.0
-      ]
+      ],
+      "x-real-widget": "colour"
     },
     "emissive_strength": {
       "description": "Multiplier for `emissive`.",
       "type": "number",
       "format": "float",
+      "minimum": 0.0,
       "default": 1.0
     },
     "alpha_mode": {
@@ -96,6 +106,8 @@
         "null"
       ],
       "format": "float",
+      "minimum": 0.0,
+      "maximum": 1.0,
       "default": null
     },
     "double_sided": {

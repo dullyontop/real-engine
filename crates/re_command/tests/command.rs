@@ -683,7 +683,7 @@ fn remote_channel_round_trip() {
 fn diagnostics_catalogue_is_complete() {
     let problems = re_core::validate_catalog(re_command::DIAGNOSTICS, re_command::CODE_RANGE);
     assert!(problems.is_empty(), "{problems:?}");
-    assert_eq!(re_command::DIAGNOSTICS.len(), 10);
+    assert_eq!(re_command::DIAGNOSTICS.len(), 14);
 }
 
 // Regression tests from the entity core PR review.

@@ -26,6 +26,8 @@ pub mod commands;
 pub mod compat;
 pub mod compat_view;
 pub mod config;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod documents;
 pub mod gfx;
 pub mod host;
 pub mod hud;
