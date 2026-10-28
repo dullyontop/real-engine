@@ -192,55 +192,70 @@ fn scatter(n: usize, area: f32, lane: f32) -> Vec<Tree> {
     trees
 }
 
-/// The cell holding `p`, and its corner.
-fn cell_of(p: Vec3) -> ((i32, i32), Vec3) {
-    let cell = (
+/// A cell, as its x and z on the grid of cells.
+type Cell = (i32, i32);
+
+/// The cell holding `p`.
+fn cell_of(p: Vec3) -> Cell {
+    (
         libm::floorf(p.x / CELL) as i32,
         libm::floorf(p.z / CELL) as i32,
-    );
-    (
-        cell,
-        Vec3::new(cell.0 as f32 * CELL, 0.0, cell.1 as f32 * CELL),
     )
 }
 
-/// One set per cell: its placements from the cell's corner in clusters of
-/// `cluster` metres, rows by z then x, and the corner.
-fn sets_by_cell(trees: &[Tree], cluster: f32) -> Vec<(Vec3, Vec<Placement>, Vec<InstanceCluster>)> {
+/// The corner of `cell`, its set's origin.
+fn corner(cell: Cell) -> Vec3 {
+    Vec3::new(cell.0 as f32 * CELL, 0.0, cell.1 as f32 * CELL)
+}
+
+/// A cell's instance set before upload.
+struct CellSet {
+    corner: Vec3,
+    /// From the corner, in cluster order.
+    placements: Vec<Placement>,
+    clusters: Vec<InstanceCluster>,
+}
+
+/// One set per cell, its placements in square clusters of `cluster` metres
+/// (rows by z then x), as a producer makes them.
+fn sets_by_cell(trees: &[Tree], cluster: f32) -> Vec<CellSet> {
     let side = if cluster > 0.0 {
         cluster.min(CELL)
     } else {
         CELL
     };
-    let mut cells: BTreeMap<(i32, i32), (Vec3, BTreeMap<(i32, i32), Vec<Placement>>)> =
-        BTreeMap::new();
+    // By cell, then by cluster: its z and x on the cell's grid of clusters.
+    let mut members: BTreeMap<(Cell, (i32, i32)), Vec<Placement>> = BTreeMap::new();
     for (id, t) in trees.iter().enumerate() {
-        let (cell, corner) = cell_of(t.position);
-        let local = t.position - corner;
+        let cell = cell_of(t.position);
+        let local = t.position - corner(cell);
         let key = (
             libm::floorf(local.z / side) as i32,
             libm::floorf(local.x / side) as i32,
         );
-        cells
-            .entry(cell)
-            .or_insert_with(|| (corner, BTreeMap::new()))
-            .1
-            .entry(key)
+        members
+            .entry((cell, key))
             .or_default()
             .push(Placement::new(local, t.rotation, t.scale, id as u32));
     }
-    cells
-        .into_values()
-        .map(|(corner, clusters)| {
-            let mut placements = Vec::new();
-            let mut bounds = Vec::new();
-            for members in clusters.into_values() {
-                bounds.push(InstanceCluster::of(&members).expect("a cluster has members"));
-                placements.extend(members);
-            }
-            (corner, placements, bounds)
-        })
-        .collect()
+    let mut sets: Vec<(Cell, CellSet)> = Vec::new();
+    for ((cell, _), placements) in members {
+        if sets.last().is_none_or(|(c, _)| *c != cell) {
+            sets.push((
+                cell,
+                CellSet {
+                    corner: corner(cell),
+                    placements: Vec::new(),
+                    clusters: Vec::new(),
+                },
+            ));
+        }
+        let (_, set) = sets.last_mut().expect("pushed above");
+        set.clusters
+            .push(InstanceCluster::of(&placements).expect("a cluster has members"));
+        set.placements.extend(placements);
+    }
+    sets.into_iter().map(|(_, set)| set).collect()
 }
 
 fn arg<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
@@ -435,17 +450,17 @@ fn main() {
             }
         }
     } else {
-        for (corner, placements, bounds) in sets_by_cell(&trees, cluster) {
-            clusters += bounds.len();
+        for cell in sets_by_cell(&trees, cluster) {
+            clusters += cell.clusters.len();
             let start = Instant::now();
             let set = renderer
-                .upload_instance_set(&placements, &bounds)
+                .upload_instance_set(&cell.placements, &cell.clusters)
                 .unwrap_or_else(|d| panic!("{}", d.render_human()));
             upload += start.elapsed();
             snapshot.instance_sets.push(InstanceSet {
                 entity: EntityId(2),
                 set,
-                transform: Mat4::from_translation(corner),
+                transform: Mat4::from_translation(cell.corner),
                 parts: parts.clone(),
                 flags,
             });
