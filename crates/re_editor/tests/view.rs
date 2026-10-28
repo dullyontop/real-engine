@@ -277,6 +277,16 @@ fn the_camera_moves_without_editing_the_scene_and_is_saved() {
     let back = camera(&ed);
     assert!(close(back.eye(), zoomed.eye(), 1e-4) && close(back.pivot, zoomed.pivot, 1e-4));
     assert!(ed.editor.view_settings().game_camera);
+
+    // A camera that is not finite is replaced by the starting one, where the
+    // game's camera is, and never written.
+    ed.editor.set_camera(EditorCamera {
+        distance: f32::NAN,
+        ..back
+    });
+    frames(&mut ed, &mut app, 1);
+    assert!(close(camera(&ed).eye(), Vec3::new(0.0, 5.0, 12.0), 1e-4));
+    assert!(saved_camera(dir.path()).is_some_and(|c| c.is_finite()));
 }
 
 /// While the right button is held, W, A, S, D, Q and E fly the camera and
