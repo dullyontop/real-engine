@@ -30,6 +30,7 @@ pub struct ParamsArgs {
     pub source: Option<String>,
     /// A graph file, relative to the project: its params and their defaults.
     #[serde(default)]
+    #[schemars(extend("x-real-path" = "read"))]
     pub graph: Option<String>,
 }
 
@@ -38,6 +39,7 @@ pub struct ParamsArgs {
 #[serde(deny_unknown_fields)]
 pub struct DeclareParamArgs {
     /// The graph file, relative to the project.
+    #[schemars(extend("x-real-path" = "write"))]
     pub graph: String,
     /// The param's name: letters, digits and `_`, starting with a letter, at
     /// most 64 bytes. A declaration of that name is replaced where it is;
@@ -73,6 +75,7 @@ pub struct DeclareParamArgs {
 #[serde(deny_unknown_fields)]
 pub struct RemoveParamArgs {
     /// The graph file, relative to the project.
+    #[schemars(extend("x-real-path" = "write"))]
     pub graph: String,
     /// The param's name.
     pub name: String,
