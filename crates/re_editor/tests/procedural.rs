@@ -1,6 +1,8 @@
-//! The Procedural panel (ADR-0044 amendment §3), driven with the pointer:
-//! the seed scrubber sends one `graph.regenerate` per release, overrides are
-//! edited with their parameter's widget, and the picker adds one.
+//! The Procedural panel (ADR-0044 amendment §3 and §8), driven with the
+//! pointer: the seed scrubber sends one `graph.regenerate` per release,
+//! overrides are edited with their parameter's widget, the picker adds one,
+//! and a source's structural and deletion overrides are cleared and
+//! restored from their rows.
 //!
 //! These tests need a GPU adapter (lavapipe in CI); run them with
 //! `--test-threads=1`.
@@ -9,7 +11,7 @@ use std::cell::RefCell;
 use std::path::Path;
 
 use re_app::{App, AppConfig};
-use re_command::{AllowAll, CommandSpec, PolicyCheck};
+use re_command::{AllowAll, CommandSpec, Origin, PolicyCheck};
 use re_core::Diagnostic;
 use re_editor::layout::PanelId;
 use re_editor::{HeadlessEditor, Panel, ProceduralSpot};
@@ -492,4 +494,115 @@ fn an_override_of_another_type_is_shown_as_json_text() {
         idle(&mut ed, &mut app);
     }
     assert_eq!(lines_with(&ed, "RE8850"), 2, "reported once");
+}
+
+/// Runs `name` as the person would, through the App (the edit frame
+/// regenerates).
+fn run(app: &mut App, name: &str, args: Json) {
+    let out = app.dispatch(name, args, false, &AllowAll, Origin::User);
+    assert!(out.ok, "{name}: {:#?}", out.diagnostics);
+}
+
+/// The ids of the entities the island generates.
+fn generated(app: &App) -> Vec<String> {
+    let mut ids: Vec<String> = app
+        .world()
+        .ids()
+        .iter()
+        .map(|(id, _)| id.to_string())
+        .filter(|id| id.starts_with("island/"))
+        .collect();
+    ids.sort();
+    ids
+}
+
+#[test]
+fn structural_and_deletion_overrides_are_cleared_and_restored_from_their_rows() {
+    let dir = project("{}");
+    let mut app = open(dir.path());
+    let mut ed = editor(&mut app);
+    let before = generated(&app);
+    let id = before
+        .first()
+        .expect("the island generates an entity")
+        .clone();
+    let key = id.strip_prefix("island/").unwrap().to_string();
+    assert!(
+        ed.editor
+            .procedural_spot(ProceduralSpot::Kept("island", &key, "Restore"))
+            .is_none(),
+        "nothing kept yet"
+    );
+
+    // A deletion and an insert.
+    run(&mut app, "entity.delete", json!({ "id": id }));
+    run(
+        &mut app,
+        "proc.insert",
+        json!({ "source": "island", "key": "lamp", "components": { "Transform": {} } }),
+    );
+    assert!(!generated(&app).contains(&id));
+    assert!(generated(&app).contains(&"island/+lamp".to_string()));
+    for _ in 0..2 {
+        idle(&mut ed, &mut app);
+    }
+    let steps = log_len(&app);
+    assert!(
+        ed.editor
+            .procedural_spot(ProceduralSpot::Kept("island", &key, "Clear"))
+            .is_none(),
+        "a deletion has no Clear"
+    );
+
+    // "Restore" brings the deleted entity back: one proc.revert, one step.
+    let restore = spot(&ed, ProceduralSpot::Kept("island", &key, "Restore"));
+    assert_eq!(
+        clicked(&mut ed, &mut app, restore),
+        [(
+            "proc.revert".to_string(),
+            json!({ "source": "island", "key": key })
+        )]
+    );
+    assert!(generated(&app).contains(&id));
+    assert_eq!(log_len(&app), steps + 1);
+    assert!(
+        ed.editor
+            .procedural_spot(ProceduralSpot::Kept("island", &key, "Restore"))
+            .is_none()
+    );
+
+    // "Clear" removes the insert.
+    let clear = spot(&ed, ProceduralSpot::Kept("island", "+lamp", "Clear"));
+    assert_eq!(
+        clicked(&mut ed, &mut app, clear),
+        [(
+            "proc.clear_structure".to_string(),
+            json!({ "source": "island", "key": "+lamp" })
+        )]
+    );
+    assert_eq!(generated(&app), before);
+    assert_eq!(log_len(&app), steps + 2);
+    assert!(
+        ed.editor
+            .procedural_spot(ProceduralSpot::Kept("island", "+lamp", "Clear"))
+            .is_none()
+    );
+
+    // Undo lists them again.
+    for _ in 0..2 {
+        assert!(ed.editor.undo(&mut app, &AllowAll).ok);
+    }
+    for _ in 0..2 {
+        idle(&mut ed, &mut app);
+    }
+    assert!(
+        ed.editor
+            .procedural_spot(ProceduralSpot::Kept("island", &key, "Restore"))
+            .is_some()
+    );
+    assert!(
+        ed.editor
+            .procedural_spot(ProceduralSpot::Kept("island", "+lamp", "Clear"))
+            .is_some()
+    );
 }

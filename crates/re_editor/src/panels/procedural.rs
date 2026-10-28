@@ -19,6 +19,12 @@
 //! override yet, then the parameter's widget, starting from the value the
 //! source uses now; "Set" sends `graph.set_param`. Builder sources work the
 //! same, on the graph their script built.
+//!
+//! A source's structural overrides (moved, replaced, inserted) and deletion
+//! overrides are listed by key (ADR-0044 amendment §8), with "Clear"
+//! (`proc.clear_structure {source, key}`) for a key's structural ones and
+//! "Restore" (`proc.revert {source, key}`) for a deletion: one command, so
+//! one undo step, each.
 
 use std::collections::HashSet;
 
@@ -27,7 +33,8 @@ use re_app::App;
 use re_core::Location;
 use re_proc::{GraphStore, NodeDef, NodeRegistry};
 use re_reflect::{FieldType, Value};
-use re_scene::{Entity, World};
+use re_scene::structure::Replacement;
+use re_scene::{Entity, OverrideDoc, Overrides, World};
 use re_types::graph::GraphDoc;
 use serde_json::{Map, Value as Json, json};
 
@@ -62,6 +69,10 @@ pub enum ProceduralSpot<'a> {
     /// open), `"Set"`, and `"value"`, the value's widget, with its parts
     /// after a slash (`"value/=ridged"`).
     Picker(&'a str, &'a str),
+    /// A button by one key of a source's structural and deletion overrides:
+    /// `(source, key, button)`, where the button is `"Clear"` (the key's
+    /// structural overrides) or `"Restore"` (its deletion).
+    Kept(&'a str, &'a str, &'a str),
 }
 
 impl ProceduralSpot<'_> {
@@ -74,6 +85,7 @@ impl ProceduralSpot<'_> {
                 format!("proc\u{1f}override\u{1f}{s}\u{1f}{n}\u{1f}{p}\u{1f}{part}")
             }
             ProceduralSpot::Picker(s, part) => format!("proc\u{1f}picker\u{1f}{s}\u{1f}{part}"),
+            ProceduralSpot::Kept(s, k, b) => format!("proc\u{1f}kept\u{1f}{s}\u{1f}{k}\u{1f}{b}"),
         }
     }
 }
@@ -144,8 +156,134 @@ pub(super) fn graph(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut
                 {
                     graph_params(ed, ui, app, id, &assets, actions);
                 }
+                if let Some(overrides) = world.ecs.get::<Overrides>(e) {
+                    kept_rows(&mut ed.pending, ui, app, id, overrides, actions);
+                }
             });
     }
+}
+
+/// One key of a source's structural and deletion overrides, as the panel
+/// lists it.
+#[derive(Debug, PartialEq)]
+struct Kept {
+    key: String,
+    /// What its overrides do, in the order of the source's list.
+    what: Vec<String>,
+    /// It has a structural override ("Clear").
+    structural: bool,
+    /// It has a deletion override ("Restore").
+    deleted: bool,
+}
+
+/// The keys of `overrides`' structural and deletion overrides, in the order
+/// the list first names each.
+fn kept(overrides: &Overrides) -> Vec<Kept> {
+    let under = |parent: Option<&str>| match parent {
+        Some(p) => format!("under `{p}`"),
+        None => "under the source".to_string(),
+    };
+    let with = |r: &Replacement| match r {
+        Replacement::Prefab(p) => p.clone(),
+        Replacement::Components(c) if c.is_empty() => "no components".to_string(),
+        Replacement::Components(c) => c.keys().map(String::as_str).collect::<Vec<_>>().join(", "),
+    };
+    let mut out: Vec<Kept> = Vec::new();
+    for o in &overrides.0 {
+        let what = match o {
+            OverrideDoc::Field { .. } => continue,
+            OverrideDoc::Deleted { .. } => "deleted".to_string(),
+            OverrideDoc::Moved { to, .. } => match to.index {
+                Some(i) => format!("moved {} at {i}", under(to.parent.as_deref())),
+                None => format!("moved {}", under(to.parent.as_deref())),
+            },
+            OverrideDoc::Replaced { replace, .. } if replace.keep_children => {
+                format!(
+                    "replaced with {}, keeping its children",
+                    with(&replace.with)
+                )
+            }
+            OverrideDoc::Replaced { replace, .. } => {
+                format!("replaced with {}", with(&replace.with))
+            }
+            OverrideDoc::Inserted { insert, .. } => format!(
+                "inserted {}: {}",
+                under(insert.parent.as_deref()),
+                with(&insert.with)
+            ),
+        };
+        let key = o.target();
+        let at = match out.iter().position(|k| k.key == key) {
+            Some(at) => at,
+            None => {
+                out.push(Kept {
+                    key: key.to_string(),
+                    what: Vec::new(),
+                    structural: false,
+                    deleted: false,
+                });
+                out.len() - 1
+            }
+        };
+        let k = &mut out[at];
+        k.what.push(what);
+        if matches!(o, OverrideDoc::Deleted { .. }) {
+            k.deleted = true;
+        } else {
+            k.structural = true;
+        }
+    }
+    out
+}
+
+/// Source `id`'s structural and deletion overrides, by key, with "Clear"
+/// and "Restore"; nothing when it keeps none.
+fn kept_rows(
+    pending: &mut Pending,
+    ui: &mut egui::Ui,
+    app: &App,
+    id: &str,
+    overrides: &Overrides,
+    actions: &mut Vec<Action>,
+) {
+    let kept = kept(overrides);
+    if kept.is_empty() {
+        return;
+    }
+    let can_clear = app.commands().spec("proc.clear_structure").is_some();
+    let can_restore = app.commands().spec("proc.revert").is_some();
+    egui::CollapsingHeader::new(format!("Structure and deletions ({})", kept.len()))
+        .id_salt(("re_editor.kept", id))
+        .default_open(true)
+        .show(ui, |ui| {
+            for k in &kept {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(&k.key).monospace());
+                    ui.label(k.what.join(", "));
+                    let mut button = |ui: &mut egui::Ui, text, can: bool, hover, name: &str| {
+                        let r = ui
+                            .add_enabled(can, egui::Button::new(text))
+                            .on_hover_text(hover)
+                            .on_disabled_hover_text(format!(
+                                "{name} is not registered in this build"
+                            ));
+                        record(pending, ProceduralSpot::Kept(id, &k.key, text), r.rect);
+                        if r.clicked() {
+                            actions.push(command(name, json!({ "source": id, "key": k.key })));
+                        }
+                    };
+                    if k.structural {
+                        let hover = "Remove this key's structural overrides (proc.clear_structure)";
+                        button(ui, "Clear", can_clear, hover, "proc.clear_structure");
+                    }
+                    if k.deleted {
+                        let hover =
+                            "Bring the entity back as the source generates it (proc.revert)";
+                        button(ui, "Restore", can_restore, hover, "proc.revert");
+                    }
+                });
+            }
+        });
 }
 
 /// What the procedural tools draw over the viewport and the pointer input
@@ -895,6 +1033,68 @@ fn set_param(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kept_overrides_are_listed_by_key_with_what_they_do() {
+        use re_scene::structure::{Insert, Move, Replace};
+        let overrides = Overrides(vec![
+            OverrideDoc::Field {
+                target: "b".into(),
+                component: "Transform".into(),
+                field: "scale".into(),
+                value: re_reflect::Doc::Null,
+            },
+            OverrideDoc::Moved {
+                target: "b".into(),
+                to: Move {
+                    parent: Some("a".into()),
+                    index: Some(0),
+                },
+            },
+            OverrideDoc::Deleted { target: "c".into() },
+            OverrideDoc::Inserted {
+                target: "+lamp".into(),
+                insert: Insert {
+                    parent: None,
+                    index: None,
+                    name: None,
+                    with: Replacement::Prefab("prefabs/lamp.prefab.json".into()),
+                },
+            },
+            OverrideDoc::Deleted { target: "b".into() },
+            OverrideDoc::Replaced {
+                target: "d".into(),
+                replace: Replace {
+                    with: Replacement::Components(Default::default()),
+                    keep_children: true,
+                },
+            },
+        ]);
+        let kept = kept(&overrides);
+        let listed: Vec<(&str, String, bool, bool)> = kept
+            .iter()
+            .map(|k| (k.key.as_str(), k.what.join(", "), k.structural, k.deleted))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                ("b", "moved under `a` at 0, deleted".to_string(), true, true),
+                ("c", "deleted".to_string(), false, true),
+                (
+                    "+lamp",
+                    "inserted under the source: prefabs/lamp.prefab.json".to_string(),
+                    true,
+                    false
+                ),
+                (
+                    "d",
+                    "replaced with no components, keeping its children".to_string(),
+                    true,
+                    false
+                ),
+            ]
+        );
+    }
 
     fn params(action: Action) -> String {
         match action {
