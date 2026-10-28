@@ -65,7 +65,7 @@ The M1, M2 and M3 ownership rules carry over, with these changes:
   - `re_proc` (except the files WP40 and WP41 own), `re_geom/src/terrain/`, `crates/re_cli/src/graph.rs` and `crates/re_app/src/procedural.rs` to WP39;
   - `re_proc/src/graph.rs`, `canon.rs` and `migrate.rs`, the subgraph machinery it adds, and `re_script/src/generator/` to WP40;
   - `re_geom` (except `src/terrain/`) and the modelling node kinds it adds under `re_proc/src/nodes/` to WP41;
-  - `re_editor` to WP42, which shares it with WP43: WP43 owns `canvas.rs`, the procedural panel and the new asset, material and prefab panels;
+  - `re_editor` to WP42, which shares it with WP43: WP42's PR "split panels" makes `panels.rs` a module per panel (`src/panels/`), and WP43 owns `canvas.rs`, `src/widgets.rs` (the field widgets), `src/panels/procedural.rs` and the new asset, material and prefab panels;
   - `re_agent`, `re_mcp`, `re_cli/src/tooling/{mcp,agent}.rs`, `templates/`, the new `docs/guide/` and the new `real test` and `real doctor` commands to WP44;
   - `re_audio` and `re_anim` to WP45;
   - `re_net` and `re_compat/src/net/` to WP46;
@@ -78,7 +78,6 @@ The M1, M2 and M3 ownership rules carry over, with these changes:
   - WP34's `Joint`, `Trigger` and `PhysicsMaterial` components in `re_scene` and its additions to `re_types/src/physics.rs` (the maintainer reviews), and compat's joints mapped onto native joints (WP47 reviews);
   - WP35's new host calls in `re_types::HostServices`, added as provided methods with a default body, as in M2 (the maintainer reviews);
   - WP36's compat GUI on `re_ui` (WP47 reviews) and its UI components in `re_scene` (the maintainer reviews);
-  - WP38's `world.instantiate` binding in `re_script` (WP35 reviews);
   - WP39's metre UVs in `re_geom/src/terrain/` and the `terrain.layers` node, which WP33's terrain material reads (WP33 reviews the data shape);
   - WP42's id buffer for picking in `re_render` (WP32 reviews) and its play session in `crates/re_app/src/play.rs` (the maintainer reviews);
   - WP43's document commands (`material.*`, `prefab.*`, `scene.new`, `scene.open`, `config.*`) in `re_command` and `re_app` (the maintainer reviews);
@@ -92,7 +91,7 @@ The M1, M2 and M3 common rules hold, with these changes and additions:
 - **CI.** A WP iterates locally and keeps its PR a draft, which runs no CI, until `cargo fmt`, clippy (desktop and `wasm32` where the runtime changes) and the tests of the crates it touched pass in the reference container; marking the PR ready starts its run. CI is free while the repository is public, but a red run still costs a cycle, so fix-ups are batched and nothing is pushed only to rerun CI. A PR is squash-merged when every check its last run started is green, as ADR-0023's amendment of 2026-10-28 says.
 - **Three platforms.** While the repository is public, every PR that changes code runs the Windows and macOS checks and `d2` again (from the maintainer's first M4 PR). If it goes private again, ADR-0023's amendment of 2026-10-27 applies: a PR that changes simulation, physics, procedural output, script scheduling or platform-specific code gets one green `platforms.yml` run on its final head before it merges. Either way, each WP's definition of done includes green Windows and macOS checks on its last PR.
 - **D2 is kept.** `cargo xtask d2` compares the island's, plaza's, valley's and (from WP48's first PR) the town's replays across the three platforms. A WP that changes simulation keeps those hashes, or re-records them in the same PR with the reason; a new simulated feature adds a replay that exercises it.
-- **Diagnostic codes.** The new crate `re_ui` gets `RE7700`–`RE7799` (WP36 adds it to ARCHITECTURE §7 and `tools/xtask/src/explain.rs`). Where two WPs share a crate, they split its free codes: `re_render` WP32 `RE6042`–`RE6099`, WP33 `RE6100`–`RE6199`; `re_proc` WP39 `RE4030`–`RE4099` and `RE4311`–`RE4399`, WP40 `RE4200`–`RE4299`, WP41 `RE4150`–`RE4199` (and `re_geom`'s `RE4510`–`RE4599`); `re_script` WP35 `RE3016`–`RE3069`, WP37 `RE3100`–`RE3149`, WP40 `RE3150`–`RE3199`, WP44 `RE3250`–`RE3299`; `re_editor` WP42 `RE8805`–`RE8849`, WP43 `RE8850`–`RE8899`; `re_command` WP38 `RE2009`–`RE2049`, WP43 `RE2050`–`RE2099`; `re_app` WP35 `RE0530`–`RE0569`, WP37 `RE0570`–`RE0599`, WP42 `RE0650`–`RE0699`; `re_cli` WP44 `RE0904`–`RE0949`, WP31 `RE0976`–`RE0989`. Other WPs use the free codes of the crates they own. Every code has an explain page.
+- **Diagnostic codes.** The new crate `re_ui` gets `RE7700`–`RE7799` (WP36 adds it to ARCHITECTURE §7 and `tools/xtask/src/explain.rs`). Where two WPs share a crate, they split its free codes: `re_render` WP32 `RE6042`–`RE6099`, WP33 `RE6100`–`RE6199`; `re_proc` WP39 `RE4030`–`RE4099` and `RE4311`–`RE4399`, WP40 `RE4200`–`RE4299`, WP41 `RE4150`–`RE4199` (and `re_geom`'s `RE4510`–`RE4599`); `re_script` WP35 `RE3016`–`RE3069`, WP37 `RE3100`–`RE3149`, WP40 `RE3150`–`RE3199`, WP44 `RE3250`–`RE3299`; `re_editor` WP42 `RE8805`–`RE8849`, WP43 `RE8850`–`RE8899`; `re_command` WP38 `RE2009`–`RE2049`, WP43 `RE2050`–`RE2099`; `re_app` WP35 `RE0530`–`RE0569`, WP37 `RE0570`–`RE0599`, WP42 `RE0650`–`RE0699`, WP32 `RE0700`–`RE0719`; `re_cli` WP44 `RE0904`–`RE0949`, WP31 `RE0976`–`RE0989`. Other WPs use the free codes of the crates they own. Every code has an explain page.
 - **Native first.** A gameplay feature lands on the native API, and the compat layer maps onto it where a compat member exists (joints, particles, UI); no new behaviour exists only in compat.
 - **The web build stays inside its budget.** A PR that grows the runtime says by how much in its description, and `build-web` fails over the budget, as now.
 - **The user guide is kept true.** Once WP44's PR "guides" has merged, a PR that changes a feature the guide describes updates the guide in the same PR, and the generated reference is regenerated (its CI check fails otherwise).
@@ -117,7 +116,7 @@ A contract is **frozen** at the point named here. After that, changing it follow
 | `graph.inspect`: the per-node images and statistics it returns | `crates/re_proc/src/commands.rs` | WP39 | WP39 PR "inspect" | WP43 (previews), WP44 (the AI track) |
 | GraphDoc v2: graph params, declared outputs, subgraphs, multiple outputs and point attributes | `crates/re_proc/src/graph.rs`, `schemas/graph.schema.json` | WP40 | WP40 PR "params" | WP39, WP41, WP43 (canvas), WP44 (reference), `templates/` |
 | The modelling port type `PolyMesh` and its attribute model | `crates/re_geom/`, `crates/re_proc/src/value.rs` | WP41 | WP41 PR "polymesh" | WP40, WP48 |
-| The play session: a forked world stepped frame by frame in the editor | `crates/re_app/src/play.rs` | WP42 | WP42 PR "play" | WP35 (recording), WP44 (watches and approvals) |
+| The play session: a forked world stepped frame by frame in the editor; `re_app::play::PlaySession` and the `play.status` JSON (ADR-0063 §9) | `crates/re_app/src/play.rs` | WP42 | WP42 PR "play" | WP35 (recording), WP44 (watches and approvals) |
 | Recorded replays: what `real run --record` writes, and the replay seed it honours | `crates/re_types/src/replay.rs` | WP35 | WP35 PR "record" | WP42, WP44, WP48 |
 | Versions and build ids: `real --version`, the build id in `runtime.json`, crash reports and notices, and the tag check | `crates/re_cli/`, `crates/re_app/src/package/` | WP31 | WP31 PR "version" | WP44 (`real doctor`), WP46 (transport version) |
 | Secure transport: the Noise handshake, join codes, transport version 2 and the `[net]` keys | `crates/re_net/src/`, `docs/ARCHITECTURE.md` (networking section) | WP46 | WP46 PR "secure" | WP47 (compat sessions) |
@@ -315,15 +314,17 @@ cargo xtask d2 --project examples/valley --json
 
 **Owned paths:** `crates/re_script/` except `src/generator/`, `src/debug/` and WP37's new files; `engine.d.luau` and its snapshot; the host glue in `re_app` and new `re_types::HostServices` calls through the maintainer.
 
-**Starts after:** ADR-0057. PR "spawn" needs WP38 PR "prefabs". The sample game's first PR brings seeded `math.random` and `os.clock`, `physics.set_velocity`, `time.set_scale` and HUD text colours; WP35 builds on it, and coordinates with that thread if it has not merged yet.
+**Starts after:** ADR-0057, and the maintainer's split of `app.rs` (every WP35 PR edits `re_app`). PR "spawn" needs WP38's PRs "prefabs" and "ids". The sample game's first PR (#191) brought seeded `math.random` and `os.clock`, `physics.set_velocity`, `time.set_scale` and HUD text colours, and with them the replay's `seed` (F9) and pause as a time scale of zero (F7); WP35 builds on it. ADR-0057 §13 gives the order of the PRs below.
 
-**Build, PR "correctness":** render interpolation for the children of moving bodies, and a late camera hook, so a camera follows the drawn pose instead of the last step's (gameplay audit B2); HUD text in the same frame, bounded script output, and every line logged once (B4, B5); the `engine.d.luau` header (B9); and the replay's `seed` used (F9), unless the sample game's PR has done it.
+**Build, PR "correctness":** render interpolation for the children of moving bodies, and a late camera hook, so a camera follows the drawn pose instead of the last step's (gameplay audit B2); HUD text in the same frame, bounded script output, and every line logged once (B4, B5); the `engine.d.luau` header (B9); and default bodies for the host calls #191 added.
+
+**Build, PR "budget":** a script call's budget counted in safepoints, as generators count theirs, with the wall clock only as a backstop (F21; an ADR-0011 amendment).
 
 **Build, PR "world":** `Entity:world_transform()` (F13), reparenting, tags and attributes on entities, and typed script events (`events.define`, `fire` and `connect`), dispatched in a fixed order.
 
-**Build, PR "spawn":** `world.instantiate(path, {parent, transform, overrides})` over WP38's `World::instantiate`, with ids from the seeded `IdGen`, so spawns at run time repeat in replays (F5).
+**Build, PR "spawn":** `world.instantiate(path, {parent, transform, overrides})` over WP38's `World::instantiate`, with ids from the seeded `IdGen`, so spawns at run time repeat in replays (F5). WP35 builds the binding, and WP38 reviews its use of `World::instantiate`.
 
-**Build, PR "input and time":** cursor lock and hide (F3), raw key and mouse queries, `game.quit()`, pause as a time scale of zero that stops the fixed steps (F7, unless the sample game's PR covers it), and `camera.world_to_screen` and `camera.screen_to_ray`.
+**Build, PR "input and time":** cursor lock and hide (F3), raw key and mouse queries, `game.quit()`, and `camera.world_to_screen` and `camera.screen_to_ray`.
 
 **Build, PR "audio control":** stop, pause, resume, seek and fade for sources and one-shot handles, over the audio commands that exist.
 
@@ -346,7 +347,7 @@ cargo test --locked -p re_app
 - `real run --record` during a run driven by an input replay writes a replay that `real verify` plays back to the same `state_hash`.
 - `engine.d.luau`'s snapshot lists every new function with its types.
 
-**Definition of done:** the eight PRs merged; ADR-0057 accepted.
+**Definition of done:** the nine PRs merged; ADR-0057 and its ADR-0011 amendment accepted.
 
 ---
 
@@ -626,7 +627,7 @@ xvfb-run -a target/release/real editor --frames 120 --project examples/island
 
 **Goal.** The node canvas becomes where a graph is tuned (typed widgets, previews, timings, seed thumbnails, builder graphs shown read-only, override markers and spline handles), and every document a game needs (materials, prefabs, scenes and `real.toml`) is made and edited through commands and the editor, with an asset browser and drag and drop.
 
-**Owned paths:** `crates/re_editor/src/canvas.rs`, the Procedural panel, and the new asset, material and prefab panels in `re_editor`; the document commands in `re_command` and `re_app` (the maintainer reviews).
+**Owned paths:** `crates/re_editor/src/canvas.rs`, `src/widgets.rs`, `src/panels/procedural.rs`, and the new asset, material and prefab panels in `re_editor`; the document commands in `re_command` and `re_app` (the maintainer reviews).
 
 **Starts after:** WP42 PR "picking" and WP39 PR "inspect"; the ADR-0044 amendment (previews) for "parameters", "previews" and "builder graphs"; ADR-0064 for "documents" and "assets".
 
@@ -806,7 +807,7 @@ cargo run --release --locked -p re_compat --example bigmap -- --parts 250000 --f
 
 **Owned paths:** `examples/town/`, and its steps in CI through WP31.
 
-**Starts after:** the sample game's first PR has merged. Each PR below starts once the features it uses have merged.
+**Starts after:** the sample game's first PR, which merged as #191 on 2026-10-28; the sample game's thread runs WP48 from there. Each PR below starts once the features it uses have merged.
 
 **Build, PR "menus and saves":** a title menu, a pause menu, a settings screen and a results screen (WP36 PR "screens"); best scores saved in slots and settings kept (WP37); key rebinding; the cursor locked while driving (WP35).
 
