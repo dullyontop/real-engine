@@ -103,6 +103,21 @@ impl GameAccess for FakeGame {
     fn is_kept(&self, id: &str) -> bool {
         self.kept.contains(id)
     }
+    // The save library has its own tests (tests/saves.rs).
+    fn save_version(&self) -> u32 {
+        1
+    }
+    fn save_write(&mut self, _: &str, _: i64, _: serde_json::Value) {}
+    fn save_read(&mut self, _: &str) -> Option<re_script::SaveSlot> {
+        None
+    }
+    fn save_exists(&mut self, _: &str) -> bool {
+        false
+    }
+    fn save_list(&mut self) -> Vec<re_script::SaveInfo> {
+        Vec::new()
+    }
+    fn save_delete(&mut self, _: &str) {}
 }
 
 struct Host<'a> {

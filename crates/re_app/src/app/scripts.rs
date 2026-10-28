@@ -146,7 +146,10 @@ impl App {
                 skins: &mut self.skin_sync,
                 time_scale: &mut self.time_scale,
             },
-            game: Some(&mut self.scenes),
+            game: Some(crate::scenes::Game {
+                scenes: &mut self.scenes,
+                saves: &mut self.saves,
+            }),
         };
         let out = f(scripts, &mut host);
         self.collect_script_output();

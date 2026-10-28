@@ -40,6 +40,10 @@ pub fn all() -> Vec<(&'static str, Json)> {
             "replay.schema.json",
             to_json(schemars::schema_for!(re_types::ReplayDoc)),
         ),
+        (
+            "save.schema.json",
+            to_json(schemars::schema_for!(re_app::scenes::SaveFile)),
+        ),
         ("scene.schema.json", scene),
         (
             "verify-report.schema.json",

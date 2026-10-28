@@ -48,7 +48,10 @@ pub mod sched {
     };
 }
 
-pub use api::game::{GameAccess, SceneLoadState, SceneRefusal, SceneRequestKind};
+pub use api::game::{
+    GameAccess, SaveInfo, SaveSlot, SceneLoadState, SceneRefusal, SceneRequestKind,
+};
+pub use api::save::{MAX_SAVE_BYTES, is_slot_name};
 pub use api::scene::wake_scene_loads;
 pub use api::{DEFINITIONS_PATH, definitions, write_definitions};
 pub use budget::untimed;
@@ -168,6 +171,31 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::SCENE_REFUSED,
         title: "Scene request refused",
         page: include_str!("../explain/RE3101.md"),
+    },
+    DiagInfo {
+        code: codes::SAVE_SLOT_INVALID,
+        title: "Invalid save slot name",
+        page: include_str!("../explain/RE3102.md"),
+    },
+    DiagInfo {
+        code: codes::SAVE_VALUE_INVALID,
+        title: "Value a save cannot hold",
+        page: include_str!("../explain/RE3103.md"),
+    },
+    DiagInfo {
+        code: codes::SAVE_MIGRATION_MISSING,
+        title: "Missing save migration step",
+        page: include_str!("../explain/RE3104.md"),
+    },
+    DiagInfo {
+        code: codes::SAVE_MIGRATION_FAILED,
+        title: "Save migration step failed",
+        page: include_str!("../explain/RE3105.md"),
+    },
+    DiagInfo {
+        code: codes::SAVE_TOO_NEW,
+        title: "Save from a newer version",
+        page: include_str!("../explain/RE3106.md"),
     },
     DiagInfo {
         code: codes::UNSUPPORTED_MEMBER,

@@ -126,6 +126,19 @@ pub const SCENE_CHANGES_DIFFER: Code = Code::new("RE0571");
 /// (ADR-0059 §1).
 pub const SCENES_INVALID: Code = Code::new("RE0572");
 
+/// A save slot or the settings file could not be read or written in the
+/// data folder (a warning; ADR-0059 §7): the run goes on with what it holds
+/// in memory.
+pub const DATA_WRITE_FAILED: Code = Code::new("RE0573");
+
+/// A save or settings file is not one (it does not parse, or has another
+/// format or a newer file version): in the data folder it is set aside as
+/// `<file>.bad`, in the project's seed it is skipped (a warning; ADR-0059 §7).
+pub const DATA_FILE_SET_ASIDE: Code = Code::new("RE0574");
+
+/// `[saves]` or `[settings]` in `real.toml` is wrong (ADR-0059 §7, §8).
+pub const SAVES_SETTINGS_INVALID: Code = Code::new("RE0576");
+
 /// A kept entity stood in for the entity of a scene that has its id (a
 /// note; ADR-0059 §4).
 pub const KEPT_STANDS_IN: Code = Code::new("RE0578");

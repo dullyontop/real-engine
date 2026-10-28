@@ -12,6 +12,9 @@
         "Collider": { "shape": "Box", "half_extents": [10.0, 0.5, 10.0] },
         "MeshRef": { "asset": "builtin:cube" },
         "Transform": { "translation": [0.0, -0.5, 0.0], "scale": [20.0, 1.0, 20.0] } } },
+    { "id": "progress", "name": "Progress", "components": {
+        "HudText": { "text": "" },
+        "ScriptRef": { "path": "scripts/progress.luau" } } },
     { "id": "player", "name": "Player", "components": {
         "CharacterController": { "height": 1.8, "radius": 0.4 },
         "MeshRef": { "asset": "builtin:capsule" },

@@ -1,0 +1,10 @@
+{
+  "format": "real-engine/save",
+  "version": 1,
+  "data_version": 1,
+  "saved_at": 1767225600,
+  "data": {
+    "gold": 3,
+    "visited": ["title"]
+  }
+}

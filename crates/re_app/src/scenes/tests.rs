@@ -7,7 +7,7 @@ use re_core::Severity;
 use re_core::files::{Form, LayerKind, MemLayer, ProjectFiles, ProjectPath};
 use re_proc::stream::{Lateness, StreamConfig};
 use re_scene::World;
-use re_script::{GameAccess, SceneRefusal, SceneRequestKind};
+use re_script::{SceneRefusal, SceneRequestKind};
 use re_types::{SceneChange, SceneChangeKind};
 
 use super::{EndFrame, SceneList, Scenes};
@@ -134,7 +134,7 @@ fn change(frame: u64, kind: SceneChangeKind, name: &str) -> SceneChange {
 #[test]
 fn a_switch_applies_at_the_end_of_the_frame_that_asked() {
     let mut run = Run::new();
-    assert_eq!(run.scenes.scene_current(), "title");
+    assert_eq!(run.scenes.main(), "title");
     let id = run.switch("town");
     let load = run.scenes.scene_load(id).unwrap();
     assert_eq!(
@@ -142,7 +142,7 @@ fn a_switch_applies_at_the_end_of_the_frame_that_asked() {
         ("town", 0.0, false)
     );
     assert_eq!(
-        run.scenes.scene_current(),
+        run.scenes.main(),
         "title",
         "nothing changes before EndFrame"
     );
@@ -151,7 +151,7 @@ fn a_switch_applies_at_the_end_of_the_frame_that_asked() {
     assert!(applied.changed && applied.switched);
     assert!(applied.diagnostics.is_empty(), "{:?}", applied.diagnostics);
     assert_eq!(run.ids(), ["fountain", "player", "square"]);
-    assert_eq!(run.scenes.scene_current(), "town");
+    assert_eq!(run.scenes.main(), "town");
     let load = run.scenes.scene_load(id).unwrap();
     assert_eq!((load.progress, load.done, load.error), (1.0, true, None));
     assert_eq!(run.scenes.take_ended(), [id]);
@@ -173,7 +173,7 @@ fn loads_go_beside_the_main_scene_and_unloads_take_them_away() {
     );
     run.end_frame();
     assert_eq!(run.error(hud), None);
-    assert_eq!(run.scenes.scenes_loaded(), ["title", "hud"]);
+    assert_eq!(run.scenes.loaded(), ["title", "hud"]);
     assert_eq!(run.ids(), ["hud", "hud_text", "menu", "player"]);
     assert_eq!(
         run.load("hud"),
@@ -198,7 +198,7 @@ fn loads_go_beside_the_main_scene_and_unloads_take_them_away() {
     );
     run.scenes.scene_unload("hud").unwrap();
     run.end_frame();
-    assert_eq!(run.scenes.scenes_loaded(), ["title"]);
+    assert_eq!(run.scenes.loaded(), ["title"]);
     assert_eq!(run.ids(), ["menu", "player"]);
     assert_eq!(
         run.scenes.log(),
@@ -235,7 +235,7 @@ fn a_later_switch_replaces_one_still_waiting() {
     // takes it away with the rest.
     assert_eq!(run.error(hud), None);
     assert_eq!(run.error(harbour), None);
-    assert_eq!(run.scenes.scenes_loaded(), ["harbour"]);
+    assert_eq!(run.scenes.loaded(), ["harbour"]);
     assert_eq!(run.ids(), ["pier"]);
     assert_eq!(
         run.scenes.log(),
@@ -259,7 +259,7 @@ fn a_load_that_fails_changes_nothing_and_says_why() {
     assert_eq!(applied.diagnostics.len(), 1);
     assert_eq!(applied.diagnostics[0].code, codes::SCENE_LOAD_FAILED);
     assert_eq!(run.ids(), ["menu", "player"]);
-    assert_eq!(run.scenes.scene_current(), "title");
+    assert_eq!(run.scenes.main(), "title");
 
     // Beside the title scene, `menu` is taken.
     let clash = run.load("clash").unwrap();
@@ -270,7 +270,7 @@ fn a_load_that_fails_changes_nothing_and_says_why() {
             .unwrap()
             .contains(r#"an entity with id "menu" already exists"#)
     );
-    assert_eq!(run.scenes.scenes_loaded(), ["title"]);
+    assert_eq!(run.scenes.loaded(), ["title"]);
     assert!(run.scenes.log().is_empty());
 }
 
@@ -385,7 +385,7 @@ fn a_restart_drops_requests_and_returns_to_the_scene_the_run_began_in() {
     assert!(d.is_empty());
     assert!(!run.scenes.pending());
     assert!(!run.scenes.is_kept("player"));
-    assert_eq!(run.scenes.scenes_loaded(), ["title"]);
+    assert_eq!(run.scenes.loaded(), ["title"]);
     assert_eq!(
         run.scenes.log(),
         [
@@ -396,10 +396,11 @@ fn a_restart_drops_requests_and_returns_to_the_scene_the_run_began_in() {
 
     // A run begun in a scene the list does not name restarts there.
     let mut scenes = Scenes::new(list(), "levels/test.scene.json");
-    assert_eq!(scenes.scene_current(), "levels/test.scene.json");
+    assert_eq!(scenes.main(), "levels/test.scene.json");
     assert!(
         scenes
-            .scenes_listed()
+            .list()
+            .names()
             .contains(&"levels/test.scene.json".to_string())
     );
     scenes.restarted(4);
@@ -426,6 +427,6 @@ fn a_late_run_reads_on_a_worker_and_applies_when_ready() {
         std::thread::yield_now();
     }
     assert_eq!(run.error(town), None);
-    assert_eq!(run.scenes.scene_current(), "town");
+    assert_eq!(run.scenes.main(), "town");
     assert_eq!(run.ids(), ["fountain", "player", "square"]);
 }

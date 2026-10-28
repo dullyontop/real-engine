@@ -11,14 +11,16 @@ use crate::host::{Host, PlayHost};
 use super::App;
 
 impl App {
-    /// Makes a compat game's `DataStoreService` and `MemoryStoreService`
-    /// keep their data in the run's data folder (`.real/data/` on desktop,
-    /// IndexedDB in a browser) with the wall clock, as `real run` does
-    /// (ADR-0048). Without it, each run starts from
-    /// `data/seed/` on a fixed clock so it repeats. Call it before the first
-    /// frame.
+    /// Makes the game keep its data in the run's data folder (`.real/data/`
+    /// on desktop, IndexedDB in a browser), as `real run` does: a native
+    /// game's save slots (`[saves] mode = "persist"`, ADR-0059 §7), and a
+    /// compat game's `DataStoreService` and `MemoryStoreService` with the
+    /// wall clock (ADR-0048). Without it, each run starts from `data/seed/`
+    /// (and a compat game's clock is fixed) so it repeats. Call it before the
+    /// first frame.
     pub fn persist_data(&mut self) {
         self.persist_data = true;
+        self.saves = crate::scenes::Saves::new(&self.files, &self.config.saves, true);
     }
 
     /// Starts the compat contexts on the first frame of a compat project:

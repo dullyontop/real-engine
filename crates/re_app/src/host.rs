@@ -579,16 +579,17 @@ impl HostServices for Host<'_> {
 }
 
 /// The [`ScriptHost`](re_script::ScriptHost) of a running game: the World, the
-/// [`Host`] services and the game's scenes. Scripts get no command registry
-/// while the game runs.
+/// [`Host`] services and the game's scenes and saves. Scripts get no command
+/// registry while the game runs.
 pub struct PlayHost<'a> {
     /// The world scripts read and write.
     pub world: &'a mut re_scene::World,
     /// The services.
     pub services: Host<'a>,
-    /// The game's scenes, for the `scene` library (ADR-0059); `None` for a
-    /// compat game's contexts, which keep their own model.
-    pub game: Option<&'a mut crate::scenes::Scenes>,
+    /// The game's scenes and saves, for the `scene` and `save` libraries
+    /// (ADR-0059); `None` for a compat game's contexts, which keep their own
+    /// model.
+    pub game: Option<crate::scenes::Game<'a>>,
 }
 
 impl re_script::ScriptHost for PlayHost<'_> {
@@ -607,7 +608,7 @@ impl re_script::ScriptHost for PlayHost<'_> {
     }
     fn game(&mut self) -> Option<&mut dyn re_script::GameAccess> {
         self.game
-            .as_deref_mut()
+            .as_mut()
             .map(|g| g as &mut dyn re_script::GameAccess)
     }
 }

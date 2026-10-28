@@ -490,5 +490,9 @@ impl App {
         }
         self.take_frame_screenshots(f);
         self.scenes_end_frame(f, pending.restart);
+        // Save files are written once per slot per frame, outside the
+        // scripts' budget (ADR-0059 §7).
+        let saved = self.saves.end_frame();
+        self.diagnostics.extend(saved);
     }
 }

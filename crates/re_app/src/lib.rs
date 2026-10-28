@@ -222,6 +222,21 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         page: include_str!("../explain/RE0572.md"),
     },
     DiagInfo {
+        code: codes::DATA_WRITE_FAILED,
+        title: "Save or settings file not read or written",
+        page: include_str!("../explain/RE0573.md"),
+    },
+    DiagInfo {
+        code: codes::DATA_FILE_SET_ASIDE,
+        title: "Bad save or settings file",
+        page: include_str!("../explain/RE0574.md"),
+    },
+    DiagInfo {
+        code: codes::SAVES_SETTINGS_INVALID,
+        title: "Invalid [saves] or [settings]",
+        page: include_str!("../explain/RE0576.md"),
+    },
+    DiagInfo {
         code: codes::KEPT_STANDS_IN,
         title: "A kept entity stands in for a scene's entity",
         page: include_str!("../explain/RE0578.md"),
