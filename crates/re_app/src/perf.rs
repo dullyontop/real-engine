@@ -63,7 +63,8 @@ pub struct PerfReport {
     /// Each phase of ADR-0009, by name (`input`, `pre_render`, … `end_frame`).
     /// Fixed-step phases are summed over the frame's steps.
     pub phases: BTreeMap<String, TimeStats>,
-    /// One physics step (`Physics::step` alone).
+    /// One physics step: `Physics::step`, and in a compat game the server's parts
+    /// and characters with their touch events, which step with it.
     pub physics_step: TimeStats,
     /// Drawing one frame on the CPU (ADR-0038): the renderer preparing,
     /// encoding and finishing the command buffers of the 3D view, a compat
@@ -112,7 +113,7 @@ impl PerfRecorder {
         *self.current.entry(phase).or_default() += ms(d);
     }
 
-    /// Records one `Physics::step`.
+    /// Records one physics step ([`PerfReport::physics_step`]).
     pub fn physics_step(&mut self, d: Duration) {
         self.physics_step.push(ms(d));
     }

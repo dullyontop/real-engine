@@ -12,7 +12,7 @@ pub const WORLD_CREATE_FAILED: Code = Code::new("RE5001");
 /// A collision shape is malformed or Jolt refused it.
 pub const SHAPE_INVALID: Code = Code::new("RE5002");
 
-/// A triangle mesh or heightfield was given to a body that can move.
+/// A triangle mesh was given to a dynamic body, or a heightfield to a body that can move.
 pub const STATIC_ONLY_SHAPE: Code = Code::new("RE5003");
 
 /// A command names an entity that has no body, character or constraint.

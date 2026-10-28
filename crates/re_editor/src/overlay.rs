@@ -2,7 +2,7 @@
 //! grid, the axis indicator, icons for lights and cameras, a selected
 //! camera's frustum or light's reach, and the selection's outline.
 //!
-//! The grid and the selected entity's shapes are debug lines and the outline
+//! The grid and the selected entities' shapes are debug lines and the outline
 //! a highlight, added to the editor's own copy of the render snapshot
 //! ([`GameView::render`](crate::GameView::render)), so they are depth tested
 //! like the scene; the axis indicator and the icons are egui shapes over the
@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Editor;
 use crate::gizmo::math::Screen;
+use crate::selection::Selection;
 
 /// What the view shows, and whether it looks through the game's camera:
 /// editor state, saved in `layout.json` (`view`).
@@ -66,6 +67,8 @@ const SHAPE_COLOUR: [f32; 4] = [1.0, 0.75, 0.3, 0.9];
 /// The selection's outline and fill, linear RGB and opacity.
 pub(crate) const OUTLINE: [f32; 4] = [1.0, 0.45, 0.05, 1.0];
 pub(crate) const FILL: [f32; 4] = [1.0, 0.45, 0.05, 0.08];
+/// The most selected cameras and lights whose frustum or reach is drawn.
+const MAX_REACHES: usize = 32;
 /// How near the pointer must be to an icon or an axis end to pick it, in points.
 const PICK_POINTS: f32 = 10.0;
 
@@ -96,10 +99,11 @@ pub(crate) fn dress(
         let gizmo = &editor.gizmo.settings;
         lines.extend(grid(eye, gizmo.snap.then_some(gizmo.translate_step)));
     }
-    if view.icons
-        && let Some(id) = editor.selected()
-    {
-        lines.extend(reach(world, id, game_aspect));
+    if view.icons {
+        // The first few selected, so a box over a thousand lamps stays cheap.
+        for id in editor.selection().ids().iter().take(MAX_REACHES) {
+            lines.extend(reach(world, id, game_aspect));
+        }
     }
     snapshot
         .debug_lines
@@ -109,7 +113,7 @@ pub(crate) fn dress(
             color: l.color,
         }));
     if view.outline
-        && let Some(highlight) = editor.selected().and_then(|id| outline(world, id))
+        && let Some(highlight) = outline(world, editor.selection().ids())
     {
         extras.highlights.push(highlight);
     }
@@ -225,7 +229,7 @@ pub(crate) fn draw_icons(
     painter: &egui::Painter,
     screen: &Screen,
     icons: &[Icon],
-    selected: Option<&str>,
+    selection: &Selection,
     pointer: Option<Pos2>,
 ) -> Option<String> {
     let mut hovered: Option<(f32, &str)> = None;
@@ -248,7 +252,7 @@ pub(crate) fn draw_icons(
     }
     for (icon, p) in shown {
         let lit = hovered.is_some_and(|(_, id)| id == icon.id);
-        let colour = if selected == Some(icon.id.as_str()) {
+        let colour = if selection.contains(&icon.id) {
             Color32::from_rgb(255, 150, 40)
         } else if lit {
             Color32::WHITE
@@ -361,16 +365,22 @@ pub(crate) fn reach(world: &World, id: &str, aspect: f32) -> Vec<DebugLine> {
     out
 }
 
-/// The outline of the selected entity `id` and everything under it in the
-/// hierarchy (a terrain source's chunks are drawn as the source), or `None`
-/// when it does not exist.
-pub(crate) fn outline(world: &World, id: &str) -> Option<Highlight> {
-    let root = world.entity(id).ok()?;
+/// The outline of the selected entities `ids` and everything under them in
+/// the hierarchy (a terrain source's chunks are drawn as the source), as one
+/// highlight, or `None` when none of them exists.
+pub(crate) fn outline(world: &World, ids: &[String]) -> Option<Highlight> {
+    let mut stack: Vec<Entity> = ids.iter().filter_map(|id| world.entity(id).ok()).collect();
+    if stack.is_empty() {
+        return None;
+    }
+    let mut seen = HashSet::new();
     let mut entities = Vec::new();
-    let mut stack: Vec<Entity> = vec![root];
     while let Some(e) = stack.pop() {
-        entities.push(re_scene::entity_id(e));
-        stack.extend(children(&world.ecs, e));
+        let id = re_scene::entity_id(e);
+        if seen.insert(id) {
+            entities.push(id);
+            stack.extend(children(&world.ecs, e));
+        }
     }
     Some(Highlight {
         entities,
