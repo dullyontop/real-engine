@@ -24,6 +24,8 @@ Real Engine is a proprietary 3D game engine written in Rust. It is built around 
 - For Roblox-style projects: saved data, script reload during play, SurfaceGui and ViewportFrame, skinned MeshParts, bloom, blur and sun rays, runs that repeat from `[compat] seed`, and `real import` of `.rbxl`, `.rbxlx`, `.rbxm` and `.rbxmx` files (with `--parent`).
 - Online play for Roblox-style projects (ADR-0050): `real run --server` runs a dedicated server, `--host` plays while serving, and `--connect HOST[:PORT]` joins, over `re_net`, our reliable UDP transport. A browser build joins a server over a WebSocket (`?connect=ws://HOST:PORT/` on its page), and a built game serves and joins with the same flags (`real run --package DIR`, or the game's own executable). The traffic is not encrypted, so play on a LAN or with people you trust.
 
+**M4 planned** (2026-10-28). [M4_PLAN.md](docs/M4_PLAN.md) turns the engine into one that makes complete games: the gameplay API, UI, scenes and saved games on the engine's own API, joints and triggers, procedural modelling with building generators, and a designer's editor with viewport picking and play-in-editor, as work packages WP31–WP48, with `examples/town` as the game that proves them.
+
 The workspace holds:
 
 - The contract layer: `re_core`, `re_noise` and `re_types`.
@@ -60,10 +62,11 @@ All crate versions are pinned exactly and checked against crates.io. See [DEPEND
 | Document | Contents |
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The crate graph, frame loop and threads, object model, procedural system, AI integration, diagnostics, and file formats |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones M0 to M3, their exit criteria, and why they are in this order |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones M0 to M4, their exit criteria, and why they are in this order |
 | [docs/M1_PLAN.md](docs/M1_PLAN.md) | The first milestone as nine self-contained work packages, with owned paths, cross-package contracts, acceptance commands, and the definition of done |
 | [docs/M2_PLAN.md](docs/M2_PLAN.md) | The second milestone, the Roblox-style compatibility layer, as work packages WP9–WP17 in the same shape |
 | [docs/M3_PLAN.md](docs/M3_PLAN.md) | The third milestone (ship games: platforms and D2, export, rendering, skinning, vehicles, streaming, the procedural workflow, the editor, the AI track, compat follow-ups, `examples/valley`, browser builds and online play), as work packages WP18–WP30 |
+| [docs/M4_PLAN.md](docs/M4_PLAN.md) | The fourth milestone (complete games on the native API, procedural modelling and the designer's editor, with rendering, physics, documentation, online play, compat and CI work beside them, and `examples/town`), as work packages WP31–WP48 |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Architecture decision records, plus open questions for the project owner |
 | [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | Every dependency with its version, license, MSRV and verification status; system packages |
 | [docs/research/core.md](docs/research/core.md) | Findings from the entity-core spike (bevy_ecs, the component registry, scene files) |
@@ -120,7 +123,7 @@ CI runs the GPU crates' tests separately from the rest of the workspace, with `-
 
 ## Contributing
 
-- Read [ARCHITECTURE.md](docs/ARCHITECTURE.md). The work packages of M1, M2 and M3 ([M1_PLAN.md](docs/M1_PLAN.md), [M2_PLAN.md](docs/M2_PLAN.md) and [M3_PLAN.md](docs/M3_PLAN.md)) have all merged, and no later milestone is planned yet: new work starts with an ADR in [DECISIONS.md](docs/DECISIONS.md), and [ROADMAP.md](docs/ROADMAP.md) names what M3 left for later. Some packages ported code from the maintainers' private research spikes, which are not in this repository; ask the maintainer for access.
+- Read [ARCHITECTURE.md](docs/ARCHITECTURE.md). The work packages of M1, M2 and M3 ([M1_PLAN.md](docs/M1_PLAN.md), [M2_PLAN.md](docs/M2_PLAN.md) and [M3_PLAN.md](docs/M3_PLAN.md)) have all merged. M4 is planned in [M4_PLAN.md](docs/M4_PLAN.md): each of its work packages starts with an ADR in [DECISIONS.md](docs/DECISIONS.md), and [ROADMAP.md](docs/ROADMAP.md) names what M4 leaves for later. Some packages ported code from the maintainers' private research spikes, which are not in this repository; ask the maintainer for access.
 - Dependencies come from crates.io only, apart from the temporary patched copies of `mlua` and `oxijolt-sys` in `third_party/` that the owner approved (ADR-0049 §2). Adding one needs an entry in [DECISIONS.md](docs/DECISIONS.md) and a row in [DEPENDENCIES.md](docs/DEPENDENCIES.md).
 - Tests must pass headless: software Vulkan, no audio device, and a virtual display only for the windowed smoke test.
 - Do not commit third-party game projects or their scripts. The script validation suite reads them from paths you provide (`REAL_SCENE_SCRIPTS`, or one or more `--scripts-dir`), and skips when none is given.
