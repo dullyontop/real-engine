@@ -1,0 +1,20 @@
+[package]
+name = "re_ui"
+description = "Real Engine UI core: layout, text and painting shared by native game UI and the Roblox-style GUI (ADR-0058)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# A runtime crate that reaches no engine crate (ADR-0058; `cargo xtask
+# check-graph`), only third-party crates already in the runtime: egui for text
+# layout and shapes, which re_render's UI pass paints, and glam on libm for
+# maths that is the same on every platform.
+[dependencies]
+egui.workspace = true
+glam.workspace = true
+libm.workspace = true
+
+[dev-dependencies]
+# The native panel's images paint through re_render.
+re_render.workspace = true

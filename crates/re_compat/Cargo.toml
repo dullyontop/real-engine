@@ -32,8 +32,9 @@ serde_json.workspace = true
 schemars.workspace = true
 toml.workspace = true
 thiserror.workspace = true
-# WP15: text layout and the UI's shapes; painting goes through re_render's
-# UiFrame in the host.
+# The GUI's layout, text and shapes come from the UI core (ADR-0058);
+# painting goes through re_render's UiFrame in the host.
+re_ui.workspace = true
 egui.workspace = true
 # WP15: the detail textures of part materials (a contract-layer crate).
 re_noise.workspace = true

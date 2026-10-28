@@ -4,8 +4,9 @@
 //! and shows the game view with five egui panels over it:
 //!
 //! * **hierarchy**: every entity by name and id, nested by `ChildOf` /
-//!   `Children`; spawn, delete, undo and redo;
-//! * **inspector**: the selected entity's components, one widget per
+//!   `Children`; spawn, delete, undo and redo; a click selects one entity,
+//!   Ctrl+click adds or removes one and Shift+click a run of rows;
+//! * **inspector**: the active entity's components, one widget per
 //!   [`FieldType`](re_reflect::FieldType), generated from the registry's
 //!   [`ComponentSchema`](re_reflect::ComponentSchema)s;
 //! * **console**: diagnostics, the outcome of each command and every
@@ -37,10 +38,17 @@
 //! each with a toggle in the view's menu ([`ViewSettings`]); none of them
 //! reaches `screenshot`, which draws the app's own snapshot.
 //!
-//! The game view carries translate, rotate and scale gizmos for the selected
-//! entity ([`gizmo`]; `W`, `E`, `R`). A drag moves the entity as it goes,
-//! with `scene.apply` edits that share one coalesce key, so the drag is one
-//! undo step; Escape puts the entity back.
+//! Several entities can be selected ([`Selection`]), one of them active (the
+//! one selected last): the inspector shows the active one, `Ctrl+Up` and
+//! `Ctrl+Down` select the selection's parents or children, and Delete
+//! removes the selected entities in one undo step.
+//!
+//! The game view carries translate, rotate and scale gizmos for the
+//! selection ([`gizmo`]; `W`, `E`, `R`), standing on the active entity or at
+//! the centre of the selection's bounds. A drag moves each selected entity
+//! without a selected ancestor as it goes, with `scene.apply` edits that
+//! share one coalesce key, so the drag is one undo step; Escape puts them
+//! back.
 //!
 //! Every action is a command dispatched through
 //! [`App::dispatch`](re_app::App::dispatch), so each one is a single undo step
@@ -68,6 +76,7 @@ mod headless;
 pub mod layout;
 mod overlay;
 mod panels;
+mod selection;
 mod socket;
 mod view;
 mod widgets;
@@ -77,6 +86,7 @@ pub use canvas::CanvasSpot;
 pub use editor::{ConsoleLine, Editor, LineKind, Panel, PanelRects};
 pub use headless::HeadlessEditor;
 pub use overlay::ViewSettings;
+pub use selection::Selection;
 pub use socket::EditorSocket;
 pub use view::GameView;
 pub use windowed::run_editor;
