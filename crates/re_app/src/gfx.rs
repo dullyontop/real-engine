@@ -10,7 +10,7 @@ use std::path::Path;
 
 use re_core::time::Instant;
 use re_core::{Diagnostic, Location};
-use re_render::{Capture, Gpu, Image, Renderer, UiFrame, egui, wgpu};
+use re_render::{Capture, Gpu, Image, Renderer, UiFrame, wgpu};
 use re_scene::World;
 use re_types::{MaterialDesc, RenderSnapshot, TextureHandle, TextureRef};
 
@@ -56,7 +56,6 @@ pub fn backend_name(backend: wgpu::Backend) -> &'static str {
 /// The GPU side of an [`App`](crate::App).
 pub struct Graphics {
     renderer: Renderer,
-    egui: egui::Context,
     textures: HashMap<String, TextureHandle>,
     started: Instant,
     keep_derived: bool,
@@ -86,7 +85,6 @@ impl Graphics {
     pub fn from_parts(gpu: Gpu, renderer: Renderer) -> Graphics {
         Graphics {
             renderer,
-            egui: egui::Context::default(),
             textures: HashMap::new(),
             started: Instant::now(),
             keep_derived: false,
@@ -342,7 +340,7 @@ impl Graphics {
             device,
             queue,
             &mut self.renderer,
-            &self.egui,
+            host.ctx(),
             ui.as_mut(),
             pixels_per_point,
         )?;
@@ -370,7 +368,7 @@ impl Graphics {
                 host.run(hud_lines, at, time)
             }
         };
-        let ui = UiFrame::from_output(&self.egui, &mut output, size_px);
+        let ui = UiFrame::from_output(host.ctx(), &mut output, size_px);
         self.renderer.paint_ui(device, queue, target, &ui)
     }
 
@@ -399,17 +397,6 @@ impl Graphics {
     /// A capture cannot be made.
     pub fn compat_images(&mut self, view: &mut CompatView) -> Result<(), Diagnostic> {
         view.prepare_images(&self.gpu.device, &mut self.renderer)
-    }
-
-    /// The egui context the HUD and a compat game's UI are laid out with.
-    pub fn egui(&self) -> &egui::Context {
-        &self.egui
-    }
-
-    /// Lays out and paints the UI with `ctx`: the app's UI host's, so text
-    /// laid out at Sync paints with the same font atlas.
-    pub fn set_egui(&mut self, ctx: egui::Context) {
-        self.egui = ctx;
     }
 
     /// Draws `snapshot`, the native UI and the HUD offscreen and reads the

@@ -29,11 +29,11 @@ impl App {
 
     /// Gives the app a GPU side (the windowed runner's, for its surface), and
     /// its renderer the shader files of the project ([`crate::shaders`]).
-    pub fn set_graphics(&mut self, mut graphics: Graphics) {
+    pub fn set_graphics(&mut self, graphics: Graphics) {
         self.render_assets = RenderAssets::default();
-        // One context lays out and paints every UI the game draws: a new
-        // one for the new renderer, which then gets every texture whole.
-        graphics.set_egui(self.ui.attach());
+        // The UI host's context lays out and paints every UI the game draws:
+        // a new one for the new renderer, which then gets every texture whole.
+        self.ui.attach();
         self.graphics = Some(graphics);
         self.install_shaders();
     }
@@ -199,10 +199,10 @@ impl App {
         passes: u32,
         build: bool,
     ) {
-        let Some(gfx) = &self.graphics else {
+        if self.graphics.is_none() {
             return;
-        };
-        let ctx = gfx.egui().clone();
+        }
+        let ctx = self.ui.ctx().clone();
         if !self.compat_view.fonts {
             re_compat::gui::install_fonts(&ctx);
             self.compat_view.fonts = true;

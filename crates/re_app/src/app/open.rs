@@ -105,8 +105,12 @@ impl App {
         let bus_levels = audio.bus_levels();
         let script_levels = script_levels(&audio, &bus_levels);
         let dev = files.project_dir().is_some();
-        let (ui, ui_problems) =
-            crate::ui::UiHost::new(files.clone(), Some(config.ui.theme.as_str()), dev);
+        let (ui, ui_problems) = crate::ui::UiHost::new(
+            files.clone(),
+            Some(config.ui.theme.as_str()),
+            config.assets,
+            dev,
+        );
         let mut diagnostics = audio_problems;
         diagnostics.extend(ui_problems);
         Ok(App {
@@ -267,6 +271,8 @@ impl App {
         copy.graphics = self.graphics.take();
         if let Some(g) = &mut copy.graphics {
             g.set_keep_derived(true);
+            // The graphics hold the textures of this app's UI context.
+            self.ui.lend(&mut copy.ui);
         }
         copy.render_assets = std::mem::take(&mut self.render_assets);
         let mut run = copy.run_headless(Some(frames), replay).map(|mut r| {
@@ -294,6 +300,7 @@ impl App {
         self.graphics = copy.graphics.take();
         if let Some(g) = &mut self.graphics {
             g.set_keep_derived(false);
+            self.ui.take_back(&mut copy.ui);
         }
         self.render_assets = std::mem::take(&mut copy.render_assets);
         let (run, results) = run?;

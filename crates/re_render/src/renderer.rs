@@ -952,6 +952,11 @@ fn malformed_texture(data: &TextureData) -> String {
 /// for a device without BC formats (ADR-0047) and for the native UI's images,
 /// which egui takes as RGBA8 (ADR-0058). BC5's two channels become red and
 /// green, with blue 0 and alpha 255.
+///
+/// `format` must be BC5 or BC7, `width` and `height` at least 1, and `blocks`
+/// exactly `format.level_bytes(width, height)` bytes, as
+/// `TextureData::is_well_formed` checks for a texture's top level; other input
+/// panics.
 pub fn decode_blocks(format: TextureFormat, width: u32, height: u32, blocks: &[u8]) -> Vec<u8> {
     let (w, h) = (width as usize, height as usize);
     let blocks_wide = w.div_ceil(4);

@@ -6,13 +6,15 @@
 //! draws and paints it: world roots far to near, a compat game's GUI, screen
 //! roots by order, then the HUD.
 //!
-//! The host's egui context lays out and paints every UI the game draws (the
-//! graphics adopt it), so text laid out at Sync uses the same font atlas. A
-//! `UiImage` is an egui texture the host makes from the image file (in a
-//! packaged game, from the form the build stored it in), which the UI pass
-//! uploads like the font atlas; a run without graphics loads none. egui
-//! takes its textures with premultiplied alpha, which the renderer's
-//! textures do not have, so images are not uploaded through the renderer.
+//! The host's egui context lays out and paints every UI the game draws, so
+//! text laid out at Sync uses the same font atlas. A `UiImage` is an egui
+//! texture the host makes from the image's processed texture, read through
+//! `re_assets` as the renderer's textures are (ADR-0047, and ADR-0058's
+//! amendment for this host), so a development run shows the image as a
+//! packaged game stores it; the UI pass uploads it like the font atlas, and a
+//! run without graphics loads none. egui takes its textures as RGBA8 with
+//! premultiplied alpha, which the renderer's textures (straight alpha, often
+//! BC7) are not, so images are not uploaded through the renderer.
 
 pub mod build;
 pub mod hud;
@@ -20,13 +22,13 @@ pub mod hud;
 use std::collections::{HashMap, HashSet};
 
 use glam::{Vec2, Vec3};
-use re_assets::AssetServer;
-use re_core::files::{FileError, ProjectFiles};
+use re_assets::{AssetServer, AssetsConfig};
+use re_core::files::ProjectFiles;
 use re_core::{Code, DiagInfo, Diagnostic, Location};
 use re_render::egui;
 use re_render::egui::epaint::ClippedShape;
 use re_scene::{Entity, StableId, World, entity_id};
-use re_types::render::{Camera as RenderCamera, TextureFormat};
+use re_types::render::Camera as RenderCamera;
 use re_ui::theme::State;
 use re_ui::{Camera, Item, Layout, Looks, Painter, Root, Theme, ThemeFile, Visit};
 
@@ -180,9 +182,10 @@ pub struct UiHost {
     /// Whether the context has run a pass since its fonts were installed.
     warm: bool,
     files: ProjectFiles,
-    /// Reads the images a packaged game stores processed; made when one is
-    /// first needed.
+    /// Reads the images' processed textures; made when one is first needed.
     assets: Option<AssetServer>,
+    /// How the project stores imported textures (`[assets]`).
+    assets_config: AssetsConfig,
     /// Development runs report fields a style hides (`RE7702`).
     dev: bool,
     /// The project's theme file (`[ui] theme`), if it names one.
@@ -210,12 +213,17 @@ pub struct UiHost {
 
 impl UiHost {
     /// A host for a project read from `files`, with the project's theme
-    /// file `theme` (`[ui] theme`) over the engine's. `dev` is true for a
-    /// development run.
+    /// file `theme` (`[ui] theme`) over the engine's and its texture settings
+    /// `assets` (`[assets]`) for images. `dev` is true for a development run.
     ///
     /// Returns `RE7700` when the project's theme cannot be used; the engine's
     /// theme is used instead.
-    pub fn new(files: ProjectFiles, theme: Option<&str>, dev: bool) -> (UiHost, Vec<Diagnostic>) {
+    pub fn new(
+        files: ProjectFiles,
+        theme: Option<&str>,
+        assets: AssetsConfig,
+        dev: bool,
+    ) -> (UiHost, Vec<Diagnostic>) {
         let ctx = egui::Context::default();
         re_ui::fonts::install(&ctx);
         let mut diagnostics = Vec::new();
@@ -232,6 +240,7 @@ impl UiHost {
             warm: false,
             files,
             assets: None,
+            assets_config: assets,
             dev,
             theme_path,
             theme,
@@ -259,10 +268,9 @@ impl UiHost {
     }
 
     /// Starts painting for a new painter (the app's new graphics): the host
-    /// moves to a new context, which the painter adopts, so the first pass
-    /// uploads the whole font atlas and the images load again into it.
-    /// Returns the context.
-    pub fn attach(&mut self) -> egui::Context {
+    /// moves to a new context, so its first pass uploads the whole font atlas
+    /// and the images load again into it.
+    pub fn attach(&mut self) {
         self.pending.clear();
         self.ctx = egui::Context::default();
         re_ui::fonts::install(&self.ctx);
@@ -270,7 +278,6 @@ impl UiHost {
         self.images.clear();
         self.textures.clear();
         self.painted = true;
-        self.ctx.clone()
     }
 
     /// Stops painting (the app's graphics went away): the host's passes drop
@@ -278,6 +285,35 @@ impl UiHost {
     pub fn detach(&mut self) {
         self.pending.clear();
         self.painted = false;
+    }
+
+    /// Lends this host's context to `copy`, the host of a copy of the app
+    /// that borrows its graphics (`play.run`). The graphics hold textures
+    /// made from this context (the font atlas above all), so the copy lays
+    /// out and paints with it too, after this host's texture updates not
+    /// drawn yet; a new context would paint its glyphs onto this one's atlas.
+    pub fn lend(&mut self, copy: &mut UiHost) {
+        copy.ctx = self.ctx.clone();
+        copy.warm = self.warm;
+        copy.images.clear();
+        copy.textures.clear();
+        copy.pending = std::mem::take(&mut self.pending);
+        copy.painted = self.painted;
+        copy.time = copy.time.max(self.time);
+    }
+
+    /// Takes the context back from `copy` ([`UiHost::lend`]), with the
+    /// copy's texture updates not drawn yet. The copy's images are freed
+    /// with this host's next pass, and the copy paints no more.
+    pub fn take_back(&mut self, copy: &mut UiHost) {
+        let mut pending = std::mem::take(&mut copy.pending);
+        pending.append(std::mem::take(&mut self.pending));
+        self.pending = pending;
+        self.warm |= copy.warm;
+        self.time = self.time.max(copy.time);
+        copy.images.clear();
+        copy.textures.clear();
+        copy.painted = false;
     }
 
     /// The tree built at the last Sync.
@@ -424,8 +460,8 @@ impl UiHost {
     }
 
     /// Makes textures of the images `world`'s `UiImage`s name that have none
-    /// yet. A file that cannot be read is `RE0520` and one that does not
-    /// decode `RE7003`, once each.
+    /// yet. An image that cannot be loaded is `RE0520`, once, with the asset
+    /// loader's error.
     fn load_images(&mut self, world: &mut World, diagnostics: &mut Vec<Diagnostic>) {
         let paths: Vec<String> = world
             .ecs
@@ -447,58 +483,69 @@ impl UiHost {
                     self.textures.insert(path, handle);
                 }
                 Err(d) => {
-                    diagnostics.push(d);
+                    diagnostics.push(
+                        Diagnostic::error(
+                            codes::ASSET_UNAVAILABLE,
+                            format!("`{path}` cannot be loaded"),
+                        )
+                        .at(Location::file(path.clone()))
+                        .with_related(d),
+                    );
                     self.bad_images.insert(path);
                 }
             }
         }
     }
 
-    /// The image file at `path` as egui pixels: decoded from the source, or,
-    /// where a packaged game stores it as the importer's output (ADR-0037),
-    /// read through an asset server, with block-compressed pixels decoded.
+    /// The image file at `path` as egui pixels: its processed texture, read
+    /// through an asset server with the project's `[assets]` settings in
+    /// every build, so a development run shows the image as a packaged game
+    /// stores it (block-compressed by default, which is lossy). The top level
+    /// is decoded, and egui premultiplies it.
     fn image(&mut self, path: &str) -> Result<egui::ColorImage, Diagnostic> {
-        let texture = match self.files.read_source(path) {
-            Ok(bytes) => re_assets::decode_image(&bytes, TextureFormat::Rgba8Srgb, path, path)?,
-            Err(FileError::WrongForm { .. }) => {
-                let assets = self
-                    .assets
-                    .get_or_insert_with(|| AssetServer::with_files(self.files.clone()));
-                let handle = assets.load_texture(path)?;
-                let texture = assets.texture(handle).cloned();
-                assets.release(handle);
-                texture.expect("a texture just loaded")
-            }
-            Err(e) => {
-                return Err(Diagnostic::error(
-                    codes::ASSET_UNAVAILABLE,
-                    format!("`{path}` cannot be loaded: {e}"),
-                )
-                .at(Location::file(path)));
-            }
-        };
-        let (w, h) = (texture.width, texture.height);
-        let rgba = if texture.format.is_compressed() {
-            re_render::decode_blocks(texture.format, w, h, &texture.pixels)
+        let config = self.assets_config;
+        let files = &self.files;
+        let assets = self.assets.get_or_insert_with(|| {
+            let mut server = AssetServer::with_files(files.clone());
+            server.set_config(config);
+            server
+        });
+        let handle = assets.load_texture(path)?;
+        let texture = assets.texture(handle).expect("a texture just loaded");
+        let (w, h, format) = (texture.width, texture.height, texture.format);
+        // A damaged package's texture is refused here: the decoder takes
+        // only a whole level.
+        let rgba = if w == 0 || h == 0 || !texture.is_well_formed() {
+            Err(Diagnostic::error(
+                re_render::codes::BAD_TEXTURE,
+                format!("the {w}x{h} {format:?} texture data of `{path}` is malformed"),
+            )
+            .at(Location::file(path)))
+        } else if format.is_compressed() {
+            Ok(re_render::decode_blocks(format, w, h, &texture.pixels))
         } else {
-            texture.pixels
+            Ok(texture.pixels.clone())
         };
+        assets.release(handle);
         Ok(egui::ColorImage::from_rgba_unmultiplied(
             [w as usize, h as usize],
-            &rgba,
+            &rgba?,
         ))
     }
 
     /// Files changed on disk (in a development run): the theme files among
-    /// `paths` that are in use load again now, and images and themes that
-    /// failed at the next Sync. A theme that no longer loads is `RE7700`,
-    /// and the last good one stays (ADR-0058 part 7).
+    /// `paths` that are in use load again now, and the images whose file or
+    /// sidecar changed and the themes that failed at the next Sync. A theme
+    /// that no longer loads is `RE7700`, and the last good one stays
+    /// (ADR-0058 part 7).
     pub fn files_changed(&mut self, paths: &[String]) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
         for path in paths {
-            self.images.remove(path);
-            self.textures.remove(path);
-            self.bad_images.remove(path);
+            // A sidecar's settings change how its image is processed.
+            let image = path.strip_suffix(".meta.json").unwrap_or(path);
+            self.images.remove(image);
+            self.textures.remove(image);
+            self.bad_images.remove(image);
             self.bad_themes.remove(path);
             let used = self.theme_path.as_ref() == Some(path);
             if !used && !self.root_themes.contains_key(path) {

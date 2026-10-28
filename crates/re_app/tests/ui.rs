@@ -422,11 +422,13 @@ fn components_draw_at_two_view_sizes() {
 
 /// A packaged game stores an image the build imported as the importer's
 /// output (block-compressed where the encoder is built in), not its source
-/// (ADR-0037): the UI draws the image from that form, as a development run
-/// draws the source.
+/// (ADR-0037). The UI reads every image in that form, a development run's
+/// too, so the packaged game draws exactly what the project shows.
 #[test]
 fn a_packaged_game_draws_images_from_their_processed_form() {
     let dir = project(480, 320, SHEET, &[]);
+    let (_, mut dev) = sheet(480, 320, true);
+    let in_project = dev.screenshot(None).unwrap();
     let image = "assets/ui/checker.png";
     let mut server = re_assets::AssetServer::with_files(ProjectFiles::project(dir.path()));
     let processed = server.processed(image).unwrap().expect("a PNG imports");
@@ -468,6 +470,35 @@ fn a_packaged_game_draws_images_from_their_processed_form() {
     );
     let shot = app.screenshot(None).unwrap();
     check_golden(&app, "ui_sheet_480x320", &shot);
+    assert!(
+        shot.rgba == in_project.rgba,
+        "the project draws its image unlike the package"
+    );
+}
+
+/// A copy of the app that borrows its graphics (`play.run`) lays out and
+/// paints with the app's UI context, whose font atlas and images those
+/// graphics hold: its screenshot is the app's own, HUD text included, and the
+/// app draws as before once the graphics come back.
+#[test]
+fn a_play_copy_paints_with_the_ui_context_it_borrows() {
+    let hud = r#", { "id": "lives", "components": { "HudText": { "text": "Lives 3" } } }"#;
+    let dir = project(480, 320, &format!("{SHEET}{hud}"), &[]);
+    let mut app = open(dir.path());
+    app.ensure_graphics().unwrap();
+    run(&mut app, 1);
+    let live = app.screenshot(None).unwrap();
+    let (report, _, copy) = app.play_copy(1, None, &[], true).unwrap();
+    assert!(report.ok(), "{:?}", report.diagnostics);
+    assert!(
+        copy.unwrap().rgba == live.rgba,
+        "the copy draws the UI unlike the app"
+    );
+    run(&mut app, 1);
+    assert!(
+        app.screenshot(None).unwrap().rgba == live.rgba,
+        "the app's UI changed"
+    );
 }
 
 // --- Themes, styles and their codes -------------------------------------------
@@ -734,19 +765,51 @@ fn changed_themes_and_images_load_again() {
     assert_eq!(look_of(&app, "a").0, Some(5.0));
     assert_eq!(look_of(&app, "b").0, Some(6.0));
     assert_ne!(texture(&app), first, "the image loaded again");
+    // Its sidecar's settings change how it is processed, so it loads again
+    // when the sidecar changes too.
+    let second = texture(&app);
+    let problems = app.apply_file_changes(&[changed("assets/ui/checker.png.meta.json")]);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert!(run(&mut app, 1).is_empty());
+    assert_ne!(
+        texture(&app),
+        second,
+        "the image loaded again for its sidecar"
+    );
 
     for path in ["ui/game.theme.json", "ui/own.theme.json"] {
         std::fs::write(dir.path().join(path), "{").unwrap();
     }
-    let problems = app.apply_file_changes(&[
-        changed("ui/game.theme.json"),
-        changed("ui/own.theme.json"),
-    ]);
+    let problems =
+        app.apply_file_changes(&[changed("ui/game.theme.json"), changed("ui/own.theme.json")]);
     assert_eq!(codes(&problems), ["RE7700", "RE7700"], "{problems:?}");
     app.take_diagnostics();
     assert!(run(&mut app, 1).is_empty());
     assert_eq!(look_of(&app, "a").0, Some(5.0), "the last good theme");
     assert_eq!(look_of(&app, "b").0, Some(6.0), "the last good theme");
+}
+
+/// An image that cannot be loaded is `RE0520` once, with the asset loader's
+/// error, and its node is drawn without it.
+#[test]
+fn an_image_that_cannot_be_loaded_is_re0520_once() {
+    let nodes = r#"{ "id": "picture", "parent": "root", "components": {
+        "UiNode": { "width": 40.0, "height": 40.0 },
+        "UiImage": { "image": "assets/ui/missing.png" } } }"#;
+    let dir = project(480, 320, &screen(nodes), &[]);
+    let mut app = open(dir.path());
+    app.ensure_graphics().unwrap();
+    let report = app.run_headless(Some(3), None).unwrap();
+    let found: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|d| d.code.to_string() == "RE0520")
+        .collect();
+    assert_eq!(found.len(), 1, "{:?}", report.diagnostics);
+    assert_eq!(codes(&found[0].related), ["RE7001"], "{found:?}");
+    let e = app.world().entity("picture").unwrap();
+    let v = app.ui().visit(e).unwrap();
+    assert!(app.ui().built().tree.node(v.node).image.is_none());
 }
 
 // --- World roots ----------------------------------------------------------------
