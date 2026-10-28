@@ -584,8 +584,9 @@ client → real mcp (tokio, background thread) → re_command::remote::EngineHan
 
 - **Tiers.** `read` < `edit` < `destructive`. There is no shell tier.
 - **Default.** Without `.real/agent-policy.toml` an agent gets `read` only. `real agent init` writes a policy granting `edit` within the default path scopes; committing that file is the explicit opt-in. `destructive` must be granted in the policy explicitly.
-- **Dry runs.** Every mutating command accepts `dry_run`, and returns the changes it would make at `read` tier.
-- **Generate and play** (`graph.generate`, `play.run`) run on a world copy with budgets, and return a report plus a screenshot. They are `read` tier, because they cannot change the project. Committing a result is a separate `edit` command.
+- **Paths.** A command declares the files its arguments name (`x-real-path`: `read`, `write` or `output`), and `command.describe` lists them under `paths`. For every call that is not a dry run, at every tier, the policy checks each `write` and `output` path against `[scopes]`. `.real/` and `.git/` are never writable however a path spells them, `deny` ignores case, and a path through a symbolic link is refused. A handler checks the files it names itself with `Call::check_write`. A screenshot is a `.png`, either under `.real/out/` or a new file inside the scopes (ADR-0020).
+- **Dry runs.** Every mutating command accepts `dry_run`, and returns the changes it would make at `read` tier. A dry run writes no file: `screenshot` returns the path it would write.
+- **Generate and play** (`graph.generate`, `play.run`) run on a world copy with budgets, and return a report plus a screenshot; `play.run`'s capture goes under `.real/out/play/`. They are `read` tier, because they cannot change the project. Committing a result is a separate `edit` command.
 - **Policy file.** `.real/agent-policy.toml` sets the maximum tier, path scopes and budgets.
 - **Checkpoints.** Each session starts with a checkpoint. `checkpoint.restore` returns to it, after saving the current state as another checkpoint.
 - **Scripts.** `script.write` is compile-gated.
