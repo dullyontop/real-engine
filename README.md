@@ -37,7 +37,7 @@ The workspace holds:
 - Tooling: `re_agent`, `re_mcp` (the MCP server), `re_editor` (the editor) and `re_import` (`real import`: Rojo-style projects, Studio loader scripts, and place and model files).
 - Compatibility (M2): `re_compat`, the Roblox-style layer.
 
-Try it with `cargo run --release -p re_cli -- run --project examples/island` (or `examples/plaza`, or `examples/valley`), or `real verify --project examples/island --json` for the headless checks.
+Try it with `cargo run --release -p re_cli -- run --project examples/island` (or `examples/plaza`, `examples/valley`, or `examples/town`, the M4 sample game), or `real verify --project examples/island --json` for the headless checks.
 
 Real Engine is proprietary, and all rights are reserved: the repository has no open-source license, and the crates declare none. Compiled builds of the engine may later be distributed under a proprietary license ([DECISIONS.md, open question 1](docs/DECISIONS.md#open-questions-for-the-owner)). Third-party crates and the bundled fonts keep their own licenses, listed in [DEPENDENCIES.md](docs/DEPENDENCIES.md).
 
@@ -89,7 +89,7 @@ cargo deny check         # needs cargo-deny 0.20.2: cargo install cargo-deny --v
                          # (or, on Linux x86_64, its release build: eval "$(tools/ci/cargo-deny.sh)")
 ```
 
-CI (`.github/workflows/ci.yml`) runs these checks, `real verify` on the island, the plaza and the valley (with assertions on the JSON) and windowed smoke runs under Xvfb, plus a build with Rust 1.95.0, the browser build and the packaged Linux games. Its 12 checks are the merge rule (ADR-0023). The repository's CI minutes are billed, so a `changes` job runs only the checks a change needs: a draft PR runs nothing, a change to documentation alone runs `fmt`, and a push to main runs the release checks only when it changes a build input (ADR-0023's amendment of 2026-10-28). The whole suite on Windows and macOS, their packaged games and the cross-platform `state_hash` check are in `.github/workflows/platforms.yml`, which is started by hand before a release and for changes that touch one platform (ADR-0023's amendment of 2026-10-27). The type-check tests need luau-lsp 1.70.1 on `PATH` ([DEPENDENCIES.md](docs/DEPENDENCIES.md), "External tools").
+CI (`.github/workflows/ci.yml`) runs these checks, `real verify` on the island, the plaza and the valley (with assertions on the JSON) and windowed smoke runs under Xvfb, plus a build with Rust 1.95.0, the browser build and the packaged Linux games. While the repository is public, it also runs `.github/workflows/platforms.yml`: the whole suite on Windows and macOS, their packaged games and the cross-platform `state_hash` check. Those 17 checks are the merge rule (ADR-0023 and its amendment for the public repository). A `changes` job runs only the checks a change needs: a draft PR runs nothing, a change to documentation alone runs `fmt`, and a push to main runs the release and platform checks only when it changes a build input (ADR-0023's amendment of 2026-10-28). A private repository's CI minutes are billed, so there CI skips `platforms.yml`, which is then started by hand before a release and for changes that touch one platform (ADR-0023's amendment of 2026-10-27). The type-check tests need luau-lsp 1.70.1 on `PATH` ([DEPENDENCIES.md](docs/DEPENDENCIES.md), "External tools").
 
 ## Running the renderer tests
 

@@ -1,14 +1,17 @@
 # CI for Real Engine (ADR-0023, docs/M1_PLAN.md WP0).
 #
-# All on Ubuntu. Its 12 checks are the merge rule (ADR-0023 and its amendments):
-# - fmt, clippy, test, msrv, deny, xtask, verify-demo, xvfb-smoke,
-#   verify-plaza (M2) and verify-valley (WP28; it also checks the sample
-#   game, examples/town);
-# - build-web (WP29 PR "portable");
-# - build-package: the packaged Linux games (ADR-0037, WP19 PR "bundles").
-# A private repository's CI minutes are billed, so the `changes` job picks the
-# checks a run needs (tools/ci/changes.sh; ADR-0023's amendment of 2026-10-28),
-# and a check it skips counts as passing:
+# Its checks are the merge rule (ADR-0023 and its amendments):
+# - on Ubuntu, 12: fmt, clippy, test, msrv, deny, xtask, verify-demo,
+#   xvfb-smoke, verify-plaza (M2) and verify-valley (WP28; it also checks the
+#   sample game, examples/town); build-web (WP29 PR "portable"); build-package,
+#   the packaged Linux games (ADR-0037, WP19 PR "bundles");
+# - while the repository is public, the Windows and macOS checks and d2 of
+#   platforms.yml, which the `platforms` job calls with the release checks
+#   (ADR-0023's amendment for the public repository). A private repository's
+#   CI minutes are billed, so there the job skips itself and platforms.yml
+#   runs by hand (ADR-0023's amendment of 2026-10-27).
+# The `changes` job picks the checks a run needs (tools/ci/changes.sh;
+# ADR-0023's amendment of 2026-10-28), and a check it skips counts as passing:
 # - a draft PR runs nothing, and a PR that changes only documentation (docs/
 #   and the Markdown files at the root) runs fmt alone; any other PR runs
 #   every check, msrv and deny only as below;
@@ -18,8 +21,6 @@
 # - a push to main runs fmt, plus clippy, test and xtask (which save the
 #   cargo caches PRs restore) unless it changes only documentation, and every
 #   check when it changes a build input.
-# The Windows and macOS checks and d2 are in platforms.yml, which runs only
-# when started by hand (ADR-0023's amendment of 2026-10-27).
 # The GPU test step still skips crates that do not exist, a leftover from the
 # first PRs. Action majors verified with `git ls-remote` on 2026-10-14:
 # actions/checkout v7 (3d3c42e5), Swatinem/rust-cache v2 (49a0bdc7); and on
@@ -508,3 +509,13 @@ jobs:
       # and the island's game page.
       - name: cargo xtask web-test
         run: cargo xtask web-test
+
+  # The Windows and macOS checks and D2 (platforms.yml), in every run that
+  # starts the release checks, while the repository is public and its runners
+  # are free (ADR-0023's amendment for the public repository). Their checks
+  # show as `platforms / <job>`. A private repository skips them, and
+  # platforms.yml then runs by hand (the amendment of 2026-10-27).
+  platforms:
+    needs: changes
+    if: needs.changes.outputs.full == 'true' && !github.event.repository.private
+    uses: ./.github/workflows/platforms.yml
