@@ -1,10 +1,10 @@
 //! `cargo xtask web-test`: the browser build's checks (ADR-0049 §8), as CI's
-//! `build-web` job runs them. It builds `real`, builds the island and the plaza with
-//! `real build --target web` into `target/web-games/` (failing when `real_bg.wasm` gzips
-//! above the 10 MB budget), and in headless Chromium with WebGPU plays each one's
-//! replays from its game.rpak, plays the plaza's again as a network client of a
-//! native server (`real run --package` on the plaza's build, ADR-0050's amendment
-//! for PR "web") and starts the island's game page, with `tools/web-test`'s
+//! `build-web` job runs them. It builds `real`, builds the island, the plaza and the
+//! town with `real build --target web` into `target/web-games/` (failing when
+//! `real_bg.wasm` gzips above the 10 MB budget), and in headless Chromium with WebGPU
+//! plays each one's replays from its game.rpak, plays the plaza's again as a network
+//! client of a native server (`real run --package` on the plaza's build, ADR-0050's
+//! amendment for PR "web") and starts the island's game page, with `tools/web-test`'s
 //! scripts. It also starts the page on WebGL2 and reports the result without
 //! failing. Each replay's `state_hash` (the server's, for the network client) must
 //! equal the native run's, or with `--reported` is only printed (until WP18 PR
@@ -27,7 +27,7 @@ const BUDGET: u64 = 10_000_000;
 const ONLINE: &str = "plaza";
 
 /// The projects and the replays each plays.
-const PROJECTS: [(&str, &[&str]); 2] = [
+const PROJECTS: [(&str, &[&str]); 3] = [
     (
         "island",
         &[
@@ -41,6 +41,14 @@ const PROJECTS: [(&str, &[&str]); 2] = [
         &[
             "tests/replays/idle.replay.json",
             "tests/replays/walk.replay.json",
+        ],
+    ),
+    (
+        "town",
+        &[
+            "tests/replays/drive.replay.json",
+            "tests/replays/shift.replay.json",
+            "tests/replays/newtown.replay.json",
         ],
     ),
 ];

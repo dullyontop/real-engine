@@ -459,10 +459,11 @@ jobs:
   # ADR-0049 (WP29): the browser build. Type-checks and lints the runtime for
   # wasm32-unknown-unknown (the std::time ban runs only here, ADR-0049 §5), then links
   # tools/web-test with Luau and Jolt built by wasi-sdk and compares its report under
-  # Node with the native one. Then `real build --target web` builds the island and the
-  # plaza (the runtime with profile `web` and wasm-opt, failing above 10 MB gzipped)
-  # and, serving each folder in headless Chromium with WebGPU, plays their replays
-  # from game.rpak (no error, a drawn last frame) and starts the island's game page.
+  # Node with the native one. Then `real build --target web` builds the island, the
+  # plaza and the town (the runtime with profile `web` and wasm-opt, failing above
+  # 10 MB gzipped) and, serving each folder in headless Chromium with WebGPU, plays
+  # their replays from game.rpak (no error, a drawn last frame) and starts the
+  # island's game page.
   # Every line of the Node report, the Jolt pile hash included, and every replay's
   # state_hash must match native (ADR-0036, WP18 PR "d2").
   # actions/setup-node v7 (949feb24) verified with `git ls-remote` on 2026-10-20.
@@ -509,10 +510,10 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npx playwright install chromium
-      # real build --target web for the island and the plaza (failing above the 10 MB
-      # gzip budget), their replays from game.rpak in headless Chromium with WebGPU,
-      # and the island's game page. `shell: bash` adds pipefail, so a failure is not
-      # hidden by tee.
+      # real build --target web for the island, the plaza and the town (failing above
+      # the 10 MB gzip budget), their replays from game.rpak in headless Chromium with
+      # WebGPU, and the island's game page. `shell: bash` adds pipefail, so a failure
+      # is not hidden by tee.
       - name: cargo xtask web-test
         shell: bash
         run: |
