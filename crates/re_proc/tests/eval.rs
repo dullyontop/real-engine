@@ -193,6 +193,57 @@ fn the_disk_cache_serves_a_new_evaluator() {
     assert_eq!(third.report.disk_hits, 0);
 }
 
+#[test]
+fn a_disk_cache_kept_small_gives_the_same_outputs() {
+    let g = compile(&island(5));
+    let held = |dir: &std::path::Path| -> u64 {
+        walk(dir)
+            .iter()
+            .map(|p| std::fs::metadata(p).unwrap().len())
+            .sum()
+    };
+    let unlimited = tempfile::tempdir().unwrap();
+    let reference = evaluator(2)
+        .with_disk_cache(unlimited.path().to_path_buf())
+        .evaluate(&g, &opts());
+    assert!(reference.ok());
+    // Room for about half of what the island stores.
+    let limit = held(unlimited.path()) / 2;
+    let dir = tempfile::tempdir().unwrap();
+    let make = || {
+        evaluator(2)
+            .with_disk_cache_limit(limit)
+            .with_disk_cache(dir.path().to_path_buf())
+    };
+    assert_eq!(make().disk_cache_limit(), Some(limit));
+    let first = make().evaluate(&g, &opts());
+    assert!(first.ok(), "{:#?}", first.report.diagnostics);
+    assert!(held(dir.path()) <= limit, "{} > {limit}", held(dir.path()));
+    assert!(!walk(dir.path()).is_empty());
+    // A new evaluator computes again what the trims removed, which may be
+    // all of it: each write past the limit removes the entries used longest
+    // ago, and which those are depends on the order the workers wrote them.
+    let second = make().evaluate(&g, &opts());
+    assert!(second.ok(), "{:#?}", second.report.diagnostics);
+    assert!(held(dir.path()) <= limit);
+    for id in g.nodes.keys() {
+        assert_eq!(
+            output_hash(reference.output(id).unwrap()),
+            output_hash(second.output(id).unwrap()),
+            "node {id}"
+        );
+    }
+
+    // A limit of 0 turns the disk cache off.
+    let off = tempfile::tempdir().unwrap();
+    let ev = evaluator(2)
+        .with_disk_cache(off.path().to_path_buf())
+        .with_disk_cache_limit(0);
+    assert_eq!(ev.disk_cache_limit(), None);
+    assert!(ev.evaluate(&g, &opts()).ok());
+    assert!(walk(off.path()).is_empty());
+}
+
 fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut out = Vec::new();
     for e in std::fs::read_dir(dir).unwrap() {

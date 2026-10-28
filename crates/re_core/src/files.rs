@@ -760,6 +760,37 @@ pub trait WritableStore: Send + Sync + fmt::Debug {
     ///
     /// The folder exists but cannot be listed.
     fn list(&self, dir: &str) -> io::Result<Vec<String>>;
+    /// Every file under `dir` (`""` for all), recursively, relative to the
+    /// store's root, with its size in bytes: the file written or
+    /// [touched](Self::touch) longest ago first, ties in path order.
+    ///
+    /// The default is for a store that keeps no times: the files in path
+    /// order, each read for its size.
+    ///
+    /// # Errors
+    ///
+    /// The folder exists but cannot be listed.
+    fn list_by_age(&self, dir: &str) -> io::Result<Vec<(String, u64)>> {
+        let mut out = Vec::new();
+        for path in self.list(dir)? {
+            if let Some(bytes) = self.read(&path)? {
+                out.push((path, bytes.len() as u64));
+            }
+        }
+        Ok(out)
+    }
+    /// Marks the file used now without changing it, so
+    /// [`list_by_age`](Self::list_by_age) puts it after every file written or
+    /// touched before. A missing file is not an error. The default does
+    /// nothing.
+    ///
+    /// # Errors
+    ///
+    /// The file exists but cannot be marked.
+    fn touch(&self, rel: &str) -> io::Result<()> {
+        let _ = rel;
+        Ok(())
+    }
     /// The store's folder on disk, when it has one.
     fn path(&self) -> Option<&Path>;
 }
@@ -813,6 +844,66 @@ impl WritableStore for DiskStore {
         Ok(out)
     }
 
+    fn list_by_age(&self, dir: &str) -> io::Result<Vec<(String, u64)>> {
+        type Aged = (std::time::SystemTime, String, u64);
+        fn walk(root: &Path, dir: &Path, out: &mut Vec<Aged>) -> io::Result<()> {
+            let entries = match std::fs::read_dir(dir) {
+                Ok(e) => e,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+                Err(e) => return Err(e),
+            };
+            for entry in entries {
+                let entry = entry?;
+                let p = entry.path();
+                // The entry's own metadata needs no open on Windows; a link
+                // is followed, as `list` does. A file another process removed
+                // since the folder was read is skipped.
+                let meta = match entry.metadata() {
+                    Ok(m) if m.is_symlink() => std::fs::metadata(&p),
+                    other => other,
+                };
+                let meta = match meta {
+                    Ok(m) => m,
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                    Err(e) => return Err(e),
+                };
+                if meta.is_dir() {
+                    walk(root, &p, out)?;
+                } else if let Some(rel) = relative_project_path(root, &p) {
+                    let modified = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+                    out.push((modified, rel.as_str().to_owned(), meta.len()));
+                }
+            }
+            Ok(())
+        }
+        let mut out = Vec::new();
+        walk(&self.root, &os_join(&self.root, dir), &mut out)?;
+        out.sort();
+        Ok(out.into_iter().map(|(_, path, len)| (path, len)).collect())
+    }
+
+    /// Sets the file's modification time, which is its age.
+    fn touch(&self, rel: &str) -> io::Result<()> {
+        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+        {
+            // Write access is what Windows asks to set a file's times.
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .open(os_join(&self.root, rel));
+            match file {
+                Ok(file) => file.set_modified(crate::time::SystemTime::now()),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(e),
+            }
+        }
+        // No folders on the web, so no file to mark.
+        #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+        {
+            let _ = rel;
+            Ok(())
+        }
+    }
+
     fn path(&self) -> Option<&Path> {
         Some(&self.root)
     }
@@ -821,42 +912,90 @@ impl WritableStore for DiskStore {
 /// Files kept in memory (tests, and stores with nowhere to persist).
 #[derive(Debug, Default)]
 struct MemoryStore {
-    files: Mutex<BTreeMap<String, Vec<u8>>>,
+    files: Mutex<MemoryFiles>,
+}
+
+/// The files, and the order they were written or touched in.
+#[derive(Debug, Default)]
+struct MemoryFiles {
+    files: BTreeMap<String, Vec<u8>>,
+    /// Every file's path and size, the one written or touched longest ago
+    /// first.
+    by_age: Vec<(String, u64)>,
+}
+
+impl MemoryFiles {
+    /// Takes `rel` out of [`by_age`](Self::by_age).
+    fn take(&mut self, rel: &str) -> Option<(String, u64)> {
+        let i = self.by_age.iter().position(|(p, _)| p == rel)?;
+        Some(self.by_age.remove(i))
+    }
 }
 
 impl MemoryStore {
-    fn files(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Vec<u8>>> {
+    fn files(&self) -> std::sync::MutexGuard<'_, MemoryFiles> {
         self.files.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// What the paths under `dir` (`""` for all) start with.
+fn dir_prefix(dir: &str) -> String {
+    if dir.is_empty() {
+        String::new()
+    } else {
+        format!("{dir}/")
     }
 }
 
 impl WritableStore for MemoryStore {
     fn read(&self, rel: &str) -> io::Result<Option<Vec<u8>>> {
-        Ok(self.files().get(rel).cloned())
+        Ok(self.files().files.get(rel).cloned())
     }
 
     fn write(&self, rel: &str, bytes: &[u8]) -> io::Result<()> {
-        self.files().insert(rel.to_owned(), bytes.to_vec());
+        let mut files = self.files();
+        files.files.insert(rel.to_owned(), bytes.to_vec());
+        files.take(rel);
+        files.by_age.push((rel.to_owned(), bytes.len() as u64));
         Ok(())
     }
 
     fn remove(&self, rel: &str) -> io::Result<()> {
-        self.files().remove(rel);
+        let mut files = self.files();
+        if files.files.remove(rel).is_some() {
+            files.take(rel);
+        }
         Ok(())
     }
 
     fn list(&self, dir: &str) -> io::Result<Vec<String>> {
-        let prefix = if dir.is_empty() {
-            String::new()
-        } else {
-            format!("{dir}/")
-        };
+        let prefix = dir_prefix(dir);
         Ok(self
             .files()
+            .files
             .keys()
             .filter(|k| k.starts_with(&prefix))
             .cloned()
             .collect())
+    }
+
+    fn list_by_age(&self, dir: &str) -> io::Result<Vec<(String, u64)>> {
+        let prefix = dir_prefix(dir);
+        Ok(self
+            .files()
+            .by_age
+            .iter()
+            .filter(|(p, _)| p.starts_with(&prefix))
+            .cloned()
+            .collect())
+    }
+
+    fn touch(&self, rel: &str) -> io::Result<()> {
+        let mut files = self.files();
+        if let Some(file) = files.take(rel) {
+            files.by_age.push(file);
+        }
+        Ok(())
     }
 
     fn path(&self) -> Option<&Path> {
@@ -972,6 +1111,13 @@ impl WritableDir {
         self.store.remove(&self.full(rel)?)
     }
 
+    /// `dir` as the store names it.
+    fn full_dir(&self, dir: &str) -> io::Result<String> {
+        let dir = ProjectDir::new(dir).map_err(|e| invalid(dir, e))?;
+        let full = format!("{}{}", self.prefix, dir.as_str());
+        Ok(full.strip_suffix('/').unwrap_or(&full).to_owned())
+    }
+
     /// Every file under `dir` (`""` for the whole folder), relative to this
     /// folder, sorted.
     ///
@@ -979,15 +1125,40 @@ impl WritableDir {
     ///
     /// `dir` is not a valid relative directory, or it cannot be listed.
     pub fn list(&self, dir: &str) -> io::Result<Vec<String>> {
-        let dir = ProjectDir::new(dir).map_err(|e| invalid(dir, e))?;
-        let full = format!("{}{}", self.prefix, dir.as_str());
-        let full = full.strip_suffix('/').unwrap_or(&full);
         Ok(self
             .store
-            .list(full)?
+            .list(&self.full_dir(dir)?)?
             .into_iter()
             .filter_map(|p| p.strip_prefix(&self.prefix).map(str::to_owned))
             .collect())
+    }
+
+    /// Every file under `dir` (`""` for the whole folder), relative to this
+    /// folder, with its size in bytes: the file written or
+    /// [touched](Self::touch) longest ago first. A cache keeps to a size by
+    /// removing files from the front.
+    ///
+    /// # Errors
+    ///
+    /// `dir` is not a valid relative directory, or it cannot be listed.
+    pub fn list_by_age(&self, dir: &str) -> io::Result<Vec<(String, u64)>> {
+        Ok(self
+            .store
+            .list_by_age(&self.full_dir(dir)?)?
+            .into_iter()
+            .filter_map(|(p, len)| p.strip_prefix(&self.prefix).map(|p| (p.to_owned(), len)))
+            .collect())
+    }
+
+    /// Marks the file used now without changing it, so
+    /// [`list_by_age`](Self::list_by_age) puts it after every file written or
+    /// touched before. A missing file is not an error.
+    ///
+    /// # Errors
+    ///
+    /// `rel` is not a valid relative path, or the file cannot be marked.
+    pub fn touch(&self, rel: &str) -> io::Result<()> {
+        self.store.touch(&self.full(rel)?)
     }
 
     /// The folder on disk, when it has one (`None` in memory and on the web).
@@ -1417,6 +1588,90 @@ mod tests {
         );
         assert_eq!(WritableDir::memory().path(), None);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn writable_dirs_list_files_by_age() {
+        let root = tempdir("by_age");
+        let owned = |files: &[(&str, u64)]| -> Vec<(String, u64)> {
+            files.iter().map(|(p, n)| (p.to_string(), *n)).collect()
+        };
+        for dir in [WritableDir::dir(&root), WritableDir::memory()] {
+            let cache = dir.sub("cache");
+            assert_eq!(cache.list_by_age("").unwrap(), []);
+            cache.write("b.bin", b"bb").unwrap();
+            cache.write("a/c.bin", b"ccc").unwrap();
+            cache.write("d.bin", b"d").unwrap();
+            if let Some(folder) = cache.path() {
+                // File times are coarse: give the files ages a second apart,
+                // long ago, in the order they were written.
+                for (i, f) in ["b.bin", "a/c.bin", "d.bin"].into_iter().enumerate() {
+                    let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1 + i as u64);
+                    std::fs::File::options()
+                        .write(true)
+                        .open(os_join(folder, f))
+                        .unwrap()
+                        .set_modified(t)
+                        .unwrap();
+                }
+            }
+            assert_eq!(
+                cache.list_by_age("").unwrap(),
+                owned(&[("b.bin", 2), ("a/c.bin", 3), ("d.bin", 1)])
+            );
+            // A touched file is the youngest; touching a missing one is fine.
+            cache.touch("b.bin").unwrap();
+            cache.touch("missing.bin").unwrap();
+            assert_eq!(cache.read("missing.bin").unwrap(), None);
+            assert_eq!(
+                cache.list_by_age("").unwrap(),
+                owned(&[("a/c.bin", 3), ("d.bin", 1), ("b.bin", 2)])
+            );
+            assert_eq!(cache.read("b.bin").unwrap().as_deref(), Some(&b"bb"[..]));
+            // So is a file written again.
+            cache.write("a/c.bin", b"cc").unwrap();
+            assert_eq!(cache.list_by_age("").unwrap()[0], ("d.bin".to_string(), 1));
+            assert_eq!(cache.list_by_age("a").unwrap(), owned(&[("a/c.bin", 2)]));
+            assert_eq!(
+                dir.list_by_age("cache/a").unwrap(),
+                owned(&[("cache/a/c.bin", 2)])
+            );
+            assert!(cache.list_by_age("../x").is_err());
+            assert!(cache.touch("../x").is_err());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_store_without_times_lists_by_path() {
+        /// Only the methods a store must have.
+        #[derive(Debug, Default)]
+        struct Plain(MemoryStore);
+        impl WritableStore for Plain {
+            fn read(&self, rel: &str) -> io::Result<Option<Vec<u8>>> {
+                self.0.read(rel)
+            }
+            fn write(&self, rel: &str, bytes: &[u8]) -> io::Result<()> {
+                self.0.write(rel, bytes)
+            }
+            fn remove(&self, rel: &str) -> io::Result<()> {
+                self.0.remove(rel)
+            }
+            fn list(&self, dir: &str) -> io::Result<Vec<String>> {
+                self.0.list(dir)
+            }
+            fn path(&self) -> Option<&Path> {
+                None
+            }
+        }
+        let dir = WritableDir::from_store(Arc::new(Plain::default()));
+        dir.write("b", b"bb").unwrap();
+        dir.write("a", b"a").unwrap();
+        dir.touch("a").unwrap();
+        assert_eq!(
+            dir.list_by_age("").unwrap(),
+            [("a".to_string(), 1), ("b".to_string(), 2)]
+        );
     }
 
     #[test]

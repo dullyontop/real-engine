@@ -373,3 +373,59 @@ fn terrain_that_appears_late_still_catches_the_character() {
         p.y
     );
 }
+
+/// A project whose `real.toml` ends with `[proc] disk_cache_mb = mb`.
+fn project_with_cache_mb(builder: &str, mb: u32) -> tempfile::TempDir {
+    let dir = project(builder);
+    let toml = dir.path().join("real.toml");
+    let text = std::fs::read_to_string(&toml).unwrap();
+    std::fs::write(&toml, format!("{text}\n[proc]\ndisk_cache_mb = {mb}\n")).unwrap();
+    dir
+}
+
+fn cache_limit(app: &App) -> Option<u64> {
+    let store = app.world().ecs.get_resource::<re_proc::GraphStore>();
+    store.unwrap().evaluator().disk_cache_limit()
+}
+
+#[test]
+fn the_proc_cache_keeps_to_disk_cache_mb() {
+    // Two fields of 129 × 129 heights a seed: about 130 KB of new entries.
+    let builder = BUILDER
+        .replace("size = 33,", "size = 129,")
+        .replace("size = 17 }", "size = 65 }");
+    let dir = project_with_cache_mb(&builder, 1);
+    let mut app = open(dir.path());
+    assert_eq!(cache_limit(&app), Some(1 << 20));
+    let cache = dir.path().join(".real/cache/proc");
+    let held = || -> u64 {
+        std::fs::read_dir(&cache)
+            .unwrap()
+            .map(|e| e.unwrap().metadata().unwrap().len())
+            .sum()
+    };
+    let mut most = 0;
+    for seed in 2..20 {
+        regenerate(&mut app, seed);
+        let now = held();
+        assert!(now <= 1 << 20, "after seed {seed}: {now} bytes");
+        most = most.max(now);
+    }
+    assert!(
+        most > 900 << 10,
+        "the cache filled up: {most} bytes at most"
+    );
+    // A seed whose entries were removed generates again.
+    regenerate(&mut app, 2);
+    let report = app.run_headless(Some(2), None).unwrap();
+    assert!(report.ok(), "{:?}", report.diagnostics);
+}
+
+#[test]
+fn a_zero_disk_cache_mb_keeps_no_disk_cache() {
+    let dir = project_with_cache_mb(BUILDER, 0);
+    let mut app = open(dir.path());
+    assert_eq!(cache_limit(&app), None);
+    regenerate(&mut app, 2);
+    assert!(!dir.path().join(".real/cache/proc").exists());
+}

@@ -517,7 +517,7 @@ Known limits: a road's footprint is the union of its ribbon's triangles, so a cu
 - Nodes are evaluated in topological order. Independent nodes run in parallel on the rayon pool.
 - Each node's key is `blake3(kind, version, canonical_json(params), input keys…, node_seed)`.
 - `node_seed = Pcg32::from_seed(graph.seed).fork(hash64(node_id))`. Seeds come from the node id, so adding or removing a node never changes another node's random numbers.
-- Results are cached in memory, and on disk in `.real/cache/proc/<key>.bin` (postcard) for heavy outputs (fields and meshes).
+- Results are cached in memory, and on disk in `.real/cache/proc/<key>.bin` (postcard) for heavy outputs (fields and meshes). The disk cache keeps to `[proc] disk_cache_mb` (1 GiB by default; `0` keeps none): a write that takes the folder past it removes the entries used longest ago, by file time, until the folder holds nine tenths of the limit, and a hit makes its entry young again (ADR-0015's amendment). A browser keeps the folder in memory, at most 64 MiB of it.
 - `EvalReport` records per node: key, cache hit or miss, time, output size and diagnostics (`RE4xxx`). `real graph eval FILE [--seed N] [--json]` prints it; `FILE` resolves against the working directory, then the project, and on failure `--json` prints `{ ok: false, diagnostics }`. `schemas/graph.schema.json` carries every M1 node's parameter schema.
 - Meshes become `AssetId::Derived(key)`. The renderer receives them through `upload_mesh`, keyed by that hash, so an unchanged mesh is never uploaded again. A mesh that no entity references any more is released (§3).
 
@@ -750,9 +750,10 @@ memory_limit_mb = 256
 checker = "luau-lsp"          # or a path to a patched luau-analyze (ADR-0013)
 seed = 0                      # math.random's seed (a replay's seed takes its place)
 
-[proc]                        # Luau node kinds (M3, ADR-0043 §4)
+[proc]                        # Luau node kinds (M3, ADR-0043 §4) and the node-output cache
 luau_budget = 20000000        # safepoints per evaluation (RE4101 past it)
 luau_memory_mb = 256
+disk_cache_mb = 1024          # .real/cache/proc; past it the entries used longest ago go; 0 = none
 
 [audio]                       # mixer buses, sends, effects and snapshots (M3, ADR-0041)
 default_bus = "sfx"           # where sources without a bus play
@@ -928,7 +929,7 @@ Goldens are kept per backend, because GL and Vulkan differ in small ways (ADR-00
 
 ### Caches
 
-Caches are postcard with a `(magic, format_version)` header, stored in `.real/cache/`. Keys are blake3 hashes. Every cache is safe to delete. Runtime code reaches them through `ProjectFiles::writable(Cache)` (`assets/` and `proc/` inside it), never by joining paths itself. The compat boot no longer writes `.real/defaults/`: an engine layer serves the default scripts.
+Caches are postcard with a `(magic, format_version)` header, stored in `.real/cache/`. Keys are blake3 hashes. Every cache is safe to delete, and `proc/` keeps to a size limit, `[proc] disk_cache_mb` (§5). Runtime code reaches them through `ProjectFiles::writable(Cache)` (`assets/` and `proc/` inside it), never by joining paths itself. The compat boot no longer writes `.real/defaults/`: an engine layer serves the default scripts.
 
 ### Project files at run time
 

@@ -226,6 +226,9 @@ struct MemCache {
 /// The default memory-cache budget: 256 MiB.
 pub const DEFAULT_MEMORY_BUDGET: u64 = 256 << 20;
 
+/// The default size limit of the disk cache: 1 GiB (`[proc] disk_cache_mb`).
+pub const DEFAULT_DISK_CACHE_LIMIT: u64 = 1 << 30;
+
 /// Evaluates graphs. Holds the node registry, the memory cache and the
 /// optional disk cache; safe to share between threads (and between a world
 /// and its copies) behind an `Arc`.
@@ -233,6 +236,8 @@ pub struct Evaluator {
     registry: Arc<NodeRegistry>,
     pool: Option<Arc<TaskPool>>,
     disk: Option<DiskCache>,
+    /// The disk cache's size limit, also for one attached later.
+    disk_limit: u64,
     memory: Mutex<MemCache>,
     budget: u64,
 }
@@ -242,6 +247,7 @@ impl std::fmt::Debug for Evaluator {
         f.debug_struct("Evaluator")
             .field("kinds", &self.registry.len())
             .field("disk", &self.disk.as_ref().map(DiskCache::dir))
+            .field("disk_limit", &self.disk_limit)
             .finish_non_exhaustive()
     }
 }
@@ -278,6 +284,7 @@ impl Evaluator {
             registry,
             pool: None,
             disk: None,
+            disk_limit: DEFAULT_DISK_CACHE_LIMIT,
             memory: Mutex::new(MemCache::default()),
             budget: DEFAULT_MEMORY_BUDGET,
         }
@@ -291,17 +298,34 @@ impl Evaluator {
     }
 
     /// Caches fields, meshes and points in the directory `dir`
-    /// (`<project>/.real/cache/proc`).
+    /// (`<project>/.real/cache/proc`), up to the
+    /// [size limit](Self::with_disk_cache_limit).
     #[must_use]
     pub fn with_disk_cache(self, dir: impl Into<PathBuf>) -> Self {
         self.with_disk_cache_in(WritableDir::dir(dir))
     }
 
-    /// Caches fields, meshes and points in `dir` (the run's `proc` cache folder).
+    /// Caches fields, meshes and points in `dir` (the run's `proc` cache
+    /// folder), up to the [size limit](Self::with_disk_cache_limit).
     #[must_use]
     pub fn with_disk_cache_in(mut self, dir: WritableDir) -> Self {
-        self.disk = Some(DiskCache::new(dir));
+        self.disk = (self.disk_limit > 0).then(|| DiskCache::new(dir, self.disk_limit));
         self
+    }
+
+    /// Keeps the disk cache to at most `bytes` ([`DEFAULT_DISK_CACHE_LIMIT`]
+    /// unless set): a write that takes the folder past it removes the
+    /// entries used longest ago, until it holds at most nine tenths of it.
+    /// An entry's age is its file's: a write or a hit makes it young. `0`
+    /// turns the disk cache off: nothing is read from the folder or written
+    /// to it.
+    #[must_use]
+    pub fn with_disk_cache_limit(mut self, bytes: u64) -> Self {
+        self.disk_limit = bytes;
+        match self.disk.take() {
+            Some(disk) => self.with_disk_cache_in(disk.dir().clone()),
+            None => self,
+        }
     }
 
     /// Sets the memory-cache budget in bytes (least recently used outputs
@@ -318,7 +342,8 @@ impl Evaluator {
     }
 
     /// This evaluator with `registry` instead of its own: the same pool, disk
-    /// cache and memory budget, with an empty memory cache. Keys include
+    /// cache (and its count of the folder's size) and memory budget, with an
+    /// empty memory cache. Keys include
     /// each kind's version and implementation hash, so disk entries of
     /// kinds that did not change stay valid.
     pub fn with_registry(&self, registry: Arc<NodeRegistry>) -> Evaluator {
@@ -326,6 +351,7 @@ impl Evaluator {
             registry,
             pool: self.pool.clone(),
             disk: self.disk.clone(),
+            disk_limit: self.disk_limit,
             memory: Mutex::new(MemCache::default()),
             budget: self.budget,
         }
@@ -334,6 +360,11 @@ impl Evaluator {
     /// The disk cache directory, if there is a disk cache and it is on disk.
     pub fn disk_cache_dir(&self) -> Option<&Path> {
         self.disk.as_ref().and_then(|d| d.dir().path())
+    }
+
+    /// The disk cache's size limit in bytes, if there is a disk cache.
+    pub fn disk_cache_limit(&self) -> Option<u64> {
+        self.disk.as_ref().map(DiskCache::limit)
     }
 
     /// Empties the memory cache.
