@@ -616,7 +616,7 @@
     },
     "Collider": {
       "type": "object",
-      "description": "A collision shape, in the entity's local space.\n\n`re_app` maps it to a `re_types::physics::BodyDesc`: without a\n[`RigidBody`] the body is static, and `enabled = false` removes the body.\n`Mesh` and `Heightfield` shapes are static only (`re_physics` refuses them\non dynamic and kinematic bodies with `RE5003`).",
+      "description": "A collision shape, in the entity's local space.\n\n`re_app` maps it to a `re_types::physics::BodyDesc`: without a\n[`RigidBody`] the body is static, and `enabled = false` removes the body.\n`Mesh` shapes are for static and kinematic bodies (a kinematic one takes\n`RigidBody.mass`) and `Heightfield` shapes for static ones; `re_physics`\nrefuses the others with `RE5003`.",
       "properties": {
         "shape": {
           "enum": [

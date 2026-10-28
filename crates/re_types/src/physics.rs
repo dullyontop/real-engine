@@ -102,7 +102,7 @@ pub enum ShapeDesc {
         /// The points.
         points: Vec<Vec3>,
     },
-    /// A static triangle mesh (for static bodies only).
+    /// A triangle mesh (for static and kinematic bodies).
     TriangleMesh {
         /// The vertices.
         vertices: Vec<Vec3>,

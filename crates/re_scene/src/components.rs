@@ -156,8 +156,9 @@ component! {
     ///
     /// `re_app` maps it to a `re_types::physics::BodyDesc`: without a
     /// [`RigidBody`] the body is static, and `enabled = false` removes the body.
-    /// `Mesh` and `Heightfield` shapes are static only (`re_physics` refuses them
-    /// on dynamic and kinematic bodies with `RE5003`).
+    /// `Mesh` shapes are for static and kinematic bodies (a kinematic one takes
+    /// `RigidBody.mass`) and `Heightfield` shapes for static ones; `re_physics`
+    /// refuses the others with `RE5003`.
     pub struct Collider {
         /// The shape kind.
         pub shape: ColliderShape = ColliderShape::Box,
