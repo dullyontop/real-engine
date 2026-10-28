@@ -200,6 +200,9 @@
               },
               "BoneAttachment": {
                 "$ref": "#/$defs/BoneAttachment"
+              },
+              "AudioListener": {
+                "$ref": "#/$defs/AudioListener"
               }
             },
             "additionalProperties": false
@@ -791,6 +794,31 @@
           "type": "number",
           "default": 1.0,
           "description": "Playback speed, above 0: 1 is normal, and the pitch shifts with the\nspeed. A source plays at most 16 times as fast."
+        },
+        "rolloff": {
+          "enum": [
+            "Natural",
+            "Inverse",
+            "Linear",
+            "Off"
+          ],
+          "default": "Natural",
+          "description": "How a spatial sound's volume falls with distance: `Natural` (the\nlevel in decibels falls evenly to silence at `max_distance`),\n`Inverse` (the physical law: -6 dB at each doubling of distance\nbeyond `min_distance`, keeping its level beyond `max_distance`),\n`Linear` (the amplitude falls evenly to silence at `max_distance`)\nor `Off` (it only pans)."
+        },
+        "min_distance": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Within this distance, in metres, the sound plays at full volume: 0\nor more, and above 0 for `Inverse`."
+        },
+        "max_distance": {
+          "type": "number",
+          "default": 100.0,
+          "description": "Where the fall with distance ends, in metres, above `min_distance`."
+        },
+        "doppler": {
+          "type": "number",
+          "default": 0.0,
+          "description": "How much the pitch follows the source's and the listener's motion\nalong the line between them (doppler): 0 is none, 1 is physical,\nand more exaggerates."
         }
       },
       "additionalProperties": false
@@ -1221,6 +1249,18 @@
           "type": "string",
           "default": "",
           "description": "The joint's name in the parent's skin."
+        }
+      },
+      "additionalProperties": false
+    },
+    "AudioListener": {
+      "type": "object",
+      "description": "Where sounds are heard from. The first active `AudioListener`, in\nentity order, hears; without one, the first active camera does. The\nlistener faces -Z, as a camera does.",
+      "properties": {
+        "active": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether this listener can be the one that hears."
         }
       },
       "additionalProperties": false

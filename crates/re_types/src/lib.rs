@@ -47,7 +47,9 @@ pub mod replay;
 pub use anim::{
     AnimGraph, Channel, ClipData, Interpolation, JointDesc, SkinData, TargetChannels, Trs,
 };
-pub use audio::{AudioCmd, AudioGraphDesc, BusLevel, EffectDesc, EffectParam};
+pub use audio::{
+    AudioCmd, AudioGraphDesc, BusLevel, EffectDesc, EffectParam, Rolloff, SoundOp, Spatial,
+};
 pub use graph::{EdgeDoc, GraphDoc, GraphDocError, NodeDoc};
 pub use host::{HostError, HostResult, HostServices};
 pub use ids::EntityId;

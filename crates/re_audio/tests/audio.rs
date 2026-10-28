@@ -22,6 +22,7 @@ fn one_shot(clip: &str, volume: f32) -> AudioCmd {
         clip: clip.into(),
         position: None,
         volume,
+        id: None,
     }
 }
 
@@ -168,6 +169,7 @@ fn stop_all_silences_everything() {
             clip: "tone".into(),
             position: Some(Vec3::new(1.0, 0.0, 0.0)),
             volume: 1.0,
+            id: None,
         },
     ]);
     assert_eq!(a.playing(), 2);
@@ -404,6 +406,7 @@ fn one_shots_that_end_free_their_voices() {
         clip: "step".into(),
         position: Some(Vec3::X),
         volume: 1.0,
+        id: None,
     };
     for frame in 0..300 {
         let problems = a.apply(std::slice::from_ref(&step));
