@@ -217,8 +217,11 @@ fixed steps    FixedClock.advance(frame_dt × time scale) → 0..=5 steps of 1/6
                  Physics::poses_into(&mut poses); Physics::events()
   PostSimulation sync::physics::pull: poses → Transform; contact events → script signals;
                  ragdoll poses blended into their skins; bone attachments placed
-Sync           propagate GlobalTransform; interpolate between steps;
-               sync::render::build → RenderSnapshot; sync::audio → Vec<AudioCmd>
+LateFrame      propagate GlobalTransform; sync::drawn: each moving body's pose interpolated between
+               the last two steps, and everything under it moved with it (DrawnPoses); script
+               late-frame callbacks (time.on_late_frame), where cameras follow what is drawn
+Sync           propagate GlobalTransform; sync::render::build (at the drawn poses) → RenderSnapshot;
+               sync::audio → Vec<AudioCmd>
 Render         Renderer::render(device, queue, view, &snapshot); egui overlay through paint_ui;
                Audio::apply(&audio_cmds)
 EndFrame       apply scripts' host requests (HUD text, mouse behaviour, regeneration, screenshots,
