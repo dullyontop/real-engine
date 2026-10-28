@@ -23,8 +23,8 @@ use std::time::Duration;
 
 use re_compat::net::session::{ClientNet, PROTOCOL, ServerNet};
 use re_core::Diagnostic;
-use re_core::files::{Form, LayerKind, ProjectFiles, Writable};
-use re_net::{Config, Endpoint, Fingerprint, ServerKey, Transport, UdpTransport, WsTransport};
+use re_core::files::{Form, LayerKind, ProjectFiles};
+use re_net::{Config, Endpoint, Fingerprint, Transport, UdpTransport, WsTransport};
 use serde::{Deserialize, Serialize};
 
 /// `[net]` in `real.toml`: ports, players, rates and the timeout of online
@@ -240,27 +240,7 @@ impl NetPlay {
         let port = options.port.unwrap_or(config.port);
         match &options.role {
             NetRole::Server | NetRole::Host => {
-                let max_players = options.max_players.unwrap_or(config.max_players);
-                let ip = options.bind.as_deref().unwrap_or("0.0.0.0");
-                let (transport, websocket) =
-                    serve(ip, port, config.websocket, max_players, timeout)?;
-                let (key, new_key) = if options.keep_key {
-                    ServerKey::load_or_make(files.writable(Writable::Data))?
-                } else {
-                    (ServerKey::generate()?, false)
-                };
-                let mut cfg = Config::server(PROTOCOL, game);
-                cfg.send_rate = f64::from(config.server_rate.max(1));
-                cfg.max_connections = max_players as usize;
-                cfg.timeout = timeout;
-                cfg.key = Some(key);
-                let end = Endpoint::try_server(transport, cfg)?;
-                let bound = NetBound {
-                    addr: end.local_addr(),
-                    websocket,
-                    fingerprint: end.fingerprint(),
-                    new_key,
-                };
+                let (end, bound) = serve(&options, config, files, game, port, timeout)?;
                 let play = NetPlay::Bound {
                     end: Box::new(end),
                     options,
@@ -342,38 +322,63 @@ impl NetPlay {
     }
 }
 
-/// A server's transport on `ip:port`: UDP, and a WebSocket listener on TCP at
-/// the same port when `websocket` (for twice the players, so a page that
-/// reloads can join while its old link times out).
+/// A server's or host's socket and key: UDP on `port`, and a WebSocket
+/// listener on TCP at the same port unless `[net] websocket = false` (for
+/// twice the players, so a page that reloads can join while its old link
+/// times out).
 #[cfg(not(target_arch = "wasm32"))]
 fn serve(
-    ip: &str,
+    options: &NetOptions,
+    config: &NetConfig,
+    files: &ProjectFiles,
+    game: u64,
     port: u16,
-    websocket: bool,
-    max_players: u32,
     timeout: Duration,
-) -> Result<(Link, Option<SocketAddr>), Diagnostic> {
+) -> Result<(Endpoint<Link>, NetBound), Diagnostic> {
+    let max_players = options.max_players.unwrap_or(config.max_players);
+    let ip = options.bind.as_deref().unwrap_or("0.0.0.0");
     let addr = re_net::resolve(ip, port)?;
     let addr = SocketAddr::new(addr.ip(), port);
-    if !websocket {
-        return Ok((Box::new(re_net::ServerTransport::udp(addr)?), None));
-    }
-    let links = 2 * max_players as usize + 16;
-    let mut transport = re_net::ServerTransport::with_websocket(addr, links)?;
-    transport.set_link_timeout(timeout);
-    let at = transport.websocket_addr();
-    Ok((Box::new(transport), at))
+    let (transport, websocket): (Link, _) = if config.websocket {
+        let links = 2 * max_players as usize + 16;
+        let mut transport = re_net::ServerTransport::with_websocket(addr, links)?;
+        transport.set_link_timeout(timeout);
+        let at = transport.websocket_addr();
+        (Box::new(transport), at)
+    } else {
+        (Box::new(re_net::ServerTransport::udp(addr)?), None)
+    };
+    let (key, new_key) = if options.keep_key {
+        re_net::ServerKey::load_or_make(files.writable(re_core::files::Writable::Data))?
+    } else {
+        (re_net::ServerKey::generate()?, false)
+    };
+    let mut cfg = Config::server(PROTOCOL, game);
+    cfg.send_rate = f64::from(config.server_rate.max(1));
+    cfg.max_connections = max_players as usize;
+    cfg.timeout = timeout;
+    cfg.key = Some(key);
+    let end = Endpoint::try_server(transport, cfg)?;
+    let bound = NetBound {
+        addr: end.local_addr(),
+        websocket,
+        fingerprint: end.fingerprint(),
+        new_key,
+    };
+    Ok((end, bound))
 }
 
-/// A browser cannot listen for players (ADR-0049 §10).
+/// A browser cannot listen for players (ADR-0049 §10), so its build has no
+/// server: no listener, no server key and no server half of the handshake.
 #[cfg(target_arch = "wasm32")]
 fn serve(
-    _ip: &str,
+    _options: &NetOptions,
+    _config: &NetConfig,
+    _files: &ProjectFiles,
+    _game: u64,
     _port: u16,
-    _websocket: bool,
-    _max_players: u32,
     _timeout: Duration,
-) -> Result<(Link, Option<SocketAddr>), Diagnostic> {
+) -> Result<(Endpoint<Link>, NetBound), Diagnostic> {
     Err(Diagnostic::error(
         re_net::codes::CANNOT_SERVE,
         "a game in a browser cannot serve: it can only join a server",

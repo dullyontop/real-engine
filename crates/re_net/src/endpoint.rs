@@ -235,8 +235,8 @@ impl<T: Transport> Endpoint<T> {
     ///
     /// # Panics
     ///
-    /// When the platform has no secure random numbers for its keys;
-    /// [`Endpoint::try_server`] reports that as `RE8916` instead.
+    /// When the platform has no secure random numbers for its keys, or in a
+    /// browser; [`Endpoint::try_server`] reports those as errors instead.
     pub fn server(transport: T, config: Config) -> Endpoint<T> {
         Endpoint::try_server(transport, config).unwrap_or_else(|d| panic!("{d}"))
     }
@@ -246,8 +246,16 @@ impl<T: Transport> Endpoint<T> {
     ///
     /// # Errors
     ///
-    /// `RE8916` when the platform has no secure random numbers.
+    /// `RE8916` when the platform has no secure random numbers, and `RE8911`
+    /// in a browser, which can only join a server (ADR-0049 §10), so its
+    /// build leaves out the server's half of the handshake.
     pub fn try_server(transport: T, mut config: Config) -> Result<Endpoint<T>, Diagnostic> {
+        if cfg!(target_arch = "wasm32") {
+            return Err(Diagnostic::error(
+                codes::CANNOT_SERVE,
+                "a browser cannot serve: it can only join a server",
+            ));
+        }
         if config.key.is_none() {
             config.key = Some(ServerKey::generate()?);
         }
@@ -739,21 +747,21 @@ impl<T: Transport> Endpoint<T> {
                     p.conn.stats.malformed += 1;
                 }
             }
-            Packet::OtherHello { salt, .. } if self.server => {
+            Packet::OtherHello { salt, .. } if self.serves() => {
                 self.deny(from, salt, DenyReason::Version);
             }
             Packet::Hello {
                 salt,
                 protocol,
                 game,
-            } if self.server => self.on_hello(now, from, salt, protocol, game),
+            } if self.serves() => self.on_hello(now, from, salt, protocol, game),
             Packet::Response {
                 salt,
                 cookie,
                 protocol,
                 game,
                 msg1,
-            } if self.server => self.on_response(now, from, salt, &cookie, protocol, game, msg1),
+            } if self.serves() => self.on_response(now, from, salt, &cookie, protocol, game, msg1),
             Packet::Challenge {
                 salt,
                 cookie,
@@ -788,6 +796,12 @@ impl<T: Transport> Endpoint<T> {
         }
     }
 
+    /// True for a server. Never in a browser, so its build leaves the
+    /// server's half of the handshake out.
+    fn serves(&self) -> bool {
+        !cfg!(target_arch = "wasm32") && self.server
+    }
+
     /// True when a client hears from the address it connects to.
     fn is_from_server(&self, from: SocketAddr) -> bool {
         !self.server && Some(from) == self.server_addr
@@ -816,7 +830,10 @@ impl<T: Transport> Endpoint<T> {
     }
 
     /// A server's Response, checked in order of cost (ADR-0067 §4).
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the Response's fields, as the decoder gives them"
+    )]
     fn on_response(
         &mut self,
         now: Duration,
