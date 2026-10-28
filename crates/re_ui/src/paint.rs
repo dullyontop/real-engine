@@ -1,46 +1,45 @@
-//! Painting laid-out UI as egui shapes.
+//! Painting laid-out items as egui shapes: the draw list re_render's UI pass
+//! paints.
 //!
-//! Backgrounds are rectangles (rounded by `UICorner`, outlined by the border
-//! or a `UIStroke`), or a mesh when a `UIGradient` colours them. Text is the
-//! laid-out galley, with its stroke drawn as offset copies under it. A
-//! `ViewportFrame` shows the texture the host drew its parts into. The
-//! shapes rotate with `Rotation`; a rotated element draws unclipped.
+//! Backgrounds are rectangles (rounded by [`Look::corner`], outlined by the
+//! border or a stroke), or a mesh when a gradient colours them. Text is the
+//! laid-out galley, with its stroke drawn as offset copies under it. An
+//! image is a placeholder or a host's texture. The shapes rotate with the
+//! node; a rotated node draws unclipped.
 
 use egui::epaint::{
     ClippedShape, CornerRadius, Mesh, RectShape, Shape, Stroke, StrokeKind, TextShape, Vertex,
 };
-use std::collections::HashMap;
-
 use egui::{Pos2, Rect};
 use glam::{Affine2, Vec2};
 
-use super::layout::{Item, Kind};
-use super::props::{Props, Rgba, Scope};
-use super::text;
-use re_scene::Entity;
+use crate::layout::Item;
+use crate::tree::{Gradient, Image, Look, NodeId, Rgba, StrokeMode, UiTree};
 
-/// What the input pass found that changes the look.
+/// What input found that changes the look.
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct Looks {
-    pub hovered: Option<Entity>,
-    pub pressed: Option<Entity>,
-    pub selected: Option<Entity>,
-    pub focused: Option<Entity>,
+pub struct Looks {
+    pub hovered: Option<NodeId>,
+    pub pressed: Option<NodeId>,
+    /// Outlined: the gamepad's selection.
+    pub selected: Option<NodeId>,
+    /// Has a caret: the text field with the keyboard.
+    pub focused: Option<NodeId>,
 }
 
-pub(crate) struct Painter<'a> {
-    pub s: &'a Scope<'a>,
-    pub screen: Rect,
-    pub shapes: Vec<ClippedShape>,
-    /// The texture each `ViewportFrame` was drawn into.
-    pub images: &'a HashMap<Entity, egui::TextureId>,
+/// Paints items into a list of shapes.
+pub struct Painter<'a> {
+    tree: &'a UiTree,
+    /// The clip of unclipped shapes.
+    screen: Rect,
+    shapes: Vec<ClippedShape>,
 }
 
 fn pos(p: Vec2) -> Pos2 {
     Pos2::new(p.x, p.y)
 }
 
-/// The value of a sequence at `t` (keypoints sorted by time).
+/// The value of a sequence at `t` (keys sorted by time).
 fn sample(keys: &[(f32, [f32; 3])], t: f32) -> [f32; 3] {
     let Some(first) = keys.first() else {
         return [1.0; 3];
@@ -111,7 +110,35 @@ fn outline(min: Vec2, size: Vec2, r: f32) -> Vec<Vec2> {
     pts
 }
 
+/// The first stroke of `look` that goes where `mode` says, for a node with
+/// text or without, as `(thickness, colour)` before the node's scale.
+fn stroke_of(look: &Look, text_item: bool, mode: StrokeMode) -> Option<(f32, Rgba)> {
+    look.strokes.iter().find_map(|s| {
+        let wants = if s.mode == StrokeMode::Border || !text_item {
+            StrokeMode::Border
+        } else {
+            StrokeMode::Contextual
+        };
+        (wants == mode).then_some((s.thickness, s.color))
+    })
+}
+
 impl<'a> Painter<'a> {
+    /// A painter of `tree`'s items for a target of `screen` (the clip of
+    /// shapes that have none).
+    pub fn new(tree: &'a UiTree, screen: Rect) -> Painter<'a> {
+        Painter {
+            tree,
+            screen,
+            shapes: Vec::new(),
+        }
+    }
+
+    /// The shapes painted so far, back to front.
+    pub fn finish(self) -> Vec<ClippedShape> {
+        self.shapes
+    }
+
     fn push(&mut self, clip: Option<Rect>, shape: Shape) {
         self.shapes.push(ClippedShape {
             clip_rect: clip.unwrap_or(self.screen),
@@ -119,51 +146,21 @@ impl<'a> Painter<'a> {
         });
     }
 
-    fn props(&self, e: Entity) -> Props<'a> {
-        self.s.props(e)
-    }
-
-    /// Paints one element.
+    /// Paints one item.
     pub fn item(&mut self, it: &Item, looks: &Looks) {
-        let sc = self.s;
-        let decor = sc.decor(it.e);
-        let p = self.props(it.e);
-        let corner = decor
-            .corner
-            .map(|c| self.props(c).udim("CornerRadius"))
-            .map_or(0.0, |u| {
-                (u.scale * it.size.x.min(it.size.y) + u.offset * it.scale).max(0.0)
-            });
-        let stroke_of = |mode: &str| {
-            decor.strokes.iter().find_map(|&c| {
-                let s = sc.props(c);
-                if !s.bool("Enabled", true) {
-                    return None;
-                }
-                let applies = s.item("ApplyStrokeMode", "Contextual");
-                let text_item = matches!(it.kind, Kind::Text | Kind::TextBox);
-                let wants = if applies == "Border" || !text_item {
-                    "Border"
-                } else {
-                    "Text"
-                };
-                (wants == mode).then(|| {
-                    (
-                        s.f32("Thickness", 1.0) * it.scale,
-                        s.color("Color", Rgba([0.0, 0.0, 0.0, 1.0]))
-                            .with_transparency(s.f32("Transparency", 0.0)),
-                    )
-                })
-            })
-        };
-        let mut bg = p
-            .color("BackgroundColor3", Rgba::WHITE)
-            .with_transparency(p.f32("BackgroundTransparency", 0.0));
-        let is_button = sc.is_a(it.e, "GuiButton");
-        if is_button && p.bool("AutoButtonColor", true) {
-            let k = if looks.pressed == Some(it.e) {
+        let tree = self.tree;
+        let n = tree.node(it.node);
+        let look = &n.look;
+        let corner = look.corner.map_or(0.0, |u| {
+            (u.scale * it.size.x.min(it.size.y) + u.offset * it.scale).max(0.0)
+        });
+        let text_item = n.text.is_some();
+        let stroke = |mode| stroke_of(look, text_item, mode).map(|(t, c)| (t * it.scale, c));
+        let mut bg = look.background;
+        if look.auto_color {
+            let k = if looks.pressed == Some(it.node) {
                 0.7
-            } else if looks.hovered == Some(it.e) {
+            } else if looks.hovered == Some(it.node) {
                 0.85
             } else {
                 1.0
@@ -173,11 +170,8 @@ impl<'a> Painter<'a> {
         let angle = it.angle.to_radians();
         let center = it.rot.transform_point2(it.min + it.size * 0.5);
         let rect = Rect::from_center_size(pos(center), egui::vec2(it.size.x, it.size.y));
-        let gradient = decor
-            .gradient
-            .filter(|&g| self.props(g).bool("Enabled", true));
         if bg.0[3] > 0.0 {
-            match gradient {
+            match &look.gradient {
                 Some(g) => self.gradient(it, g, bg, corner),
                 None => self.push(
                     it.clip,
@@ -187,15 +181,13 @@ impl<'a> Painter<'a> {
                 ),
             }
         }
-        // The border (UICorner hides it, as in the original) or a stroke.
-        let border = p.f32("BorderSizePixel", 1.0) * it.scale;
-        let line = match stroke_of("Border") {
+        // The border (a rounded corner hides it) or a stroke.
+        let border = look.border * it.scale;
+        let line = match stroke(StrokeMode::Border) {
             Some((t, c)) => Some((t, c)),
-            None if corner == 0.0 && border > 0.0 && bg.0[3] > 0.0 => Some((
-                border,
-                p.color("BorderColor3", Rgba([0.1, 0.1, 0.1, 1.0]))
-                    .with_transparency(p.f32("BackgroundTransparency", 0.0)),
-            )),
+            None if corner == 0.0 && border > 0.0 && bg.0[3] > 0.0 => {
+                Some((border, look.border_color))
+            }
             None => None,
         };
         if let Some((t, c)) = line
@@ -215,32 +207,22 @@ impl<'a> Painter<'a> {
                 ),
             );
         }
-        if it.kind == Kind::Image && !p.string("Image").is_empty() {
-            let c = p
-                .color("ImageColor3", Rgba::WHITE)
-                .with_transparency(p.f32("ImageTransparency", 0.0));
-            if c.0[3] > 0.0 {
+        match n.image {
+            Some(Image::Missing { tint: c }) if c.0[3] > 0.0 => {
                 self.push(
                     it.clip,
                     Shape::Rect(
                         RectShape::filled(
                             rect,
                             radius(corner),
-                            c.mul(Rgba([0.6, 0.6, 0.6, 1.0])).egui(),
+                            (c * Rgba([0.6, 0.6, 0.6, 1.0])).egui(),
                         )
                         .with_angle(angle),
                     ),
                 );
             }
-        }
-        if it.kind == Kind::Viewport
-            && let Some(&texture) = self.images.get(&it.e)
-        {
-            let c = p
-                .color("ImageColor3", Rgba::WHITE)
-                .with_transparency(p.f32("ImageTransparency", 0.0));
-            if c.0[3] > 0.0 {
-                // The picture turns with the frame.
+            Some(Image::Texture { texture, tint: c }) if c.0[3] > 0.0 => {
+                // The picture turns with the node.
                 let mut mesh = Mesh::with_texture(texture);
                 let corners = [Vec2::ZERO, Vec2::X, Vec2::ONE, Vec2::Y];
                 for uv in corners {
@@ -254,30 +236,16 @@ impl<'a> Painter<'a> {
                 mesh.indices.extend([0, 1, 2, 0, 2, 3]);
                 self.push(it.clip, Shape::Mesh(mesh.into()));
             }
+            _ => {}
         }
-        if let Some((style, laid, inner)) = &it.text {
-            let gsize = text::bounds(laid);
-            let y_align = match p.item("TextYAlignment", "Center").as_str() {
-                "Top" => 0.0,
-                "Bottom" => 1.0,
-                _ => 0.5,
-            };
-            let at = it.min
-                + Vec2::new(it.pad[0], it.pad[1])
-                + (*inner - gsize) * Vec2::new(style.x_align, y_align)
+        if let (Some(laid), Some(style)) = (&it.text, &n.text) {
+            let gsize = Vec2::new(laid.galley.rect.width(), laid.galley.rect.height());
+            let at = it.min + Vec2::new(it.pad[0], it.pad[1]) + (laid.inner - gsize) * style.align
                 - Vec2::new(laid.galley.rect.min.x, laid.galley.rect.min.y);
             let origin = it.rot.transform_point2(at);
-            let stroke = stroke_of("Text").or_else(|| {
-                let t = p.f32("TextStrokeTransparency", 1.0);
-                (t < 1.0).then(|| {
-                    (
-                        it.scale,
-                        p.color("TextStrokeColor3", Rgba([0.0, 0.0, 0.0, 1.0]))
-                            .with_transparency(t),
-                    )
-                })
-            });
-            if let Some((t, c)) = stroke
+            let outline =
+                stroke(StrokeMode::Contextual).or_else(|| style.stroke.map(|c| (it.scale, c)));
+            if let Some((t, c)) = outline
                 && t > 0.0
                 && c.0[3] > 0.0
             {
@@ -305,10 +273,10 @@ impl<'a> Painter<'a> {
                         .with_angle(angle),
                 ),
             );
-            if looks.focused == Some(it.e) {
-                // The caret, after the text.
-                let h = laid.galley.rect.height().max(style.size);
-                let x = if p.string("Text").is_empty() {
+            if looks.focused == Some(it.node) {
+                // The caret, after the text (before a placeholder).
+                let h = laid.galley.rect.height().max(laid.size);
+                let x = if style.placeholder {
                     at.x + laid.galley.rect.min.x
                 } else {
                     at.x + laid.galley.rect.max.x
@@ -328,10 +296,10 @@ impl<'a> Painter<'a> {
                 );
             }
         }
-        if it.kind == Kind::Scrolling {
-            self.scroll_bar(it, &p, angle);
+        if let Some(scroll) = &n.scroll {
+            self.scroll_bar(it, scroll.position, scroll.bar, scroll.bar_color, angle);
         }
-        if looks.selected == Some(it.e) {
+        if looks.selected == Some(it.node) {
             self.push(
                 None,
                 Shape::Rect(
@@ -347,14 +315,11 @@ impl<'a> Painter<'a> {
         }
     }
 
-    fn scroll_bar(&mut self, it: &Item, p: &Props, angle: f32) {
+    fn scroll_bar(&mut self, it: &Item, position: Vec2, thickness: f32, c: Rgba, angle: f32) {
         let canvas = it.canvas.unwrap_or(it.size);
         let window = it.size;
-        let at = p.vec2("CanvasPosition", Vec2::ZERO) * it.scale;
-        let t = p.f32("ScrollBarThickness", 12.0) * it.scale;
-        let c = p
-            .color("ScrollBarImageColor3", Rgba([0.0, 0.0, 0.0, 1.0]))
-            .with_transparency(p.f32("ScrollBarImageTransparency", 0.0));
+        let at = position * it.scale;
+        let t = thickness * it.scale;
         if t <= 0.0 || c.0[3] <= 0.0 {
             return;
         }
@@ -381,23 +346,19 @@ impl<'a> Painter<'a> {
         );
     }
 
-    /// A background coloured by a `UIGradient`: a fan of triangles from the
-    /// centre whose vertices sample the colour and transparency sequences.
-    fn gradient(&mut self, it: &Item, g: Entity, bg: Rgba, corner: f32) {
-        let gp = self.props(g);
-        let colors = gp.sequence("Color");
-        let alphas = gp.sequence("Transparency");
-        let offset = gp.vec2("Offset", Vec2::ZERO);
-        let r = gp.f32("Rotation", 0.0).to_radians();
+    /// A background coloured by a gradient: a fan of triangles from the
+    /// centre whose vertices sample the colour and transparency keys.
+    fn gradient(&mut self, it: &Item, g: &Gradient, bg: Rgba, corner: f32) {
+        let r = g.rotation.to_radians();
         let dir = Vec2::new(libm::cosf(r), libm::sinf(r));
         let center = it.min + it.size * 0.5;
         let color_at = |q: Vec2| {
-            // The gradient runs along its rotated x axis across the element's
-            // unit square, shifted by Offset.
+            // The gradient runs along its rotated x axis across the node's
+            // unit square, shifted by its offset.
             let u = (q - center) / it.size.max(Vec2::splat(1e-6));
-            let t = u.dot(dir) + 0.5 - offset.dot(dir);
-            let c = sample(&colors, t);
-            let a = 1.0 - sample(&alphas, t)[0];
+            let t = u.dot(dir) + 0.5 - g.offset.dot(dir);
+            let c = sample(&g.colors, t);
+            let a = 1.0 - sample(&g.transparency, t)[0];
             Rgba([
                 bg.0[0] * c[0],
                 bg.0[1] * c[1],

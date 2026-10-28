@@ -352,7 +352,7 @@ fn gather(intro: &str, packages: &[Package]) -> Result<(String, NoticesReport), 
         }
         if p.ours {
             // The engine's own crates: only the files they bundle, under
-            // `assets/` (the compat fonts), carry licenses of their own. The
+            // `assets/` (re_ui's fonts), carry licenses of their own. The
             // standard texts in `re_cli`'s source are templates.
             files.retain(|f| f.starts_with("assets/"));
         }

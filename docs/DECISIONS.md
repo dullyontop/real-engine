@@ -966,8 +966,8 @@ It compares these against the coverage table (ADR-0012) and reports a gap list w
 **Context.** Compat GUI text (`TextLabel`, `TextButton`, `TextBox`, WP15) names font families from the vendor's catalogue. Those font files are not ours to ship, and egui's default fonts (ADR-0019) cover only one sans and one monospace family, so headings, body text and code would all look alike.
 
 **Decision.**
-- Ship three OFL-1.1 families as files under `crates/re_compat/assets/fonts/`: Montserrat (weights 400, 500, 700, 900), Source Sans 3 (400, 700) and Roboto Mono (400, 700). That is 8 files, about 307 KB, latin subset only.
-- The source is the `@fontsource` packages on npm: montserrat 5.3.0, source-sans-3 5.3.1, roboto-mono 5.3.0. Their WOFF 1.0 files are converted to TTF by a small script under `crates/re_compat/assets/fonts/tools/`, which only unpacks the zlib-compressed tables and changes no glyph data. `crates/re_compat/assets/fonts/README.md` records the package versions and the conversion step.
+- Ship three OFL-1.1 families as files under `crates/re_ui/assets/fonts/` (in `crates/re_compat/assets/fonts/` until ADR-0058 moved them to the UI core): Montserrat (weights 400, 500, 700, 900), Source Sans 3 (400, 700) and Roboto Mono (400, 700). That is 8 files, about 307 KB, latin subset only.
+- The source is the `@fontsource` packages on npm: montserrat 5.3.0, source-sans-3 5.3.1, roboto-mono 5.3.0. Their WOFF 1.0 files are converted to TTF by a small script under `crates/re_ui/assets/fonts/tools/`, which only unpacks the zlib-compressed tables and changes no glyph data. `crates/re_ui/assets/fonts/README.md` records the package versions and the conversion step.
 - Each family's `OFL.txt` sits next to its files and goes into the generated third-party notice.
 - `crates/re_compat/assets/fonts/substitutes.json` maps compat font families to a bundled family:
   - geometric display families (Gotham and its relatives) go to Montserrat;

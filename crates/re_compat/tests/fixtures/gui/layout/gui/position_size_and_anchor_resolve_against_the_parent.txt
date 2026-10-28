@@ -1,0 +1,21 @@
+frame 0: 2 drawn, hovered none, sinks false, focus none
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame at (-5.0, 268.0) size (410.0, 100.0) clip (0.0, 0.0, 800.0, 600.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame/Frame at (5.0, 288.0) size (205.0, 50.0) clip (0.0, 0.0, 800.0, 600.0)
+  ReplicatedStorage/PlayerGui/ScreenGui.AbsoluteSize = (800.0, 564.0)
+  ReplicatedStorage/PlayerGui/ScreenGui.AbsolutePosition = (0.0, 0.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame.AbsolutePosition = (-5.0, 232.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame.AbsoluteSize = (410.0, 100.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame/Frame.AbsolutePosition = (5.0, 252.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame/Frame.AbsoluteSize = (205.0, 50.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame/Frame.AbsoluteRotation = 0.0
+frame 1: 2 drawn, hovered none, sinks false, focus none
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame at (-5.0, 250.0) size (410.0, 100.0) clip (0.0, 0.0, 800.0, 600.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame/Frame at (5.0, 270.0) size (205.0, 50.0) clip (0.0, 0.0, 800.0, 600.0)
+  ReplicatedStorage/PlayerGui/ScreenGui.AbsoluteSize = (800.0, 600.0)
+  ReplicatedStorage/PlayerGui/ScreenGui.AbsolutePosition = (0.0, -36.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame.AbsolutePosition = (-5.0, 214.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame/Frame.AbsolutePosition = (5.0, 234.0)
+frame 2: 0 drawn, hovered none, sinks false, focus none
+  gone ReplicatedStorage/PlayerGui/ScreenGui/Frame
+  gone ReplicatedStorage/PlayerGui/ScreenGui/Frame/Frame
