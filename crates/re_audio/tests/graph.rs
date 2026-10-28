@@ -52,6 +52,7 @@ fn play(bus: &str) -> AudioCmd {
         position: None,
         volume: 1.0,
         bus: bus.into(),
+        id: None,
     }
 }
 
@@ -290,6 +291,7 @@ fn tone_db(desc: &AudioGraphDesc, bus: &str, freq: f32) -> f32 {
         position: None,
         volume: 1.0,
         bus: bus.into(),
+        id: None,
     };
     assert!(a.apply(&[play]).is_empty());
     render(&mut a, BATCH);
@@ -343,6 +345,7 @@ fn a_send_adds_the_reverb_tail() {
             clip: "tone".into(),
             position: None,
             volume: 1.0,
+            id: None,
         }]);
         // The 50 ms tone ends; 0.1 s later only a tail remains.
         render(&mut a, 7200);
@@ -382,6 +385,7 @@ fn a_snapshot_tween_reaches_its_target_one_batch_after_its_length() {
         clip: "tone".into(),
         position: None,
         volume: 1.0,
+        id: None,
     }]);
     render(&mut a, BATCH);
     let before = db(rms(&render(&mut a, 4800), 0));
@@ -416,6 +420,7 @@ fn a_snapshot_tween_reaches_its_target_one_batch_after_its_length() {
             clip: "tone".into(),
             position: None,
             volume: 1.0,
+            id: None,
         },
     ]);
     render(&mut a, BATCH);
@@ -437,6 +442,7 @@ fn bus_levels_meter_after_effects_and_volume() {
         clip: "tone".into(),
         position: None,
         volume: 1.0,
+        id: None,
     }]);
     render(&mut a, BATCH);
     a.bus_levels();
@@ -499,6 +505,7 @@ fn an_invalid_graph_falls_back_to_the_default_graph() {
         clip: "tone".into(),
         position: None,
         volume: 1.0,
+        id: None,
     }]);
     render(&mut a, BATCH);
     assert!(rms(&render(&mut a, 4800), 0) > 0.1);
@@ -575,6 +582,7 @@ fn an_unknown_bus_warns_once_and_plays_on_the_default_bus() {
         position: None,
         volume: 1.0,
         bus: bus.into(),
+        id: None,
     };
     let first = a.apply(&[on("fottsteps")]);
     assert_eq!(codes(&first), ["RE7408"]);
@@ -636,6 +644,7 @@ fn rebuilding_the_graph_stops_the_sounds_on_it() {
         clip: "tone".into(),
         position: Some(glam::Vec3::new(0.0, 0.0, -1.0)),
         volume: 1.0,
+        id: None,
     }]);
     render(&mut a, 4800);
     assert_eq!(a.playing(), 1);

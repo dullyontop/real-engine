@@ -1,8 +1,9 @@
 //! Audio commands: what `re_app` asks `re_audio` to do each frame.
 //!
 //! Entity-driven sounds (the scene's `AudioSource` component) are keyed by
-//! [`EntityId`]; one-shot sounds requested by scripts are fire-and-forget. Clip
-//! names are project asset paths such as `assets/sfx/pickup.wav`.
+//! [`EntityId`]; one-shot sounds requested by scripts are fire-and-forget, or
+//! carry an id that [`AudioCmd::SoundControl`] names (ADR-0057 §8). Clip names
+//! are project asset paths such as `assets/sfx/pickup.wav`.
 //!
 //! The mixer is a tree of named buses with effects, plus send tracks
 //! ([`AudioGraphDesc`], the `[audio]` section of `real.toml`, ADR-0041). Sounds
@@ -30,6 +31,10 @@ pub enum AudioCmd {
         position: Option<Vec3>,
         /// Volume, linear, 1 is unchanged.
         volume: f32,
+        /// The id [`AudioCmd::SoundControl`] names it by; `None` for a sound
+        /// nothing controls.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<u64>,
     },
     /// Start (or restart) an entity's sound.
     StartSource {
@@ -65,7 +70,8 @@ pub enum AudioCmd {
         /// World position.
         position: Vec3,
     },
-    /// Move the listener (usually the active camera).
+    /// Move the listener (the scene's first active `AudioListener`, or the
+    /// active camera).
     SetListener {
         /// World position.
         position: Vec3,
@@ -125,6 +131,10 @@ pub enum AudioCmd {
         volume: f32,
         /// A bus name from the graph.
         bus: String,
+        /// The id [`AudioCmd::SoundControl`] names it by; `None` for a sound
+        /// nothing controls.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<u64>,
     },
     /// Tween a bus's or a send's volume.
     SetBusVolume {
@@ -157,6 +167,139 @@ pub enum AudioCmd {
         /// The tween's length in seconds; 0 is at once.
         seconds: f32,
     },
+    /// Control a one-shot started with an `id` (ADR-0057 §8). An id that is
+    /// unknown, or whose sound has ended, does nothing; so does `start`.
+    SoundControl {
+        /// The one-shot's id.
+        id: u64,
+        /// What to do.
+        #[serde(flatten)]
+        op: SoundOp,
+    },
+    /// Control an entity's sound (ADR-0057 §8). `re_app`'s audio sync turns
+    /// `start` into `StartSource` from the entity's `AudioSource`, as autoplay
+    /// does; a `start` that reaches the mixer does nothing.
+    SourceControl {
+        /// The entity.
+        entity: EntityId,
+        /// What to do.
+        #[serde(flatten)]
+        op: SoundOp,
+    },
+    /// Set how an entity's spatial sound falls with distance and how much its
+    /// pitch follows motion. Sent before `StartSource`, it applies to the
+    /// entity's sounds until its next `StopSource` (or `StopAll`); sent while
+    /// one plays, it changes that sound too. Without it, sounds use
+    /// [`Spatial::default`]. `SetSourceAttenuation` with `enabled: false`
+    /// still wins: the sound only pans.
+    SetSourceSpatial {
+        /// The entity.
+        entity: EntityId,
+        /// The settings.
+        #[serde(flatten)]
+        spatial: Spatial,
+    },
+}
+
+/// What [`AudioCmd::SoundControl`] and [`AudioCmd::SourceControl`] do,
+/// tagged `op`: `{"op": "stop", "fade": 0.5}`. A fade is seconds of real time,
+/// unaffected by the time scale; 0 (the default) is at once.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum SoundOp {
+    /// Play an entity's source from its start, restarting it if it plays.
+    Start,
+    /// Stop, fading out.
+    Stop {
+        /// The fade's length in seconds.
+        #[serde(default)]
+        fade: f32,
+    },
+    /// Pause, fading out; `resume` continues from there.
+    Pause {
+        /// The fade's length in seconds.
+        #[serde(default)]
+        fade: f32,
+    },
+    /// Continue a paused sound, fading in.
+    Resume {
+        /// The fade's length in seconds.
+        #[serde(default)]
+        fade: f32,
+    },
+    /// Jump to a time in the clip.
+    Seek {
+        /// Seconds from the start of the clip.
+        seconds: f64,
+    },
+    /// Fade the volume.
+    Volume {
+        /// Volume, linear, 1 is unchanged.
+        volume: f32,
+        /// The fade's length in seconds.
+        #[serde(default)]
+        fade: f32,
+    },
+    /// Fade the playback rate. Doppler multiplies it.
+    Rate {
+        /// The rate, above 0: 1 is normal speed, and the pitch shifts with it.
+        rate: f32,
+        /// The fade's length in seconds.
+        #[serde(default)]
+        fade: f32,
+    },
+}
+
+/// How a spatial sound falls with distance from the listener, and how much its
+/// pitch follows motion (doppler).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Spatial {
+    /// The curve.
+    pub rolloff: Rolloff,
+    /// Within this distance, in metres, the sound plays at full volume; 0 or
+    /// more.
+    pub min_distance: f32,
+    /// Where the curve ends, in metres, above `min_distance`: `natural` and
+    /// `linear` are silent beyond it, and `inverse` stays at the level it
+    /// reached.
+    pub max_distance: f32,
+    /// How much the pitch follows the source's and the listener's motion along
+    /// the line between them: 0 is none, 1 is physical (sound travelling at
+    /// 343 m/s), and more exaggerates.
+    pub doppler: f32,
+}
+
+impl Default for Spatial {
+    /// `natural` from 1 m to 100 m, without doppler: how spatial sounds played
+    /// before these settings existed.
+    fn default() -> Self {
+        Spatial {
+            rolloff: Rolloff::Natural,
+            min_distance: 1.0,
+            max_distance: 100.0,
+            doppler: 0.0,
+        }
+    }
+}
+
+/// How a spatial sound's volume falls with distance.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Rolloff {
+    /// The level in decibels falls evenly from full at `min_distance` to
+    /// silence (-60 dB) at `max_distance`.
+    #[default]
+    Natural,
+    /// The physical law: the amplitude halves (-6 dB) with each doubling of
+    /// distance beyond `min_distance`, and keeps the level it reached beyond
+    /// `max_distance`.
+    Inverse,
+    /// The amplitude falls evenly from full at `min_distance` to silence at
+    /// `max_distance`.
+    Linear,
+    /// No fall with distance: the sound only pans.
+    Off,
 }
 
 /// The mixer graph: the `[audio]` section of `real.toml` (ADR-0041).
