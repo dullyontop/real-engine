@@ -4,6 +4,7 @@
 //! `shaders/common.wgsl` and `shaders/forward.wgsl`.
 
 use bytemuck::{Pod, Zeroable};
+use glam::camera::rh::proj::directx;
 use glam::{Mat3, Mat4, Vec3, Vec4};
 use re_core::Diagnostic;
 use re_types::mesh::Aabb;
@@ -40,6 +41,7 @@ pub(crate) struct SpotLightRaw {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub(crate) struct FrameUniform {
+    /// World to clip space, with reversed Z and no far plane ([`projection`]).
     pub view_proj: [[f32; 4]; 4],
     /// World to each cascade's shadow clip space.
     pub cascades: [[[f32; 4]; 4]; MAX_CASCADES],
@@ -299,8 +301,11 @@ pub(crate) fn select_spots(
         .collect()
 }
 
-/// Checks a camera and returns its projection for `aspect` (glam's right-handed,
-/// DirectX-depth perspective: NDC depth 0..1 and Y up, the WebGPU convention).
+/// Checks a camera and returns the projection the GPU draws it with for
+/// `aspect`: glam's right-handed, DirectX-depth perspective with reversed Z and
+/// no far plane (NDC depth 1 at `near`, falling towards 0 with distance, and Y
+/// up, the WebGPU convention). The view still ends at `far`: the CPU culls
+/// against [`Frustum::of_camera`].
 pub(crate) fn projection(camera: &Camera, aspect: f32) -> Result<Mat4, Diagnostic> {
     let ok = camera.fov_y_radians.is_finite()
         && camera.fov_y_radians > 0.0
@@ -323,11 +328,10 @@ pub(crate) fn projection(camera: &Camera, aspect: f32) -> Result<Mat4, Diagnosti
             "use a field of view between 0 and pi, 0 < near < far, and an invertible transform",
         ));
     }
-    Ok(glam::camera::rh::proj::directx::perspective(
+    Ok(directx::perspective_infinite_reverse(
         camera.fov_y_radians,
         aspect,
         camera.near,
-        camera.far,
     ))
 }
 
@@ -355,6 +359,14 @@ impl Frustum {
         let r = view_proj.transpose();
         let (x, y, z, w) = (r.x_axis, r.y_axis, r.z_axis, r.w_axis);
         Frustum([w + x, w - x, w + y, w - y, z, w - z])
+    }
+
+    /// What `camera` sees at `aspect`, from `near` to `far`. [`projection`] has
+    /// no far plane, so this is where the view ends.
+    pub fn of_camera(camera: &Camera, aspect: f32) -> Frustum {
+        let projection =
+            directx::perspective(camera.fov_y_radians, aspect, camera.near, camera.far);
+        Frustum::new(&(projection * camera.view()))
     }
 
     /// False only when `aabb` is wholly outside one plane.
@@ -489,7 +501,7 @@ impl CascadeBox {
         let near = (-c.z - self.radius).min(caster_depth.unwrap_or(f32::INFINITY));
         let near = (near / step).floor() * step - step;
         let far = ((-c.z + self.radius) / step).ceil() * step + step;
-        let proj = glam::camera::rh::proj::directx::orthographic(
+        let proj = directx::orthographic(
             c.x - self.radius,
             c.x + self.radius,
             c.y - self.radius,
@@ -693,10 +705,25 @@ mod tests {
     }
 
     #[test]
+    fn the_projection_reverses_depth_and_has_no_far_plane() {
+        let camera = camera_at(Vec3::new(0.0, 2.0, 10.0), Vec3::new(0.0, 2.0, 0.0));
+        let view_proj = projection(&camera, 1.5).unwrap() * camera.view();
+        let depth = |d: f32| view_proj.project_point3(Vec3::new(0.0, 2.0, 10.0 - d)).z;
+        assert!((depth(camera.near) - 1.0).abs() < 1e-4);
+        let depths = [1.0, 10.0, camera.far, 10.0 * camera.far, 1e7].map(depth);
+        assert!(depths.windows(2).all(|w| w[0] > w[1]), "{depths:?}");
+        assert!(depths.iter().all(|d| *d > 0.0), "{depths:?}");
+        // The GPU clips nothing past far; the culling frustum does.
+        assert!(Frustum::new(&view_proj).intersects(&Aabb::new(
+            Vec3::new(-0.5, 1.5, -2000.0),
+            Vec3::new(0.5, 2.5, -1999.0)
+        )));
+    }
+
+    #[test]
     fn frustum_culls_boxes_outside_the_view() {
         let camera = camera_at(Vec3::new(0.0, 0.0, 10.0), Vec3::ZERO);
-        let view_proj = projection(&camera, 1.0).unwrap() * camera.view();
-        let frustum = Frustum::new(&view_proj);
+        let frustum = Frustum::of_camera(&camera, 1.0);
         let unit = |c: Vec3| Aabb::new(c - Vec3::splat(0.5), c + Vec3::splat(0.5));
         assert!(frustum.intersects(&unit(Vec3::ZERO)));
         assert!(
