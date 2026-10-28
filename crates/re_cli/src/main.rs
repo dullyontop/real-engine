@@ -291,7 +291,8 @@ struct RunArgs {
 struct NetArgs {
     /// Run a dedicated server: headless, in real time, until stopped or
     /// `--frames`. Players join over UDP, and from a browser over a WebSocket
-    /// on the same port (TCP). The traffic is not encrypted.
+    /// on the same port (TCP). The traffic is encrypted to the server's key,
+    /// kept in the data folder, whose fingerprint the server prints.
     #[arg(long, conflicts_with_all = ["host", "connect"])]
     server: bool,
     /// Play and serve: the local player plus players who connect.
@@ -316,8 +317,9 @@ struct NetArgs {
 }
 
 impl NetArgs {
-    /// The online options these flags ask for, if any.
-    fn options(&self, lockstep: Option<u32>) -> Option<re_app::NetOptions> {
+    /// The online options these flags ask for, if any; a server of a run
+    /// that keeps its data keeps its key there too.
+    fn options(&self, lockstep: Option<u32>, keeps_data: bool) -> Option<re_app::NetOptions> {
         let role = if self.server {
             re_app::NetRole::Server
         } else if self.host {
@@ -332,6 +334,7 @@ impl NetArgs {
             max_players: self.max_players,
             name: self.name.clone(),
             lockstep,
+            keep_key: keeps_data,
         })
     }
 }
@@ -364,7 +367,20 @@ fn go_online(app: &mut App, options: re_app::NetOptions) -> Result<(), Diagnosti
                 eprintln!("browsers join over a WebSocket at ws://{ws}/");
             }
         }
-        eprintln!("note: online play is not encrypted; play with people you trust or on a LAN");
+        if let Some(fingerprint) = bound.fingerprint {
+            if bound.new_key {
+                let at = app
+                    .files()
+                    .writable(re_core::files::Writable::Data)
+                    .path()
+                    .map(|p| p.join(re_net::KEY_FILE).display().to_string())
+                    .unwrap_or_else(|| re_net::KEY_FILE.to_string());
+                eprintln!("server key {fingerprint} (new, kept in {at})");
+            } else {
+                eprintln!("server key {fingerprint}");
+            }
+        }
+        eprintln!("note: anyone who can reach this port can join");
     }
     Ok(())
 }
@@ -439,29 +455,32 @@ fn cmd_run(project: &Path, args: RunArgs) -> ExitCode {
     };
     let server = args.net.server;
     let paced = server && args.lockstep.is_none();
-    if let Some(options) = args.net.options(args.lockstep)
+    // A dedicated server has no window.
+    let headless = args.headless || server;
+    // A replay must repeat its recording, so only a live run keeps data and
+    // reloads changed files.
+    let live = if args.lockstep.is_some() {
+        Live::Check
+    } else if package.is_some() {
+        Live::Packaged
+    } else {
+        Live::Development
+    };
+    let keeps_data = args.replay.is_none() && live.keeps_data(headless, paced);
+    if let Some(options) = args.net.options(args.lockstep, keeps_data)
         && let Err(d) = go_online(&mut app, options)
     {
         return fail(d);
     }
     let options = PlayOptions {
-        // A dedicated server has no window.
-        headless: args.headless || server,
-        // and runs until stopped.
+        headless,
+        // A dedicated server runs until stopped.
         frames: args.frames.or(server.then_some(u64::MAX)),
         replay: args.replay,
         screenshot: args.screenshot,
         exit_after: args.exit_after,
         json: args.json,
-        // A replay must repeat its recording, so only a live run keeps data
-        // and reloads changed files.
-        live: if args.lockstep.is_some() {
-            Live::Check
-        } else if package.is_some() {
-            Live::Packaged
-        } else {
-            Live::Development
-        },
+        live,
         paced,
         checkpoints: args.checkpoints,
     };
@@ -733,6 +752,8 @@ fn net_report(app: &App) -> Option<serde_json::Value> {
                         "packets_sent": s.packets_sent,
                         "packets_received": s.packets_received,
                         "fragments_resent": s.fragments_resent,
+                        "rejected": s.rejected,
+                        "replayed": s.replayed,
                     })
                 })
                 .collect::<Vec<_>>()

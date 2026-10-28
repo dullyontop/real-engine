@@ -29,7 +29,7 @@ All versions below were checked against the crates.io index on 2026-10-14. On th
 | What sets the MSRV | `egui` / `egui-wgpu` / `egui-winit` 0.36.2, `egui_dock` 0.21.1 and `bevy_ecs` 0.20.0 need 1.95. The next highest are `egui-snarl` 0.12.0 and `puffin` 0.20.0 (1.92; puffin is optional), then `ordered-float` 5.5.0 (1.90, transitive), `uuid` 1.28.0 and `smol_str` 0.3.6 (1.89), and `oxijolt`, `mlua`, `rmcp` and `image` (1.88). |
 | Edition | 2024 |
 | Toolchains seen working | rustc 1.97.0, 1.99.0 and 1.99.1 in the development containers; CI builds with the pinned 1.99.1. The render prototype declared `rust-version = "1.95"`; the core spike declares none. |
-| Dev profile | `debug = "line-tables-only"`. The render spike measured this as a large saving in link time and disk use. |
+| Dev profile | `debug = "line-tables-only"`. The render spike measured this as a large saving in link time and disk use. `re_net` and the cryptography under it (`chacha20`, `poly1305`, `blake2`, `curve25519-dalek`) build at `opt-level = 3` even in debug builds: unoptimized, sealing every packet made the network tests of a debug build 50 to 100 times slower (ADR-0067). |
 
 The `msrv` CI job builds with exactly 1.95.0 (`rustup toolchain install 1.95.0 --profile minimal`), so that the MSRV stays honest. Everything else, locally and in CI, uses the release `rust-toolchain.toml` pins. In CI, `tools/ci/rust-toolchain.sh` installs it and removes the runner image's own toolchains, since the cargo cache's key hashes every installed toolchain's version.
 
@@ -124,6 +124,20 @@ Used only by `re_net` (ADR-0050's amendment for PR "web"), for players in a brow
 | tungstenite | 0.30.0 | MIT OR Apache-2.0 | 1.85 | WebSocket framing and the HTTP upgrade over a non-blocking `TcpStream`: a server's listener and the native client (`real run --connect ws://…`). Not on wasm32. | `default-features = false`, `handshake` (no TLS) | `re_net`'s `tests/websocket.rs` (UDP and WebSocket players on one server, kicks and closes, protocol violations, a silent handshake), the plaza's `net` stage over WebSocket | Landed (WP30 PR "web") |
 | web-sys | 0.3.106 | MIT OR Apache-2.0 | 1.81 | The browser's `WebSocket` for a browser client (wasm32 only). Already in the lockfile through wgpu and winit. | `WebSocket`, `BinaryType`, `MessageEvent`, `CloseEvent` | `cargo xtask web-test`: the plaza's replays as a browser client of a native server (`tools/web-test/net.mjs`) | Landed (WP30 PR "web") |
 | js-sys | 0.3.106 | MIT OR Apache-2.0 | 1.81 | The `ArrayBuffer`s a browser WebSocket's binary messages arrive in (wasm32 only). Already in the lockfile through wasm-bindgen. | default | as web-sys | Landed (WP30 PR "web") |
+
+### Secure transport (M4, runtime)
+
+Used only by `re_net` (ADR-0067), on the desktop and in the web runtime: its own `Noise_NKpsk0_25519_ChaChaPoly_BLAKE2s` handshake (`crates/re_net/src/noise.rs`) and sealed packets over these primitives, chosen over snow 0.10.0, which is on the previous RustCrypto generation (ADR-0067 §2). Checked against crates.io on 2026-10-28; each version was the latest release. The lockfile gains 15 crates, none a duplicate and all under the license allow-list, so `deny.toml` does not change: aead 0.6.1, blake2 0.11.0, chacha20poly1305 0.11.0, cipher 0.5.2, cmov 0.5.4, ctutils 0.4.6, inout 0.2.5, poly1305 0.9.1, universal-hash 0.6.1 and zeroize 1.9.1 (MIT OR Apache-2.0); fiat-crypto 0.3.0 (MIT OR Apache-2.0 OR BSD-1-Clause); curve25519-dalek-derive 0.1.1 (MIT/Apache-2.0); and curve25519-dalek 5.0.0, x25519-dalek 3.0.0 and subtle 2.6.1 (BSD-3-Clause, listed in `THIRD_PARTY_NOTICES.txt` by the notices tool). chacha20 0.10.2, digest 0.11.3, crypto-common, block-buffer, hybrid-array, cpufeatures and getrandom 0.4.3 were in the runtime already, through tungstenite, rand and uuid. Their MSRVs are 1.83 to 1.87.
+
+| Crate | Version | License | MSRV | Role | Features | Verified by | Status |
+|---|---|---|---|---|---|---|---|
+| x25519-dalek | 3.0.0 | BSD-3-Clause | 1.85 | X25519 for the handshake: the server's key, each side's ephemeral key and the Diffie-Hellman results, all wiped when dropped | `default-features = false`, `static_secrets`, `zeroize`. Not `precomputed-tables`, for the web runtime's size | `re_net`'s `noise.rs` tests (cacophony's NKpsk0 vector and four snow 0.10.0 vectors byte for byte, low-order keys refused on either side), `tests/secure.rs`; the WP46 spike (`research/m4/wp46/`) | Landed (WP46 PR "secure") |
+| curve25519-dalek | 5.0.0 | BSD-3-Clause | 1.85 | The curve arithmetic under x25519-dalek (transitive) | defaults of `x25519-dalek` | as x25519-dalek | Landed (WP46 PR "secure"); transitive |
+| chacha20poly1305 | 0.11.0 | Apache-2.0 OR MIT | 1.85 | The AEAD: the handshake's payloads and every sealed packet, in place, with the packet number as the nonce and the header as the associated data | `default-features = false`, `zeroize` | `noise.rs` and `conn.rs` tests (a packet opens only with its key, number and header), `tests/secure.rs` (every changed byte of a sealed packet dropped and counted) | Landed (WP46 PR "secure") |
+| blake2 | 0.11.0 | MIT OR Apache-2.0 | 1.85 | BLAKE2s-256: Noise's hash and HKDF, the handshake cookie's HMAC, the server key's fingerprint and the join code's pre-shared key | `default-features = false`, `zeroize` | the vectors; `keys.rs` tests (a fingerprint and pre-shared keys pinned to values computed with Python's `hashlib` and `cryptography`) | Landed (WP46 PR "secure") |
+| zeroize | 1.9.1 | Apache-2.0 OR MIT | 1.85 | Wipes the handshake's state, HKDF's outputs, pre-shared keys, the cookie key and join codes when they drop | default | a `noise.rs` test that fails to build if a secret's type stops wiping itself | Landed (WP46 PR "secure") |
+| subtle | 2.6.1 | BSD-3-Clause | none | Compares handshake cookies and join codes in constant time | `default-features = false` | `tests/secure.rs` (a changed cookie is dropped) | Landed (WP46 PR "secure") |
+| getrandom | 0.4.3 | MIT OR Apache-2.0 | 1.85 | Every server key, ephemeral key, cookie key, salt and join code: the operating system's random numbers, and a browser's `crypto.getRandomValues`. No weaker fallback (`RE8916`). Already in the runtime through uuid and rand. | default; `wasm_js` on wasm32 | `keys.rs` tests; `cargo xtask web-test` (the plaza's replays from headless Chromium, joining over encrypted links) | Landed (WP46 PR "secure") |
 
 ### Editor node canvas and docking (M3, tooling only)
 
@@ -232,7 +246,7 @@ These come from `cargo tree -d -e normal --target <triple>` for the three deskto
 | syn | 1.0.109, 2.0.119, 3.0.9 | full_moon_derive (1); re_reflect_derive, gltf-derive, tracing-attributes, thiserror-impl, zerocopy-derive, derive_more-impl, bevy_ecs_macros (2); bytemuck_derive, clap_derive, darling (3) | compile-time | Accept |
 | derive_more, derive_more-impl | 1.0.0 and 2.1.1 | full_moon (1.0, tooling only); bevy_ecs and bevy_tasks (2.1) | runtime (2.1); tooling (1.0) | Accept. Drop when full_moon moves to derive_more 2. |
 | thiserror, thiserror-impl | 1.0.69 and 2.0.21 | calloop 0.13 (through winit's Wayland stack) | runtime | Accept |
-| getrandom | 0.3.4 and 0.4.3 | ahash through egui (0.3); uuid (0.4) | runtime | Accept |
+| getrandom | 0.3.4 and 0.4.3 | ahash through egui (0.3); uuid and `re_net` (0.4) | runtime | Accept |
 | base64 | 0.13.1 and 0.23.1 | gltf (0.13); rmcp (0.23) | runtime | Accept |
 | calloop (0.13 / 0.14), calloop-wayland-source (0.3 / 0.4), smithay-client-toolkit (0.19 / 0.20), rustix (0.38 / 1.1), linux-raw-sys (0.4 / 0.12) | two each | winit's Wayland stack | runtime | Accept |
 | rustc-hash | 1.1.0 and 2.1.3 | naga, wgpu-core (1); mlua, type-map (2) | runtime | Accept |

@@ -15,8 +15,9 @@
 //!   for `real run --connect ws://…` and for tests.
 //!
 //! The listener speaks plain `ws://`. A page served over HTTPS may only open
-//! `wss://`, which needs a TLS proxy in front of the server. The traffic is not
-//! encrypted either way (ADR-0050 §1).
+//! `wss://`, which needs a TLS proxy in front of the server. The datagrams
+//! inside are sealed either way (ADR-0067), so the proxy reads nothing of the
+//! game's traffic.
 
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 

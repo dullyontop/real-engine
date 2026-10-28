@@ -132,7 +132,9 @@ fn run(opened: Package, args: GameArgs) -> ExitCode {
         Ok(app) => app,
         Err(d) => return fail(d),
     };
-    if let Some(options) = args.net.options(None)
+    let keeps_data =
+        args.replay.is_none() && Live::Packaged.keeps_data(args.headless || server, server);
+    if let Some(options) = args.net.options(None, keeps_data)
         && let Err(d) = go_online(&mut app, options)
     {
         return fail(d);

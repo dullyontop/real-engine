@@ -1,6 +1,7 @@
 //! Endpoints over the in-process network, on a simulated 60 Hz clock: the
 //! handshake and its refusals, delivery under loss, duplication and
-//! reordering, timeouts, disconnects and backpressure.
+//! reordering, timeouts, disconnects and backpressure, all over encrypted
+//! links (the attacks they stop are in `secure.rs`).
 
 use std::time::Duration;
 
@@ -112,8 +113,8 @@ fn configs(n: usize) -> (Config, Vec<Config>) {
 fn message(i: u32) -> Vec<u8> {
     let len = match i % 40 {
         0 => 50_000,
-        1 => 1_170,
-        2 => 1_171,
+        1 => re_net::FRAGMENT,
+        2 => re_net::FRAGMENT + 1,
         3 => 0,
         _ => 10 + (i as usize * 37) % 400,
     };

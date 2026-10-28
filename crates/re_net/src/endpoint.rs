@@ -1,24 +1,35 @@
 //! An endpoint: a server with many connections or a client with one, over a
-//! [`Transport`], polled from the frame (ADR-0050 §1).
+//! [`Transport`], polled from the frame (ADR-0050 §1), and the encrypted
+//! handshake that opens each connection (ADR-0067 §4).
 //!
 //! A frame calls [`Endpoint::poll`] first (receive, handshake, timeouts) and
 //! [`Endpoint::flush`] last (send what was queued). Time is the caller's: a
 //! [`Duration`] since any fixed start, so tests run on a simulated clock and a
 //! browser build needs no `Instant`.
+//!
+//! The handshake, a client's side and then a server's:
+//!
+//! ```text
+//! Hello (salt, padded)            ->  a Challenge for the source: a cookie, the server's key, the flags
+//! Response (cookie, msg1, padded) ->  cookie, resend, versions and room, replay, msg1: Accept (msg2) or Deny
+//! Accept: msg2 opens              ->  the session keys; every later packet is sealed
+//! ```
 
-use std::collections::HashMap;
-use std::collections::hash_map::RandomState;
-use std::hash::{BuildHasher, Hash, Hasher};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::time::Duration;
 
 use re_core::Diagnostic;
+use subtle::ConstantTimeEq;
+use x25519_dalek::StaticSecret;
+use zeroize::Zeroizing;
 
 use crate::codes;
 use crate::conn::{Channel, Conn, ConnStats, Received};
+use crate::keys::{self, Fingerprint, JoinCode, ServerKey};
+use crate::noise::{self, Initiator, Session};
 use crate::packet::{
-    self, BODY_MAX, DenyReason, FRAGMENT, HEADER, Kind, MAX_MESSAGE, MAX_REASON, MTU, Reader,
-    TRANSPORT_VERSION,
+    self, COOKIE, DenyReason, FRAGMENT, HEADER, KEY, Kind, MAX_MESSAGE, Packet, TRANSPORT_VERSION,
 };
 use crate::transport::Transport;
 
@@ -31,6 +42,11 @@ const MAX_DATAGRAMS_PER_POLL: usize = 4096;
 /// How long a handshake cookie stays valid: it changes every this many
 /// seconds, and the previous one is still accepted.
 const COOKIE_EPOCH_SECS: u64 = 30;
+/// The most first handshake messages a server remembers answering, for its
+/// replay check; past it the oldest are forgotten early.
+const MAX_ANSWERED: usize = 65_536;
+/// What every handshake's prologue starts with (ADR-0067 §3).
+const PROLOGUE: &[u8] = b"real-engine/net/2";
 
 /// A connection, numbered by its endpoint in the order it connected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -62,6 +78,22 @@ pub struct Config {
     /// A connection whose sent fragments see no ack for [`Config::timeout`]
     /// is closed (`RE8906`).
     pub max_backlog: usize,
+    /// A server's key (ADR-0067 §7). A server without one makes one when it
+    /// starts, so its fingerprint changes each start; a server that keeps its
+    /// data passes the one [`ServerKey::load_or_make`] keeps.
+    pub key: Option<ServerKey>,
+    /// A server's join code: only a client that gives it joins. A client's:
+    /// the code it gives. A client stops with `RE8913` when the server's need
+    /// for a code differs (ADR-0067 §8).
+    pub join_code: Option<JoinCode>,
+    /// A client: the fingerprint the server's key must have (`RE8914`
+    /// otherwise).
+    pub pin: Option<Fingerprint>,
+    /// This endpoint's engine, for people: a server names it in a Deny (at
+    /// most 64 bytes), and a refused client puts both in its diagnostic. The
+    /// defaults set the engine's version, which every crate of the workspace
+    /// shares (ADR-0067 §6).
+    pub engine: String,
 }
 
 impl Config {
@@ -76,6 +108,10 @@ impl Config {
             keepalive: Duration::from_millis(100),
             rto_min: Duration::from_millis(34),
             max_backlog: 4 * MAX_MESSAGE,
+            key: None,
+            join_code: None,
+            pin: None,
+            engine: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
 
@@ -105,8 +141,8 @@ pub enum Event {
         bytes: Vec<u8>,
     },
     /// A connection closed, or a client's handshake failed; the diagnostic
-    /// says why (`RE8902`–`RE8907`). Closing a connection yourself with
-    /// [`Endpoint::disconnect`] reports nothing.
+    /// says why (`RE8902`–`RE8907`, `RE8912`–`RE8914`). Closing a connection
+    /// yourself with [`Endpoint::disconnect`] reports nothing.
     Disconnected {
         /// The connection (a failed handshake reports the id the connection
         /// would have had).
@@ -116,25 +152,37 @@ pub enum Event {
     },
 }
 
+/// A client's handshake.
 enum Handshake {
-    /// A server, or a client that is connected, gave up or was denied.
+    /// A server, or a client that is connected, gave up or was refused.
     None,
+    /// Sending Hello until a Challenge with this salt arrives.
     Hello {
         salt: u64,
+        /// The ephemeral key the first handshake message will carry.
+        ephemeral: Box<StaticSecret>,
         last: Option<Duration>,
         since: Option<Duration>,
+        /// Answers that arrived and failed the handshake.
+        failed: u32,
     },
+    /// Sending this Response until Accept or Deny.
     Response {
         salt: u64,
-        cookie: u64,
+        response: Vec<u8>,
+        initiator: Box<Initiator>,
         last: Option<Duration>,
         since: Option<Duration>,
+        failed: u32,
     },
 }
 
 struct Peer {
     id: PeerId,
     conn: Conn,
+    /// A server's Accept, sent again for a resent Response until the client's
+    /// first sealed packet shows it has the keys.
+    accept: Option<Vec<u8>>,
 }
 
 /// A server or a client over transport `T`.
@@ -145,9 +193,17 @@ pub struct Endpoint<T: Transport> {
     peers: HashMap<SocketAddr, Peer>,
     by_id: HashMap<PeerId, SocketAddr>,
     next_id: u32,
-    key: RandomState,
+    /// The key of a server's handshake cookies, random per start.
+    cookie_key: Zeroizing<[u8; 32]>,
+    /// The ephemeral keys of the first handshake messages a server answered,
+    /// with their cookie epochs, oldest first, and as a set: a Response
+    /// replayed once its connection is gone is dropped (ADR-0067 §4).
+    answered: VecDeque<(u64, [u8; KEY])>,
+    answered_keys: HashSet<[u8; KEY]>,
     handshake: Handshake,
     server_addr: Option<SocketAddr>,
+    /// A client's server's public key, from the Challenge it answered.
+    server_key: Option<[u8; KEY]>,
     events: Vec<Event>,
     /// Datagrams from unknown or wrong senders, dropped.
     stray: u64,
@@ -164,44 +220,97 @@ impl<T: Transport> std::fmt::Debug for Endpoint<T> {
     }
 }
 
+/// The prologue both sides mix into the handshake (ADR-0067 §3), which binds
+/// it to this transport version, this protocol and game, and this attempt.
+pub(crate) fn prologue(protocol: u32, game: u64, salt: u64) -> Vec<u8> {
+    let mut p = PROLOGUE.to_vec();
+    p.extend_from_slice(&protocol.to_le_bytes());
+    p.extend_from_slice(&game.to_le_bytes());
+    p.extend_from_slice(&salt.to_le_bytes());
+    p
+}
+
 impl<T: Transport> Endpoint<T> {
     /// A server that accepts connections on `transport`.
+    ///
+    /// # Panics
+    ///
+    /// When the platform has no secure random numbers for its keys;
+    /// [`Endpoint::try_server`] reports that as `RE8916` instead.
     pub fn server(transport: T, config: Config) -> Endpoint<T> {
+        Endpoint::try_server(transport, config).unwrap_or_else(|d| panic!("{d}"))
+    }
+
+    /// A server that accepts connections on `transport`, with
+    /// [`Config::key`] or a new key.
+    ///
+    /// # Errors
+    ///
+    /// `RE8916` when the platform has no secure random numbers.
+    pub fn try_server(transport: T, mut config: Config) -> Result<Endpoint<T>, Diagnostic> {
+        if config.key.is_none() {
+            config.key = Some(ServerKey::generate()?);
+        }
         Endpoint::new(transport, config, true)
     }
 
     /// A client that connects to `server` over `transport`. The handshake
     /// starts at the first flush; [`Event::Connected`] reports success.
+    ///
+    /// # Panics
+    ///
+    /// When the platform has no secure random numbers for its keys;
+    /// [`Endpoint::try_client`] reports that as `RE8916` instead.
     pub fn client(transport: T, server: SocketAddr, config: Config) -> Endpoint<T> {
-        let mut e = Endpoint::new(transport, config, false);
-        e.server_addr = Some(server);
-        let mut h = e.key.build_hasher();
-        e.transport.local_addr().hash(&mut h);
-        server.hash(&mut h);
-        e.handshake = Handshake::Hello {
-            salt: h.finish(),
-            last: None,
-            since: None,
-        };
-        e
+        Endpoint::try_client(transport, server, config).unwrap_or_else(|d| panic!("{d}"))
     }
 
-    fn new(transport: T, config: Config, server: bool) -> Endpoint<T> {
-        Endpoint {
+    /// A client that connects to `server` over `transport`.
+    ///
+    /// # Errors
+    ///
+    /// `RE8916` when the platform has no secure random numbers.
+    pub fn try_client(
+        transport: T,
+        server: SocketAddr,
+        config: Config,
+    ) -> Result<Endpoint<T>, Diagnostic> {
+        let mut e = Endpoint::new(transport, config, false)?;
+        e.server_addr = Some(server);
+        let mut salt = [0u8; 8];
+        keys::random(&mut salt)?;
+        e.handshake = Handshake::Hello {
+            salt: u64::from_le_bytes(salt),
+            ephemeral: Box::new(keys::random_secret()?),
+            last: None,
+            since: None,
+            failed: 0,
+        };
+        Ok(e)
+    }
+
+    fn new(transport: T, config: Config, server: bool) -> Result<Endpoint<T>, Diagnostic> {
+        let mut cookie_key = Zeroizing::new([0u8; 32]);
+        if server {
+            keys::random(&mut cookie_key[..])?;
+        }
+        Ok(Endpoint {
             transport,
             config,
             server,
             peers: HashMap::new(),
             by_id: HashMap::new(),
             next_id: 0,
-            // Keyed randomly per process: the cookie key is never a constant.
-            key: RandomState::new(),
+            cookie_key,
+            answered: VecDeque::new(),
+            answered_keys: HashSet::new(),
             handshake: Handshake::None,
             server_addr: None,
+            server_key: None,
             events: Vec::new(),
             stray: 0,
             buf: vec![0; 65536],
-        }
+        })
     }
 
     /// The configuration.
@@ -223,6 +332,16 @@ impl<T: Transport> Endpoint<T> {
     /// The address peers reach this endpoint at.
     pub fn local_addr(&self) -> SocketAddr {
         self.transport.local_addr()
+    }
+
+    /// A server's own key's fingerprint, which it prints for players; a
+    /// client's server's, once its Challenge arrived (ADR-0067 §7).
+    pub fn fingerprint(&self) -> Option<Fingerprint> {
+        if self.server {
+            self.config.key.as_ref().map(ServerKey::fingerprint)
+        } else {
+            self.server_key.as_ref().map(Fingerprint::of)
+        }
     }
 
     /// The open connections, in connection order.
@@ -278,7 +397,8 @@ impl<T: Transport> Endpoint<T> {
     }
 
     /// Datagrams dropped because they came from no connection or did not
-    /// belong to one.
+    /// belong to one: strangers, damaged or replayed handshake packets, and
+    /// sealed packets from an address with no connection.
     pub fn stray(&self) -> u64 {
         self.stray
     }
@@ -343,7 +463,10 @@ impl<T: Transport> Endpoint<T> {
             let mut buf = std::mem::take(&mut self.buf);
             let got = self.transport.recv_from(&mut buf);
             match got {
-                Ok(Some((n, from))) => self.on_datagram(now, from, &buf[..n.min(buf.len())]),
+                Ok(Some((n, from))) => {
+                    let n = n.min(buf.len());
+                    self.on_datagram(now, from, &mut buf[..n]);
+                }
                 Ok(None) | Err(_) => {
                     self.buf = buf;
                     break;
@@ -396,21 +519,27 @@ impl<T: Transport> Endpoint<T> {
         for a in addrs {
             let timeout = self.config.timeout;
             let peer = self.peers.get_mut(&a).expect("listed");
-            if peer.conn.stalled(now, timeout) {
+            let at = self.transport.describe_peer(a);
+            let closing = if peer.conn.stalled(now, timeout) {
                 let backlog = peer.conn.backlog();
-                let at = self.transport.describe_peer(a);
-                self.close(
-                    now,
-                    a,
-                    Some(Diagnostic::error(
-                        codes::TIMED_OUT,
-                        format!(
-                            "{at} acknowledged nothing for {} s ({backlog} bytes waiting)",
-                            timeout.as_secs_f64()
-                        ),
-                    )),
+                Some((
+                    format!(
+                        "{at} acknowledged nothing for {} s ({backlog} bytes waiting)",
+                        timeout.as_secs_f64()
+                    ),
                     "stopped acknowledging",
-                );
+                ))
+            } else if peer.conn.spent() {
+                Some((
+                    format!("the connection to {at} sealed 2^64 - 1 packets, all it may"),
+                    "out of packet numbers",
+                ))
+            } else {
+                None
+            };
+            if let Some((message, reason)) = closing {
+                let event = Diagnostic::error(codes::TIMED_OUT, message);
+                self.close(now, a, Some(event), reason);
                 continue;
             }
             for d in peer.conn.flush(now) {
@@ -443,7 +572,8 @@ impl<T: Transport> Endpoint<T> {
         }
     }
 
-    /// Closes the connection to `addr`, keeping its link; true if there was one.
+    /// Closes the connection to `addr`, keeping its link; true if there was
+    /// one. Its keys are wiped as it drops, after its sealed Disconnects.
     fn drop_peer(
         &mut self,
         now: Duration,
@@ -451,21 +581,15 @@ impl<T: Transport> Endpoint<T> {
         event: Option<Diagnostic>,
         reason: &str,
     ) -> bool {
-        let Some(p) = self.peers.remove(&addr) else {
+        let Some(mut p) = self.peers.remove(&addr) else {
             return false;
         };
         self.by_id.remove(&p.id);
-        let mut d = packet::begin(Kind::Disconnect, p.conn.salt);
-        let mut cut = reason.len().min(MAX_REASON);
-        while !reason.is_char_boundary(cut) {
-            cut -= 1;
-        }
-        d.push(cut as u8);
-        d.extend_from_slice(&reason.as_bytes()[..cut]);
-        let d = packet::seal(d);
         self.transport.advance(now);
         for _ in 0..DISCONNECT_COPIES {
-            let _ = self.transport.send_to(addr, &d);
+            if let Some(d) = p.conn.disconnect(reason) {
+                let _ = self.transport.send_to(addr, &d);
+            }
         }
         if let Some(reason) = event {
             self.events.push(Event::Disconnected { peer: p.id, reason });
@@ -479,28 +603,59 @@ impl<T: Transport> Endpoint<T> {
         if self.peers.contains_key(&addr) {
             self.close(now, addr, Some(reason), "the link closed");
         } else if Some(addr) == self.server_addr && !matches!(self.handshake, Handshake::None) {
-            self.handshake = Handshake::None;
-            self.events.push(Event::Disconnected {
-                peer: PeerId(self.next_id),
-                reason,
-            });
+            self.fail(reason);
         }
     }
 
-    fn cookie(&self, addr: SocketAddr, salt: u64, epoch: u64) -> u64 {
-        let mut h = self.key.build_hasher();
-        addr.hash(&mut h);
-        salt.hash(&mut h);
-        epoch.hash(&mut h);
-        h.finish()
+    /// Ends a client's handshake with `reason`.
+    fn fail(&mut self, reason: Diagnostic) {
+        self.handshake = Handshake::None;
+        self.events.push(Event::Disconnected {
+            peer: PeerId(self.next_id),
+            reason,
+        });
     }
 
-    fn open(&mut self, now: Duration, addr: SocketAddr, salt: u64) -> PeerId {
+    /// A server's key (it always has one).
+    fn own_key(&self) -> &ServerKey {
+        self.config.key.as_ref().expect("a server has a key")
+    }
+
+    /// The cookie for `addr` and `salt` in cookie epoch `epoch`: the first
+    /// 16 bytes of an HMAC-BLAKE2s of them under the cookie key, so only this
+    /// server makes them, and only for a source that receives its Challenges.
+    fn cookie(&self, addr: SocketAddr, salt: u64, epoch: u64) -> [u8; COOKIE] {
+        let ip = match addr.ip() {
+            std::net::IpAddr::V4(ip) => ip.to_ipv6_mapped().octets(),
+            std::net::IpAddr::V6(ip) => ip.octets(),
+        };
+        let mac = noise::hmac(
+            &self.cookie_key,
+            &[
+                &ip,
+                &addr.port().to_le_bytes(),
+                &salt.to_le_bytes(),
+                &epoch.to_le_bytes(),
+            ],
+        );
+        let mut cookie = [0u8; COOKIE];
+        cookie.copy_from_slice(&mac[..COOKIE]);
+        cookie
+    }
+
+    fn open(&mut self, now: Duration, addr: SocketAddr, salt: u64, keys: Session) -> PeerId {
         let id = PeerId(self.next_id);
         self.next_id += 1;
         let c = &self.config;
-        let conn = Conn::new(salt, now, c.send_rate, c.rto_min, c.keepalive);
-        self.peers.insert(addr, Peer { id, conn });
+        let conn = Conn::new(salt, keys, now, c.send_rate, c.rto_min, c.keepalive);
+        self.peers.insert(
+            addr,
+            Peer {
+                id,
+                conn,
+                accept: None,
+            },
+        );
         self.by_id.insert(id, addr);
         self.events.push(Event::Connected(id));
         id
@@ -512,255 +667,447 @@ impl<T: Transport> Endpoint<T> {
         };
         let timeout = self.config.timeout;
         let (protocol, game) = (self.config.protocol, self.config.game);
-        let mut give_up = false;
+        let mut give_up = None;
         let mut send = None;
         match &mut self.handshake {
             Handshake::None => {}
-            Handshake::Hello { salt, last, since }
-            | Handshake::Response {
-                salt, last, since, ..
+            Handshake::Hello {
+                salt,
+                last,
+                since,
+                failed,
+                ..
             } => {
                 let started = *since.get_or_insert(now);
                 if now.saturating_sub(started) > timeout {
-                    give_up = true;
+                    give_up = Some(*failed);
                 } else if last.is_none_or(|t| now.saturating_sub(t) >= HANDSHAKE_RESEND) {
                     *last = Some(now);
-                    send = Some(*salt);
+                    send = Some(packet::hello(*salt, protocol, game));
+                }
+            }
+            Handshake::Response {
+                response,
+                last,
+                since,
+                failed,
+                ..
+            } => {
+                let started = *since.get_or_insert(now);
+                if now.saturating_sub(started) > timeout {
+                    give_up = Some(*failed);
+                } else if last.is_none_or(|t| now.saturating_sub(t) >= HANDSHAKE_RESEND) {
+                    *last = Some(now);
+                    send = Some(response.clone());
                 }
             }
         }
-        if give_up {
-            self.handshake = Handshake::None;
-            let id = PeerId(self.next_id);
+        if let Some(failed) = give_up {
             let at = self.transport.describe_peer(server);
-            self.events.push(Event::Disconnected {
-                peer: id,
-                reason: Diagnostic::error(
+            let failed = match failed {
+                0 => String::new(),
+                1 => "; one answer came that failed the handshake (changed on the way, or from another server)".into(),
+                n => format!("; {n} answers came that failed the handshake (changed on the way, or from another server)"),
+            };
+            self.fail(
+                Diagnostic::error(
                     codes::NO_ANSWER,
                     format!(
-                        "no answer from a server at {at} after {} s",
+                        "no answer from a server at {at} after {} s{failed}",
                         timeout.as_secs_f64()
                     ),
                 )
                 .with_hint(
                     "check the address and port, and that the server is running and reachable",
                 ),
-            });
+            );
             return;
         }
-        let Some(salt) = send else { return };
-        let mut p = match &self.handshake {
-            Handshake::Hello { .. } => packet::begin(Kind::Hello, salt),
-            Handshake::Response { cookie, .. } => {
-                let mut p = packet::begin(Kind::Response, salt);
-                p.extend_from_slice(&cookie.to_le_bytes());
-                p
-            }
-            Handshake::None => return,
-        };
-        p.extend_from_slice(&protocol.to_le_bytes());
-        p.extend_from_slice(&game.to_le_bytes());
-        p.resize(BODY_MAX, 0);
-        let _ = self.transport.send_to(server, &packet::seal(p));
+        if let Some(p) = send {
+            let _ = self.transport.send_to(server, &p);
+        }
     }
 
-    fn on_datagram(&mut self, now: Duration, from: SocketAddr, datagram: &[u8]) {
-        let Some(d) = packet::open(datagram) else {
-            self.stray += 1;
-            if let Some(p) = self.peers.get_mut(&from) {
-                p.conn.stats.malformed += 1;
-            }
-            return;
-        };
-        // Padded handshake packets are measured on the wire.
-        let padded = datagram.len() >= MTU;
-        let mut r = Reader(d);
-        let Some(h) = packet::header(&mut r) else {
-            self.stray += 1;
-            return;
-        };
-        if h.version != TRANSPORT_VERSION && h.kind != Kind::Deny {
-            if self.server && h.kind == Kind::Hello && padded {
-                self.deny(from, h.salt, DenyReason::Version);
-            } else {
+    /// A datagram from `from`: decrypted in place when it is a sealed one.
+    fn on_datagram(&mut self, now: Duration, from: SocketAddr, datagram: &mut [u8]) {
+        let packet = packet::decode(datagram);
+        match packet {
+            Packet::Sealed { kind, number } => self.on_sealed(now, from, kind, number, datagram),
+            Packet::Stray => {
                 self.stray += 1;
-            }
-            return;
-        }
-        match (self.server, h.kind) {
-            (true, Kind::Hello) => {
-                // Unpadded: no answer, so a forged source gets no amplification.
-                // A Hello from a connected address is a resend unless its salt
-                // is new (the client restarted on the same address).
-                if !padded || self.peers.get(&from).is_some_and(|p| p.conn.salt == h.salt) {
-                    return;
-                }
-                let (Some(protocol), Some(game)) = (r.u32(), r.u64()) else {
-                    return;
-                };
-                if let Some(reason) = self.refuse(protocol, game, false) {
-                    self.deny(from, h.salt, reason);
-                    return;
-                }
-                let mut p = packet::begin(Kind::Challenge, h.salt);
-                let epoch = now.as_secs() / COOKIE_EPOCH_SECS;
-                p.extend_from_slice(&self.cookie(from, h.salt, epoch).to_le_bytes());
-                let _ = self.transport.send_to(from, &packet::seal(p));
-            }
-            (true, Kind::Response) => {
-                if !padded {
-                    return;
-                }
-                let (Some(cookie), Some(protocol), Some(game)) = (r.u64(), r.u32(), r.u64()) else {
-                    return;
-                };
-                let epoch = now.as_secs() / COOKIE_EPOCH_SECS;
-                let fresh = cookie == self.cookie(from, h.salt, epoch)
-                    || (epoch > 0 && cookie == self.cookie(from, h.salt, epoch - 1));
-                if !fresh {
-                    self.stray += 1;
-                    return;
-                }
-                // The same address with a new salt: the old client is gone.
-                // Its link stays: the new connection uses it.
-                if self.peers.get(&from).is_some_and(|p| p.conn.salt != h.salt) {
-                    let at = self.transport.describe_peer(from);
-                    self.drop_peer(
-                        now,
-                        from,
-                        Some(Diagnostic::error(
-                            codes::CLOSED,
-                            format!("the client at {at} connected again"),
-                        )),
-                        "replaced by a new connection",
-                    );
-                }
-                if !self.peers.contains_key(&from) {
-                    if let Some(reason) = self.refuse(protocol, game, true) {
-                        self.deny(from, h.salt, reason);
-                        return;
-                    }
-                    self.open(now, from, h.salt);
-                }
-                // Repeated for a client whose Accept was lost.
-                let accept = packet::seal(packet::begin(Kind::Accept, h.salt));
-                let _ = self.transport.send_to(from, &accept);
-            }
-            (false, Kind::Challenge) if Some(from) == self.server_addr => {
-                if let Handshake::Hello { salt, since, .. } = self.handshake
-                    && salt == h.salt
-                    && let Some(cookie) = r.u64()
-                {
-                    self.handshake = Handshake::Response {
-                        salt,
-                        cookie,
-                        last: None,
-                        since,
-                    };
+                if let Some(p) = self.peers.get_mut(&from) {
+                    p.conn.stats.malformed += 1;
                 }
             }
-            (false, Kind::Accept) if Some(from) == self.server_addr => {
-                if let Handshake::Response { salt, .. } = self.handshake
-                    && salt == h.salt
-                {
-                    self.handshake = Handshake::None;
-                    self.open(now, from, salt);
-                }
+            Packet::OtherHello { salt, .. } if self.server => {
+                self.deny(from, salt, DenyReason::Version);
             }
-            (false, Kind::Deny) if Some(from) == self.server_addr => {
-                let salt = match self.handshake {
-                    Handshake::Hello { salt, .. } | Handshake::Response { salt, .. } => salt,
+            Packet::Hello {
+                salt,
+                protocol,
+                game,
+            } if self.server => self.on_hello(now, from, salt, protocol, game),
+            Packet::Response {
+                salt,
+                cookie,
+                protocol,
+                game,
+                msg1,
+            } if self.server => self.on_response(now, from, salt, &cookie, protocol, game, msg1),
+            Packet::Challenge {
+                salt,
+                cookie,
+                server_key,
+                code_required,
+            } if self.is_from_server(from) => {
+                self.on_challenge(from, salt, &cookie, &server_key, code_required);
+            }
+            Packet::Accept { salt, msg2 } if self.is_from_server(from) => {
+                self.on_accept(now, from, salt, msg2);
+            }
+            Packet::Deny {
+                version,
+                salt,
+                reason,
+                protocol,
+                game,
+                label,
+            } if self.is_from_server(from) => {
+                let ours = match &self.handshake {
+                    Handshake::Hello { salt, .. } | Handshake::Response { salt, .. } => *salt,
                     Handshake::None => return,
                 };
-                if salt != h.salt {
-                    return;
-                }
-                self.handshake = Handshake::None;
-                let reason = self.denied(h.version, &mut r, from);
-                self.events.push(Event::Disconnected {
-                    peer: PeerId(self.next_id),
-                    reason,
-                });
-            }
-            (_, Kind::Data) => {
-                // A data packet from the server while a client waits for a
-                // lost Accept means the server accepted it.
-                if !self.server
-                    && Some(from) == self.server_addr
-                    && let Handshake::Response { salt, .. } = self.handshake
-                    && salt == h.salt
-                {
-                    self.handshake = Handshake::None;
-                    self.open(now, from, salt);
-                }
-                let Some(peer) = self.peers.get_mut(&from) else {
-                    self.stray += 1;
-                    return;
-                };
-                if peer.conn.salt != h.salt {
+                if ours != salt {
                     self.stray += 1;
                     return;
                 }
-                peer.conn.stats.packets_received += 1;
-                peer.conn.stats.bytes_received += datagram.len() as u64;
-                let received = peer.conn.receive(now, &d[HEADER..]);
-                if peer.conn.ack_due() {
-                    let ack = peer.conn.ack(now);
-                    let _ = self.transport.send_to(from, &ack);
-                }
-                if let Received::Messages(m) = received {
-                    let id = self.peers[&from].id;
-                    self.events
-                        .extend(m.into_iter().map(|(channel, bytes)| Event::Message {
-                            peer: id,
-                            channel,
-                            bytes,
-                        }));
-                }
-            }
-            (_, Kind::Disconnect) => {
-                let Some(peer) = self.peers.get(&from) else {
-                    return;
-                };
-                if peer.conn.salt != h.salt {
-                    return;
-                }
-                let id = peer.id;
-                let reason = r
-                    .u8()
-                    .and_then(|n| r.take(n as usize))
-                    .map(|b| String::from_utf8_lossy(b).into_owned())
-                    .unwrap_or_default();
-                let who = if self.server {
-                    "the client"
-                } else {
-                    "the server"
-                };
-                let at = self.transport.describe_peer(from);
-                self.peers.remove(&from);
-                self.by_id.remove(&id);
-                self.transport.release(from);
-                let message = if reason.is_empty() {
-                    format!("{who} at {at} closed the connection")
-                } else {
-                    format!("{who} at {at} closed the connection: {reason}")
-                };
-                self.events.push(Event::Disconnected {
-                    peer: id,
-                    reason: Diagnostic::error(codes::CLOSED, message),
-                });
+                let reason = self.denied(version, reason, protocol, game, label, from);
+                self.fail(reason);
             }
             _ => self.stray += 1,
         }
     }
 
-    /// Why a server refuses a client with `protocol` and `game`, if it does.
-    fn refuse(&self, protocol: u32, game: u64, opening: bool) -> Option<DenyReason> {
+    /// True when a client hears from the address it connects to.
+    fn is_from_server(&self, from: SocketAddr) -> bool {
+        !self.server && Some(from) == self.server_addr
+    }
+
+    /// A server's Hello: a Challenge for the source, which costs one HMAC
+    /// and keeps nothing.
+    fn on_hello(&mut self, now: Duration, from: SocketAddr, salt: u64, protocol: u32, game: u64) {
+        // From a connected address, a resend unless its salt is new (the
+        // client restarted on the same address).
+        if self.peers.get(&from).is_some_and(|p| p.conn.salt == salt) {
+            return;
+        }
+        if let Some(reason) = self.refuse(protocol, game, None) {
+            self.deny(from, salt, reason);
+            return;
+        }
+        let cookie = self.cookie(from, salt, now.as_secs() / COOKIE_EPOCH_SECS);
+        let p = packet::challenge(
+            salt,
+            &cookie,
+            &self.own_key().public_key(),
+            self.config.join_code.is_some(),
+        );
+        let _ = self.transport.send_to(from, &p);
+    }
+
+    /// A server's Response, checked in order of cost (ADR-0067 §4).
+    #[allow(clippy::too_many_arguments)]
+    fn on_response(
+        &mut self,
+        now: Duration,
+        from: SocketAddr,
+        salt: u64,
+        cookie: &[u8; COOKIE],
+        protocol: u32,
+        game: u64,
+        msg1: &[u8],
+    ) {
+        // 1. The cookie: the source received this epoch's Challenge or the
+        //    last one's.
+        let epoch = now.as_secs() / COOKIE_EPOCH_SECS;
+        let current = cookie.ct_eq(&self.cookie(from, salt, epoch));
+        let previous = cookie.ct_eq(&self.cookie(from, salt, epoch.saturating_sub(1)));
+        if !bool::from(current | previous) {
+            self.stray += 1;
+            return;
+        }
+        // 2. A resend for a connection that opened: its Accept was lost.
+        if let Some(p) = self.peers.get(&from)
+            && p.conn.salt == salt
+        {
+            if let Some(accept) = &p.accept {
+                let _ = self.transport.send_to(from, accept);
+            }
+            return;
+        }
+        // 3. The versions, the game and room for one more (a connection from
+        //    this address will be replaced, so it does not count).
+        if let Some(reason) = self.refuse(protocol, game, Some(from)) {
+            self.deny(from, salt, reason);
+            return;
+        }
+        // 4. A first message answered within the cookie's life, whose
+        //    connection is gone: a replay.
+        self.forget_answered(epoch);
+        let ephemeral: [u8; KEY] = msg1[..KEY].try_into().expect("msg1 holds a key");
+        if self.answered_keys.contains(&ephemeral) {
+            self.stray += 1;
+            return;
+        }
+        // 5. The Diffie-Hellman work: msg1 must open under this server's key
+        //    and its join code's.
+        let Ok(e) = keys::random_secret() else {
+            self.stray += 1;
+            return;
+        };
+        let prologue = prologue(protocol, game, salt);
+        let answer = {
+            let key = self.own_key();
+            let public = key.public_key();
+            let psk = keys::psk(&public, self.config.join_code.as_ref());
+            noise::respond(key.secret(), &public, &psk, &prologue, msg1, &e, &[])
+        };
+        let Ok((_, msg2, session, _)) = answer else {
+            self.deny(from, salt, DenyReason::Handshake);
+            return;
+        };
+        self.remember_answered(epoch, ephemeral);
+        // 6. A client that restarted on the same address replaces its old
+        //    connection, whose link the new one keeps.
+        if self.peers.contains_key(&from) {
+            let at = self.transport.describe_peer(from);
+            self.drop_peer(
+                now,
+                from,
+                Some(Diagnostic::error(
+                    codes::CLOSED,
+                    format!("the client at {at} connected again"),
+                )),
+                "replaced by a new connection",
+            );
+        }
+        let accept = packet::accept(salt, &msg2);
+        let _ = self.transport.send_to(from, &accept);
+        self.open(now, from, salt, session);
+        self.peers.get_mut(&from).expect("opened").accept = Some(accept);
+    }
+
+    /// Forgets the answered first messages whose cookies have expired.
+    fn forget_answered(&mut self, epoch: u64) {
+        while let Some(&(e, key)) = self.answered.front() {
+            if e + 2 > epoch && self.answered.len() <= MAX_ANSWERED {
+                break;
+            }
+            self.answered.pop_front();
+            self.answered_keys.remove(&key);
+        }
+    }
+
+    fn remember_answered(&mut self, epoch: u64, key: [u8; KEY]) {
+        if self.answered_keys.insert(key) {
+            self.answered.push_back((epoch, key));
+        }
+    }
+
+    /// A client's Challenge: checks the server's key and its need for a join
+    /// code, then writes the first handshake message.
+    fn on_challenge(
+        &mut self,
+        from: SocketAddr,
+        salt: u64,
+        cookie: &[u8; COOKIE],
+        server_key: &[u8; KEY],
+        code_required: bool,
+    ) {
+        let Handshake::Hello {
+            salt: ours,
+            since,
+            failed,
+            ..
+        } = self.handshake
+        else {
+            // A Challenge after the first one: its Response is on its way.
+            return;
+        };
+        if ours != salt {
+            self.stray += 1;
+            return;
+        }
+        let at = self.transport.describe_peer(from);
+        let fingerprint = Fingerprint::of(server_key);
+        if let Some(pin) = self.config.pin
+            && pin != fingerprint
+        {
+            self.fail(
+                Diagnostic::error(
+                    codes::KEY_MISMATCH,
+                    format!("the server at {at} has the key {fingerprint}, not the pinned {pin}"),
+                )
+                .with_hint("if the server's key changed (its server.key was deleted), pin the fingerprint it prints now; if not, something on the way is posing as the server"),
+            );
+            return;
+        }
+        match (code_required, self.config.join_code.is_some()) {
+            (true, false) => {
+                self.fail(
+                    Diagnostic::error(
+                        codes::JOIN_CODE_MISMATCH,
+                        format!("the server at {at} needs a join code"),
+                    )
+                    .with_hint("ask the host for the code the server printed when it started"),
+                );
+                return;
+            }
+            (false, true) => {
+                self.fail(
+                    Diagnostic::error(
+                        codes::JOIN_CODE_MISMATCH,
+                        format!(
+                            "the server at {at} takes no join code, and this client was given one"
+                        ),
+                    )
+                    .with_hint("check the address, or join without the code"),
+                );
+                return;
+            }
+            _ => {}
+        }
+        let started = {
+            let Handshake::Hello { ephemeral, .. } = &self.handshake else {
+                unreachable!("matched above")
+            };
+            let psk = keys::psk(server_key, self.config.join_code.as_ref());
+            let prologue = prologue(self.config.protocol, self.config.game, salt);
+            Initiator::start(server_key, &psk, &prologue, ephemeral, &[])
+        };
+        match started {
+            Ok((initiator, msg1)) => {
+                let response =
+                    packet::response(salt, cookie, self.config.protocol, self.config.game, &msg1);
+                self.server_key = Some(*server_key);
+                self.handshake = Handshake::Response {
+                    salt,
+                    response,
+                    initiator: Box::new(initiator),
+                    last: None,
+                    since,
+                    failed,
+                };
+            }
+            // A key of low order is no server's: keep waiting.
+            Err(_) => {
+                if let Handshake::Hello { failed, .. } = &mut self.handshake {
+                    *failed += 1;
+                }
+            }
+        }
+    }
+
+    /// A client's Accept: its second handshake message gives the session.
+    fn on_accept(&mut self, now: Duration, from: SocketAddr, salt: u64, msg2: &[u8]) {
+        let Handshake::Response {
+            salt: ours,
+            initiator,
+            failed,
+            ..
+        } = &mut self.handshake
+        else {
+            self.stray += 1;
+            return;
+        };
+        if *ours != salt {
+            self.stray += 1;
+            return;
+        }
+        match initiator.finish(msg2) {
+            Ok((_, session, _)) => {
+                self.handshake = Handshake::None;
+                self.open(now, from, salt, session);
+            }
+            // Changed on the way or forged: the handshake waits for the real
+            // one, and RE8902 says it came if none does.
+            Err(_) => *failed += 1,
+        }
+    }
+
+    /// A sealed packet: opened in place with its connection's keys.
+    fn on_sealed(
+        &mut self,
+        now: Duration,
+        from: SocketAddr,
+        kind: Kind,
+        number: u64,
+        datagram: &mut [u8],
+    ) {
+        let Some(peer) = self.peers.get_mut(&from) else {
+            self.stray += 1;
+            return;
+        };
+        let Some(len) = peer.conn.open(number, datagram) else {
+            return;
+        };
+        // The client has its keys, so its Accept arrived.
+        peer.accept = None;
+        let body = &datagram[HEADER..HEADER + len];
+        if kind == Kind::Data {
+            peer.conn.stats.packets_received += 1;
+            peer.conn.stats.bytes_received += datagram.len() as u64;
+            let received = peer.conn.receive(now, body);
+            if peer.conn.ack_due()
+                && let Some(ack) = peer.conn.ack(now)
+            {
+                let _ = self.transport.send_to(from, &ack);
+            }
+            if let Received::Messages(m) = received {
+                let id = peer.id;
+                self.events
+                    .extend(m.into_iter().map(|(channel, bytes)| Event::Message {
+                        peer: id,
+                        channel,
+                        bytes,
+                    }));
+            }
+            return;
+        }
+        // A Disconnect, which only the peer can seal.
+        let reason = packet::disconnect(body);
+        let id = peer.id;
+        let who = if self.server {
+            "the client"
+        } else {
+            "the server"
+        };
+        let at = self.transport.describe_peer(from);
+        self.peers.remove(&from);
+        self.by_id.remove(&id);
+        self.transport.release(from);
+        let message = if reason.is_empty() {
+            format!("{who} at {at} closed the connection")
+        } else {
+            format!("{who} at {at} closed the connection: {reason}")
+        };
+        self.events.push(Event::Disconnected {
+            peer: id,
+            reason: Diagnostic::error(codes::CLOSED, message),
+        });
+    }
+
+    /// Why a server refuses a client with `protocol` and `game`, if it does;
+    /// with `joining`, also when it has no room for one more connection from
+    /// that address.
+    fn refuse(&self, protocol: u32, game: u64, joining: Option<SocketAddr>) -> Option<DenyReason> {
+        let open =
+            self.peers.len() - joining.map_or(0, |a| usize::from(self.peers.contains_key(&a)));
         if protocol != self.config.protocol {
             Some(DenyReason::Version)
         } else if game != self.config.game {
             Some(DenyReason::Game)
-        } else if opening && self.peers.len() >= self.config.max_connections {
+        } else if joining.is_some() && open >= self.config.max_connections {
             Some(DenyReason::Full)
         } else {
             None
@@ -768,38 +1115,90 @@ impl<T: Transport> Endpoint<T> {
     }
 
     fn deny(&mut self, to: SocketAddr, salt: u64, reason: DenyReason) {
-        let mut p = packet::begin(Kind::Deny, salt);
-        p.push(reason as u8);
-        p.extend_from_slice(&self.config.protocol.to_le_bytes());
-        p.extend_from_slice(&self.config.game.to_le_bytes());
-        let _ = self.transport.send_to(to, &packet::seal(p));
+        let c = &self.config;
+        let p = packet::deny_packet(salt, reason, c.protocol, c.game, &c.engine);
+        let _ = self.transport.send_to(to, &p);
     }
 
-    fn denied(&self, version: u16, r: &mut Reader<'_>, from: SocketAddr) -> Diagnostic {
-        let reason = r.u8().and_then(DenyReason::from_u8);
-        let (protocol, game) = (r.u32(), r.u64());
-        let from = self.transport.describe_peer(from);
+    /// A client's diagnostic for a server's Deny. A Deny of another
+    /// transport version is a version mismatch, whatever its reason.
+    fn denied(
+        &self,
+        version: u16,
+        reason: Option<u8>,
+        protocol: Option<u32>,
+        game: Option<u64>,
+        label: Option<&[u8]>,
+        from: SocketAddr,
+    ) -> Diagnostic {
+        let at = self.transport.describe_peer(from);
+        let engines = match label.filter(|l| !l.is_empty()) {
+            Some(l) => format!(
+                " (the server runs Real Engine {}, this client {})",
+                packet::text(l),
+                self.config.engine
+            ),
+            None => String::new(),
+        };
+        let reason = reason
+            .and_then(DenyReason::from_u8)
+            .filter(|_| version == TRANSPORT_VERSION);
         match reason {
-            Some(DenyReason::Full) => Diagnostic::error(codes::SERVER_FULL, format!("the server at {from} is full"))
+            Some(DenyReason::Full) => Diagnostic::error(codes::SERVER_FULL, format!("the server at {at} is full"))
                 .with_hint("try again when a player has left"),
             Some(DenyReason::Game) => Diagnostic::error(
                 codes::GAME_MISMATCH,
                 format!(
-                    "the server at {from} runs a different game (its game is {:016x}, this one is {:016x})",
+                    "the server at {at} runs a different game (its game is {:016x}, this one is {:016x}){engines}",
                     game.unwrap_or(0),
                     self.config.game
                 ),
             )
             .with_hint("run the same build or project content on both machines"),
-            _ => Diagnostic::error(
-                codes::VERSION_MISMATCH,
-                format!(
-                    "the server at {from} speaks network version {version}.{}, this client {TRANSPORT_VERSION}.{}",
-                    protocol.unwrap_or(0),
-                    self.config.protocol
-                ),
-            )
-            .with_hint("run the same engine version on both machines"),
+            Some(DenyReason::Handshake) => match &self.config.join_code {
+                Some(_) => Diagnostic::error(
+                    codes::HANDSHAKE_REFUSED,
+                    format!("the server at {at} refused the join code"),
+                )
+                .with_hint("check the code with the host: a server makes a new one each time it starts"),
+                None => Diagnostic::error(
+                    codes::HANDSHAKE_REFUSED,
+                    format!("the server at {at} refused the handshake: it may need a join code that its answer did not ask for, or something on the way changed that answer"),
+                )
+                .with_hint("ask the host whether the game needs a join code"),
+            },
+            Some(DenyReason::Version) | None => {
+                let hint = if version < TRANSPORT_VERSION {
+                    "the server runs an engine from before online play was encrypted, which this client cannot join: run the same engine version on both machines"
+                } else {
+                    "run the same engine version on both machines"
+                };
+                Diagnostic::error(
+                    codes::VERSION_MISMATCH,
+                    format!(
+                        "the server at {at} speaks network version {version}.{}, this client {TRANSPORT_VERSION}.{}{engines}",
+                        protocol.unwrap_or(0),
+                        self.config.protocol
+                    ),
+                )
+                .with_hint(hint)
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_prologue_is_the_one_the_snow_vectors_were_made_with() {
+        let vs: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/data/nkpsk0-snow.json")).unwrap();
+        let hex: String = prologue(7, 0x0123_4567_89ab_cdef, 0xfedc_ba98_7654_3210)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(vs[0]["init_prologue"].as_str().unwrap(), hex);
     }
 }

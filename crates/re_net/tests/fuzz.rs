@@ -1,16 +1,17 @@
 //! Seeded fuzzing: random datagrams from strangers, and corrupted, truncated
 //! and forged copies of a connected client's real packets. Nothing may
-//! panic. Damaged packets fail the CRC and count as lost, so every message
-//! still arrives intact; forged packets with a valid CRC (what only someone
-//! who knows the connection's salt can make) may break the stream, but never
-//! the process.
+//! panic, a stranger gets back no more bytes than it sent, and every damaged
+//! or forged packet fails its tag (ADR-0067 §5) and is dropped and counted,
+//! so every message still arrives intact: a valid CRC no longer helps a
+//! forger, since sealed packets have none.
 
 use std::io;
 use std::net::SocketAddr;
 use std::time::Duration;
 
 use re_net::{
-    Channel, Config, Endpoint, Event, MTU, MemoryNet, MemoryTransport, PeerId, Transport,
+    Channel, Config, Endpoint, Event, MTU, MemoryNet, MemoryTransport, PeerId, TRANSPORT_VERSION,
+    Transport,
 };
 
 /// A seeded xorshift generator.
@@ -134,32 +135,55 @@ fn strangers_noise_never_panics_or_connects() {
     let to = server.local_addr();
     let mut rng = Rng(0x5eed);
     let mut now = Duration::ZERO;
+    let (mut sent, mut answered) = (vec![0usize; 8], vec![0usize; 8]);
+    let mut buf = vec![0; 65536];
     for _ in 0..2000 {
-        for s in &mut strangers {
+        for (i, s) in strangers.iter_mut().enumerate() {
             let len = rng.below(MTU as u64 + 200) as usize;
             let mut d: Vec<u8> = (0..len).map(|_| rng.next() as u8).collect();
-            // Half of them start like ours, with every kind, and most of
-            // those carry a valid CRC.
+            // Half of them start like ours, of this version or the last,
+            // with every kind, and most of those carry a valid CRC.
             if rng.below(2) == 0 && d.len() >= 19 {
                 d[..4].copy_from_slice(b"RENT");
-                d[4..6].copy_from_slice(&1u16.to_le_bytes());
+                let version = TRANSPORT_VERSION - rng.below(2) as u16;
+                d[4..6].copy_from_slice(&version.to_le_bytes());
                 d[6] = rng.below(8) as u8;
                 if rng.below(4) != 0 {
                     reseal(&mut d);
                 }
             }
+            sent[i] += d.len();
             s.send_to(to, &d).unwrap();
         }
         now += TICK;
         let events = server.poll(now);
         assert!(events.is_empty(), "{events:?}");
         server.flush(now);
+        for (i, s) in strangers.iter_mut().enumerate() {
+            while let Some((n, _)) = s.recv_from(&mut buf).unwrap() {
+                answered[i] += n;
+            }
+        }
     }
     assert!(server.peers().is_empty());
     assert!(server.stray() > 0);
+    for i in 0..8 {
+        assert!(answered[i] <= sent[i], "stranger {i} got more than it sent");
+    }
 }
 
-fn mangled_run(seed: u64, forge: bool) -> (Vec<Vec<u8>>, Vec<Vec<u8>>, bool) {
+/// What a run sent and delivered, whether the connection stayed, how many
+/// datagrams were mangled, and how many the server dropped and counted.
+struct Run {
+    sent: Vec<Vec<u8>>,
+    got: Vec<Vec<u8>>,
+    alive: bool,
+    mangled: u64,
+    dropped: u64,
+    rejected: u64,
+}
+
+fn mangled_run(seed: u64, forge: bool) -> Run {
     let net = MemoryNet::new();
     let mut server = Endpoint::server(net.bind(), Config::server(1, 1));
     let mangler = Mangler {
@@ -204,26 +228,41 @@ fn mangled_run(seed: u64, forge: bool) -> (Vec<Vec<u8>>, Vec<Vec<u8>>, bool) {
         frame(&mut server, &mut client, &mut got);
     }
     let alive = server.peers() == vec![PeerId(0)];
-    (sent, got, alive)
+    let stats = server.stats(PeerId(0)).unwrap_or_default();
+    Run {
+        sent,
+        got,
+        alive,
+        mangled: client.transport().mangled,
+        dropped: stats.rejected + stats.replayed + stats.malformed,
+        rejected: stats.rejected,
+    }
+}
+
+fn assert_intact(run: &Run, seed: u64) {
+    assert!(run.alive, "seed {seed}");
+    assert_eq!(run.got.len(), run.sent.len(), "seed {seed}");
+    assert!(
+        run.got == run.sent,
+        "seed {seed}: a message arrived damaged or out of order"
+    );
+    // A few mangled datagrams come out unchanged (cut at their own length,
+    // or nothing appended), and those open.
+    assert!(run.dropped <= run.mangled, "seed {seed}");
+    assert!(run.dropped >= run.mangled * 9 / 10, "seed {seed}");
+    assert!(run.rejected > run.mangled / 2, "seed {seed}");
 }
 
 #[test]
-fn damaged_packets_count_as_lost_and_every_message_arrives_intact() {
+fn damaged_packets_are_dropped_and_counted_and_every_message_arrives_intact() {
     for seed in [1u64, 2, 3] {
-        let (sent, got, alive) = mangled_run(seed, false);
-        assert!(alive, "seed {seed}");
-        assert_eq!(got.len(), sent.len(), "seed {seed}");
-        assert!(
-            got == sent,
-            "seed {seed}: a message arrived damaged or out of order"
-        );
+        assert_intact(&mangled_run(seed, false), seed);
     }
 }
 
 #[test]
-fn forged_packets_with_a_valid_crc_never_panic() {
+fn forged_packets_with_a_valid_crc_are_dropped_too() {
     for seed in [4u64, 5, 6] {
-        // Only that the run completes: forged chunks may break the stream.
-        let _ = mangled_run(seed, true);
+        assert_intact(&mangled_run(seed, true), seed);
     }
 }

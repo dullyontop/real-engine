@@ -1,14 +1,16 @@
-//! One connection's reliability: acks, round-trip time, the reliable ordered
-//! channel's fragments and resends, the unreliable queue and the token
-//! bucket (ADR-0050 §1).
+//! One connection: its session keys and replay window (ADR-0067 §5), and its
+//! reliability: acks, round-trip time, the reliable ordered channel's
+//! fragments and resends, the unreliable queue and the token bucket
+//! (ADR-0050 §1).
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::time::Duration;
 
+use crate::noise::Session;
 use crate::packet::{
-    self, BODY_MAX, CHUNK_HEADER, FRAGMENT, Kind, MAX_FRAGMENTS, MAX_MESSAGE, MTU, Reader,
-    seq_newer,
+    self, CHUNK_HEADER, FRAGMENT, HEADER, Kind, MAX_MESSAGE, MAX_REASON, MTU, SEALED_MAX, seq_newer,
 };
+use crate::replay::ReplayWindow;
 
 /// How far past the oldest unacked reliable message a sender may go, and how
 /// far ahead of the next expected one a receiver keeps fragments.
@@ -65,8 +67,17 @@ pub struct ConnStats {
     pub fragments_sent: u64,
     /// Reliable fragments sent again after their timeout.
     pub fragments_resent: u64,
-    /// Datagrams from this peer that did not parse and were dropped.
+    /// Datagrams from this peer's address that did not parse and were
+    /// dropped: not a packet of ours, or damaged handshake packets, or a
+    /// sealed packet that opened but is malformed.
     pub malformed: u64,
+    /// Sealed packets dropped because they did not open: altered on the way,
+    /// forged, or sealed with other keys (ADR-0067 §5).
+    pub rejected: u64,
+    /// Sealed packets dropped before opening because their number had opened
+    /// already or was too old for the replay window: a duplicate from the
+    /// network, or a replay.
+    pub replayed: u64,
     /// Messages delivered to the caller.
     pub messages_received: u64,
     /// Packets not acked because their fragments did not fit the receive
@@ -107,7 +118,15 @@ pub(crate) enum Received {
 }
 
 pub(crate) struct Conn {
+    /// The client's salt for the handshake that made it.
     pub(crate) salt: u64,
+    /// The session's ciphers, boxed so the keys stay put when the
+    /// connection moves; they wipe themselves when it drops.
+    keys: Box<Session>,
+    /// The number of the next sealed packet sent, which is its nonce.
+    next_number: u64,
+    /// The numbers of the peer's sealed packets that opened.
+    window: ReplayWindow,
     local_seq: u16,
     remote_seq: u16,
     recv_bits: u32,
@@ -141,6 +160,7 @@ pub(crate) struct Conn {
 impl Conn {
     pub(crate) fn new(
         salt: u64,
+        keys: Session,
         now: Duration,
         rate: f64,
         rto_min: Duration,
@@ -150,6 +170,9 @@ impl Conn {
         let rate = rate.max(1024.0);
         Conn {
             salt,
+            keys: Box::new(keys),
+            next_number: 0,
+            window: ReplayWindow::new(),
             local_seq: 0,
             // Until the peer's first packet arrives, acks name a sequence
             // number the peer has not used (it starts at 0), so they ack
@@ -265,38 +288,18 @@ impl Conn {
     }
 
     fn parse(&mut self, now: Duration, body: &[u8]) -> Option<Vec<(Channel, Vec<u8>)>> {
-        let mut r = Reader(body);
-        let seq = r.u16()?;
-        let ack = r.u16()?;
-        let ack_bits = r.u32()?;
-        // Check every chunk before acting on any, so a malformed packet
+        // Every chunk is checked before any is used, so a malformed packet
         // changes nothing.
-        let mut chunks = Vec::new();
-        while !r.is_empty() {
-            let channel = r.u8()?;
-            let id = r.u32()?;
-            let index = r.u16()?;
-            let count = r.u16()?;
-            let len = r.u16()? as usize;
-            let bytes = r.take(len)?;
-            let channel = match channel {
-                0 => Channel::Unreliable,
-                1 => Channel::Reliable,
-                _ => return None,
-            };
-            // Every fragment but the last is full, so a message's fragments
-            // cannot be made to cost more than its bytes.
-            if channel == Channel::Reliable
-                && (count == 0
-                    || index >= count
-                    || count as usize > MAX_FRAGMENTS
-                    || len > FRAGMENT
-                    || (index + 1 < count && len != FRAGMENT))
-            {
-                return None;
-            }
-            chunks.push((channel, id, index, count, bytes));
-        }
+        let packet::DataBody {
+            seq,
+            ack,
+            ack_bits,
+            chunks,
+        } = packet::data(body)?;
+        let chunks: Vec<_> = chunks
+            .into_iter()
+            .map(|c| (c.channel, c.id, c.index, c.count, c.bytes))
+            .collect();
         self.last_recv = now;
         self.note_acks(now, ack, ack_bits);
         // Fragments that would overflow the receive buffer: the packet is
@@ -404,11 +407,63 @@ impl Conn {
     }
 
     /// An ack-only packet, sent at once.
-    pub(crate) fn ack(&mut self, now: Duration) -> Vec<u8> {
-        let p = self.data_packet(now, Vec::new(), packet::begin(Kind::Data, self.salt));
+    pub(crate) fn ack(&mut self, now: Duration) -> Option<Vec<u8>> {
+        let p = self.data_packet(now, Vec::new(), packet::begin(Kind::Data, 0))?;
         self.stats.packets_sent += 1;
         self.stats.bytes_sent += p.len() as u64;
-        p
+        Some(p)
+    }
+
+    /// Opens a sealed packet from the peer in place (ADR-0067 §5): a number
+    /// that opened before or is too old for the window is dropped before any
+    /// decryption (`replayed`), and one whose tag fails is dropped
+    /// (`rejected`) without moving the window. Returns the body's length; the
+    /// body is `datagram[HEADER..HEADER + len]`.
+    pub(crate) fn open(&mut self, number: u64, datagram: &mut [u8]) -> Option<usize> {
+        if !self.window.fresh(number) {
+            self.stats.replayed += 1;
+            return None;
+        }
+        match self.keys.recv.open(number, datagram, HEADER) {
+            Ok(len) => {
+                self.window.mark(number);
+                Some(len)
+            }
+            Err(_) => {
+                self.stats.rejected += 1;
+                None
+            }
+        }
+    }
+
+    /// Seals a packet [`packet::begin`] started: numbers it with the next
+    /// packet number and encrypts its body with its header as the associated
+    /// data. `None` once the numbers ran out ([`Conn::spent`]).
+    fn seal(&mut self, mut p: Vec<u8>) -> Option<Vec<u8>> {
+        let number = self.next_number;
+        packet::set_number(&mut p, number);
+        self.keys.send.seal(number, &mut p, HEADER).ok()?;
+        self.next_number += 1;
+        Some(p)
+    }
+
+    /// True when the connection has sealed 2^64 − 1 packets and can seal no
+    /// more, which Noise's reserved nonce forbids (it cannot happen: a million
+    /// packets a second for half a million years).
+    pub(crate) fn spent(&self) -> bool {
+        self.next_number == u64::MAX
+    }
+
+    /// A Disconnect with `reason` (at most 200 bytes of it).
+    pub(crate) fn disconnect(&mut self, reason: &str) -> Option<Vec<u8>> {
+        let reason = packet::cut(reason, MAX_REASON);
+        let mut p = packet::begin(Kind::Disconnect, 0);
+        p.push(reason.len() as u8);
+        p.extend_from_slice(reason.as_bytes());
+        let p = self.seal(p)?;
+        self.stats.packets_sent += 1;
+        self.stats.bytes_sent += p.len() as u64;
+        Some(p)
     }
 
     /// True when sent reliable fragments have had no ack progress for
@@ -531,14 +586,14 @@ impl Conn {
                 break;
             }
             keepalive = false;
-            let mut p = packet::begin(Kind::Data, self.salt);
+            let mut p = packet::begin(Kind::Data, 0);
             // The data header goes in by `data_packet`, after the chunks are
             // chosen; reserve its bytes.
             p.extend_from_slice(&[0; packet::DATA_HEADER]);
             let mut fragments = Vec::new();
             if can_send {
                 while let Some(u) = self.unreliable.front() {
-                    if p.len() + CHUNK_HEADER + u.len() > BODY_MAX {
+                    if p.len() + CHUNK_HEADER + u.len() > SEALED_MAX {
                         break;
                     }
                     let u = self.unreliable.pop_front().expect("front");
@@ -547,7 +602,7 @@ impl Conn {
                 while let Some(&(id, f, resend)) = due.front() {
                     let m = &self.out[&id];
                     let data = &m.fragments[f as usize].data;
-                    if p.len() + CHUNK_HEADER + data.len() > BODY_MAX {
+                    if p.len() + CHUNK_HEADER + data.len() > SEALED_MAX {
                         break;
                     }
                     due.pop_front();
@@ -572,8 +627,10 @@ impl Conn {
             if !fragments.is_empty() && self.waiting_since.is_none() {
                 self.waiting_since = Some(now);
             }
-            let empty = p.len() == packet::HEADER + packet::DATA_HEADER;
-            let p = self.data_packet(now, fragments, p);
+            let empty = p.len() == HEADER + packet::DATA_HEADER;
+            let Some(p) = self.data_packet(now, fragments, p) else {
+                break;
+            };
             // Acks and keepalives are small and must flow even when the
             // bucket is empty; only packets with data spend tokens.
             if !empty {
@@ -597,17 +654,20 @@ impl Conn {
         now: Duration,
         fragments: Vec<(u32, u16)>,
         mut p: Vec<u8>,
-    ) -> Vec<u8> {
+    ) -> Option<Vec<u8>> {
+        if self.spent() {
+            return None;
+        }
         let seq = self.local_seq;
         self.local_seq = self.local_seq.wrapping_add(1);
         let mut head = [0u8; packet::DATA_HEADER];
         head[0..2].copy_from_slice(&seq.to_le_bytes());
         head[2..4].copy_from_slice(&self.remote_seq.to_le_bytes());
         head[4..8].copy_from_slice(&self.recv_bits.to_le_bytes());
-        if p.len() == packet::HEADER {
+        if p.len() == HEADER {
             p.extend_from_slice(&head);
         } else {
-            p[packet::HEADER..packet::HEADER + packet::DATA_HEADER].copy_from_slice(&head);
+            p[HEADER..HEADER + packet::DATA_HEADER].copy_from_slice(&head);
         }
         self.sent.insert(seq, SentPacket { at: now, fragments });
         if self.sent.len() > MAX_SENT {
@@ -618,7 +678,7 @@ impl Conn {
         self.need_ack = false;
         self.unacked_received = 0;
         self.last_send = now;
-        packet::seal(p)
+        self.seal(p)
     }
 }
 
@@ -635,8 +695,32 @@ mod tests {
     const MS: Duration = Duration::from_millis(1);
 
     fn pair() -> (Conn, Conn) {
-        let c = |_| Conn::new(7, Duration::ZERO, 1e9, MS * 30, MS * 100);
-        (c(0), c(1))
+        let (a, b) = crate::noise::test_pair();
+        let c = |keys| Conn::new(7, keys, Duration::ZERO, 1e9, MS * 30, MS * 100);
+        (c(a), c(b))
+    }
+
+    /// A connection with the client's end of a session nobody answers.
+    fn alone(rate: f64, rto_min: Duration) -> Conn {
+        Conn::new(
+            1,
+            crate::noise::test_pair().0,
+            Duration::ZERO,
+            rate,
+            rto_min,
+            MS * 100,
+        )
+    }
+
+    /// Opens a datagram `to`'s peer sealed, as the endpoint does: its body,
+    /// or `None` when it does not open.
+    fn open(to: &mut Conn, d: &[u8]) -> Option<Vec<u8>> {
+        let packet::Packet::Sealed { number, .. } = packet::decode(d) else {
+            panic!("not a sealed packet: {d:?}")
+        };
+        let mut d = d.to_vec();
+        let len = to.open(number, &mut d)?;
+        Some(d[HEADER..HEADER + len].to_vec())
     }
 
     /// Moves every datagram of `from` to `to` (bodies only), returning what
@@ -652,7 +736,8 @@ mod tests {
             if !keep(i) {
                 continue;
             }
-            match to.receive(now, &packet::open(&d).unwrap()[packet::HEADER..]) {
+            let body = open(to, &d).expect("opens");
+            match to.receive(now, &body) {
                 Received::Messages(m) => out.extend(m.into_iter().map(|(_, b)| b)),
                 Received::Malformed => panic!("malformed"),
             }
@@ -689,19 +774,99 @@ mod tests {
     }
 
     #[test]
-    fn duplicates_are_delivered_once() {
+    fn a_duplicate_is_dropped_before_it_opens_and_counted() {
         let (mut a, mut b) = pair();
         a.queue(Channel::Reliable, b"once");
         let d = a.flush(MS);
         let mut n = 0;
         for _ in 0..3 {
-            if let Received::Messages(m) =
-                b.receive(MS, &packet::open(&d[0]).unwrap()[packet::HEADER..])
+            if let Some(body) = open(&mut b, &d[0])
+                && let Received::Messages(m) = b.receive(MS, &body)
             {
                 n += m.len();
             }
         }
         assert_eq!(n, 1);
+        assert_eq!((b.stats.replayed, b.stats.rejected), (2, 0));
+    }
+
+    #[test]
+    fn a_body_received_twice_delivers_once() {
+        // Behind the replay window, the sequence numbers still keep a
+        // packet's messages from arriving twice.
+        let (mut a, mut b) = pair();
+        a.queue(Channel::Reliable, b"once");
+        a.queue(Channel::Unreliable, b"u");
+        let body = open(&mut b, &a.flush(MS)[0]).unwrap();
+        let mut n = 0;
+        for _ in 0..3 {
+            if let Received::Messages(m) = b.receive(MS, &body) {
+                n += m.len();
+            }
+        }
+        assert_eq!(n, 2);
+    }
+
+    #[test]
+    fn each_packet_has_its_own_number_and_opens_only_with_the_peers_keys() {
+        let (mut a, mut b) = pair();
+        for i in 0..20u8 {
+            a.queue(Channel::Reliable, &[i; 1000]);
+        }
+        let sent = a.flush(MS);
+        let numbers: Vec<u64> = sent
+            .iter()
+            .map(|d| match packet::decode(d) {
+                packet::Packet::Sealed { number, .. } => number,
+                p => panic!("{p:?}"),
+            })
+            .collect();
+        assert_eq!(numbers, (0..sent.len() as u64).collect::<Vec<_>>());
+        // The sender cannot open its own packets: each direction has its key.
+        assert_eq!(open(&mut a, &sent[0]), None);
+        assert_eq!(a.stats.rejected, 1);
+        for d in &sent {
+            assert!(open(&mut b, d).is_some());
+        }
+        assert!(sent.iter().all(|d| d.len() <= MTU));
+    }
+
+    #[test]
+    fn a_packet_that_fails_its_tag_never_moves_the_window() {
+        let (mut a, mut b) = pair();
+        for i in 0..3u8 {
+            a.queue(Channel::Unreliable, &[i]);
+            a.flush(MS * (u32::from(i) * 200 + 1));
+        }
+        a.queue(Channel::Unreliable, b"late");
+        let late = a.flush(MS * 700);
+        // A forgery with a number far ahead: the tag fails, and the window
+        // must not move to it, or the real packets after it would all be
+        // too old.
+        let mut forged = late[0].clone();
+        packet::set_number(&mut forged, 1_000_000);
+        assert_eq!(open(&mut b, &forged), None);
+        assert_eq!(b.stats.rejected, 1);
+        assert!(
+            open(&mut b, &late[0]).is_some(),
+            "the real packet still opens"
+        );
+        assert_eq!((b.stats.rejected, b.stats.replayed), (1, 0));
+    }
+
+    #[test]
+    fn a_connection_that_used_up_its_numbers_sends_nothing() {
+        let (mut a, mut b) = pair();
+        a.next_number = u64::MAX - 1;
+        a.queue(Channel::Reliable, b"last");
+        let sent = a.flush(MS);
+        assert_eq!(sent.len(), 1);
+        assert!(open(&mut b, &sent[0]).is_some());
+        assert!(a.spent());
+        a.queue(Channel::Reliable, b"never");
+        assert!(a.flush(MS * 300).is_empty());
+        assert!(a.ack(MS * 300).is_none());
+        assert!(a.disconnect("bye").is_none());
     }
 
     #[test]
@@ -718,15 +883,12 @@ mod tests {
     fn a_packet_with_one_bad_chunk_changes_nothing() {
         let (mut a, mut b) = pair();
         a.queue(Channel::Reliable, b"ok");
-        let mut d = packet::open(&a.flush(MS).remove(0)).unwrap().to_vec();
+        let mut d = open(&mut b, &a.flush(MS).remove(0)).unwrap();
         d.push(9); // a chunk with channel 9, truncated
-        assert!(matches!(
-            b.receive(MS, &d[packet::HEADER..]),
-            Received::Malformed
-        ));
+        assert!(matches!(b.receive(MS, &d), Received::Malformed));
         assert_eq!(b.stats.malformed, 1);
         d.pop();
-        let Received::Messages(m) = b.receive(MS, &d[packet::HEADER..]) else {
+        let Received::Messages(m) = b.receive(MS, &d) else {
             panic!()
         };
         assert_eq!(m.len(), 1);
@@ -742,13 +904,13 @@ mod tests {
     ) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
         let (mut got, mut acks) = (Vec::new(), Vec::new());
         for d in datagrams {
-            if let Received::Messages(m) =
-                to.receive(now, &packet::open(d).unwrap()[packet::HEADER..])
+            if let Some(body) = open(to, d)
+                && let Received::Messages(m) = to.receive(now, &body)
             {
                 got.extend(m.into_iter().map(|(_, b)| b));
             }
             if to.ack_due() {
-                acks.push(to.ack(now));
+                acks.push(to.ack(now).unwrap());
             }
         }
         (got, acks)
@@ -896,6 +1058,7 @@ mod tests {
     fn odd_settings_neither_hang_nor_panic() {
         let mut a = Conn::new(
             1,
+            crate::noise::test_pair().0,
             Duration::ZERO,
             f64::NAN,
             Duration::from_secs(5),
@@ -912,7 +1075,7 @@ mod tests {
 
     #[test]
     fn the_unreliable_queue_is_bounded() {
-        let mut a = Conn::new(1, Duration::ZERO, 1e9, MS, MS * 100);
+        let mut a = alone(1e9, MS);
         for _ in 0..MAX_UNRELIABLE + 10 {
             a.queue(Channel::Unreliable, b"z");
         }
@@ -921,7 +1084,7 @@ mod tests {
 
     #[test]
     fn the_token_bucket_limits_bytes_per_second() {
-        let mut a = Conn::new(7, Duration::ZERO, 120_000.0, MS * 30, MS * 100);
+        let mut a = alone(120_000.0, MS * 30);
         for _ in 0..100 {
             a.queue(Channel::Reliable, &[0; 1000]);
         }

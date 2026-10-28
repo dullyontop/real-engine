@@ -1,5 +1,6 @@
-//! Real Engine networking: connections between a server and its clients over
-//! UDP, with our own reliability, polled from the frame loop (ADR-0050).
+//! Real Engine networking: encrypted connections between a server and its
+//! clients over UDP, with our own reliability, polled from the frame loop
+//! (ADR-0050, ADR-0067).
 //!
 //! * [`Endpoint`]: a server with many connections or a client with one. A
 //!   frame calls [`Endpoint::poll`] first and [`Endpoint::flush`] last; time
@@ -9,8 +10,15 @@
 //!   ordered (fragmented, resent until acked, at most [`MAX_MESSAGE`] bytes).
 //! * A handshake that answers a forged source with nothing larger than what
 //!   it sent and keeps no state until the client proves its address, and that
-//!   refuses another protocol version (`RE8903`), a full server (`RE8904`) or
-//!   another game (`RE8905`).
+//!   refuses another transport or protocol version (`RE8903`), a full server
+//!   (`RE8904`) or another game (`RE8905`).
+//! * Encryption and authentication (ADR-0067): the handshake is
+//!   `Noise_NKpsk0_25519_ChaChaPoly_BLAKE2s` to the server's key
+//!   ([`ServerKey`], which players see as a [`Fingerprint`]), with a game's
+//!   [`JoinCode`] as its pre-shared key, and every later packet is sealed
+//!   with ChaCha20-Poly1305 under its packet number. A packet changed,
+//!   forged or replayed on the way is dropped and counted
+//!   ([`ConnStats::rejected`], [`ConnStats::replayed`]).
 //! * Liveness: keepalives, a timeout (`RE8906`), and Disconnect with a reason
 //!   (`RE8907`).
 //! * A token bucket per connection, and [`Endpoint::congested`] for senders
@@ -20,9 +28,13 @@
 //! * WebSocket transports ([`ws`]) for players in a browser: a server's
 //!   [`ServerTransport`] takes them on TCP at its UDP port, and a client's
 //!   [`WsTransport`] is the page's `WebSocket` (or tungstenite's, natively).
+//!   The packets inside are sealed the same way.
+//! * [`wire`]: the packet and handshake decoders as pure functions of bytes,
+//!   for fuzzing.
 //!
 //! The crate knows nothing about scenes or scripts: `re_compat` puts its wire
-//! messages on it. Traffic is not encrypted (ADR-0050 §1).
+//! messages on it. Without a join code, anyone who reaches a server's port
+//! can join it; the encryption keeps what they send private and whole.
 //!
 //! # Example
 //!
@@ -61,12 +73,17 @@
 pub mod codes;
 mod conn;
 mod endpoint;
+mod keys;
+mod noise;
 mod packet;
+mod replay;
 mod transport;
+pub mod wire;
 pub mod ws;
 
 pub use conn::{Channel, ConnStats};
 pub use endpoint::{Config, Endpoint, Event, PeerId};
+pub use keys::{Fingerprint, JoinCode, KEY_FILE, ServerKey};
 pub use packet::{FRAGMENT, MAX_MESSAGE, MTU, TRANSPORT_VERSION};
 pub use transport::{
     Conditioned, ConditionerStats, LinkConditions, MemoryNet, MemoryTransport, Transport,
@@ -139,6 +156,31 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::CANNOT_SERVE,
         title: "This platform cannot serve",
         page: include_str!("../explain/RE8911.md"),
+    },
+    DiagInfo {
+        code: codes::HANDSHAKE_REFUSED,
+        title: "Server refused the handshake",
+        page: include_str!("../explain/RE8912.md"),
+    },
+    DiagInfo {
+        code: codes::JOIN_CODE_MISMATCH,
+        title: "Join code does not fit the server",
+        page: include_str!("../explain/RE8913.md"),
+    },
+    DiagInfo {
+        code: codes::KEY_MISMATCH,
+        title: "Server key does not match",
+        page: include_str!("../explain/RE8914.md"),
+    },
+    DiagInfo {
+        code: codes::BAD_CODE,
+        title: "Join code or fingerprint does not parse",
+        page: include_str!("../explain/RE8915.md"),
+    },
+    DiagInfo {
+        code: codes::SECRETS,
+        title: "No server key or random numbers",
+        page: include_str!("../explain/RE8916.md"),
     },
 ];
 

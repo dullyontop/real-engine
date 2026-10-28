@@ -4,6 +4,9 @@
 //! WebSocket on TCP at the same port, which is how a browser plays (ADR-0050's
 //! amendment for PR "web"). A client connects over UDP to `host:port`, or over
 //! a WebSocket to a `ws://` address; a browser always uses a WebSocket.
+//! Either way the connection is encrypted to the server's key (ADR-0067),
+//! which a server keeps in its data folder ([`re_net::KEY_FILE`]) and makes
+//! on its first serve, so its fingerprint stays the same from run to run.
 //!
 //! [`App::set_net`](crate::App::set_net) binds the socket before the first
 //! frame. A client's session connects from then on (a page polls it before the
@@ -20,8 +23,8 @@ use std::time::Duration;
 
 use re_compat::net::session::{ClientNet, PROTOCOL, ServerNet};
 use re_core::Diagnostic;
-use re_core::files::{Form, LayerKind, ProjectFiles};
-use re_net::{Config, Endpoint, Transport, UdpTransport, WsTransport};
+use re_core::files::{Form, LayerKind, ProjectFiles, Writable};
+use re_net::{Config, Endpoint, Fingerprint, ServerKey, Transport, UdpTransport, WsTransport};
 use serde::{Deserialize, Serialize};
 
 /// `[net]` in `real.toml`: ports, players, rates and the timeout of online
@@ -97,6 +100,12 @@ pub struct NetOptions {
     /// then each frame waits for every player's; a client waits for each
     /// server frame. For CI.
     pub lockstep: Option<u32>,
+    /// A server or host keeps its key in its data folder
+    /// ([`re_net::KEY_FILE`]), made on its first serve, so its fingerprint
+    /// stays the same from run to run: for a run that keeps its data
+    /// ([`App::persist_data`](crate::App::persist_data)). Otherwise it uses
+    /// a key it forgets and writes nothing (ADR-0067 §7).
+    pub keep_key: bool,
 }
 
 impl NetOptions {
@@ -109,6 +118,7 @@ impl NetOptions {
             max_players: None,
             name: None,
             lockstep: None,
+            keep_key: false,
         }
     }
 }
@@ -120,6 +130,12 @@ pub struct NetBound {
     pub addr: SocketAddr,
     /// Where a server takes WebSocket players (TCP), when it does.
     pub websocket: Option<SocketAddr>,
+    /// A server's key fingerprint (ADR-0067 §7), which it prints for players
+    /// to compare with the one they reach.
+    pub fingerprint: Option<Fingerprint>,
+    /// True when a server made its key this run, its first serve: the key
+    /// is in its data folder ([`re_net::KEY_FILE`]) from now on.
+    pub new_key: bool,
 }
 
 /// The hash a client and its server must share (`RE8905`): the game's
@@ -211,8 +227,9 @@ impl NetPlay {
     /// # Errors
     ///
     /// `RE8900` the socket does not bind, `RE8901` the address does not
-    /// resolve, `RE8910` a WebSocket does not open, and `RE8911` a browser
-    /// asked to serve.
+    /// resolve, `RE8910` a WebSocket does not open, `RE8911` a browser asked
+    /// to serve, and `RE8916` a server's key file cannot be read or written,
+    /// or the platform has no secure random numbers.
     pub(crate) fn bind(
         options: NetOptions,
         config: &NetConfig,
@@ -227,14 +244,22 @@ impl NetPlay {
                 let ip = options.bind.as_deref().unwrap_or("0.0.0.0");
                 let (transport, websocket) =
                     serve(ip, port, config.websocket, max_players, timeout)?;
+                let (key, new_key) = if options.keep_key {
+                    ServerKey::load_or_make(files.writable(Writable::Data))?
+                } else {
+                    (ServerKey::generate()?, false)
+                };
                 let mut cfg = Config::server(PROTOCOL, game);
                 cfg.send_rate = f64::from(config.server_rate.max(1));
                 cfg.max_connections = max_players as usize;
                 cfg.timeout = timeout;
-                let end = Endpoint::server(transport, cfg);
+                cfg.key = Some(key);
+                let end = Endpoint::try_server(transport, cfg)?;
                 let bound = NetBound {
                     addr: end.local_addr(),
                     websocket,
+                    fingerprint: end.fingerprint(),
+                    new_key,
                 };
                 let play = NetPlay::Bound {
                     end: Box::new(end),
@@ -247,10 +272,12 @@ impl NetPlay {
                 let mut cfg = Config::client(PROTOCOL, game);
                 cfg.send_rate = f64::from(config.client_rate.max(1));
                 cfg.timeout = timeout;
-                let end = Endpoint::client(transport, addr, cfg);
+                let end = Endpoint::try_client(transport, addr, cfg)?;
                 let bound = NetBound {
                     addr: end.local_addr(),
                     websocket: None,
+                    fingerprint: None,
+                    new_key: false,
                 };
                 let net = ClientNet::new(end, options.name.clone(), options.lockstep.is_some());
                 let play = NetPlay::Connecting {
