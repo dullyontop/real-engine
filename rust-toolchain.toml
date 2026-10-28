@@ -1,5 +1,13 @@
-# Everything builds with the current stable toolchain. The workspace declares
-# `rust-version = "1.95"`, and the `msrv` CI job builds with exactly 1.95.0.
+# The exact stable release everything builds with, here and in CI, so that a
+# new Rust release changes no cargo cache key and brings no new lint until a PR
+# moves the pin (ADR-0023's amendment for WP31 PR "toolchain"). After each
+# stable release, a PR sets `channel` to it and fixes what the new compiler
+# and clippy ask for. CI installs this toolchain with `rustup toolchain
+# install`, which reads this file (rustup 1.28 or later).
+#
+# The workspace declares `rust-version = "1.95"`, and the `msrv` CI job builds
+# with exactly 1.95.0.
 [toolchain]
-channel = "stable"
+channel = "1.99.1"
+profile = "minimal"
 components = ["rustfmt", "clippy"]

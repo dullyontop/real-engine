@@ -21,6 +21,11 @@
 # - a push to main runs fmt, plus clippy, test and xtask (which save the
 #   cargo caches PRs restore) unless it changes only documentation, and every
 #   check when it changes a build input.
+# Every job builds with the exact Rust release rust-toolchain.toml pins
+# (tools/ci/rust-toolchain.sh installs it and removes the runner image's own
+# toolchains, whose versions rust-cache would hash too), so a new stable
+# release changes no cargo cache key until a PR moves the pin (ADR-0023's
+# amendment for WP31 PR "toolchain"); msrv builds with 1.95.0 as well.
 # The GPU test step still skips crates that do not exist, a leftover from the
 # first PRs. Action majors verified with `git ls-remote` on 2026-10-14:
 # actions/checkout v7 (3d3c42e5), Swatinem/rust-cache v2 (49a0bdc7); and on
@@ -83,7 +88,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: rustup toolchain install stable --profile minimal --component rustfmt
+      - run: rustup toolchain install
       - run: cargo fmt --all --check
       - name: No CRLF in tracked text files (.gitattributes, ADR-0036)
         run: |
@@ -160,7 +165,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: rustup toolchain install stable --profile minimal
+      - run: rustup toolchain install
       - name: Install cargo-deny 0.20.2
         run: tools/ci/cargo-deny.sh
       - run: cargo deny check
