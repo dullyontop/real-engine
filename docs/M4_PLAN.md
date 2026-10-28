@@ -59,7 +59,7 @@ The M1, M2 and M3 ownership rules carry over, with these changes:
   - `re_render` to WP32, which shares it with WP33: WP33 owns the new modules it adds (`instances/`, `terrain/` and `atmosphere/` under `crates/re_render/src/`) and changes WP32's frame code through small PRs that WP32 reviews;
   - `re_physics`, `crates/re_app/src/sync/physics.rs` and the `physics` library of the Luau API to WP34;
   - `re_script` (except `src/generator/` and `src/debug/`) to WP35; WP37 adds its `scene`, `save` and `settings` libraries in new files there, which it owns;
-  - the new crate `re_ui`, `crates/re_app/src/hud.rs` and the `ui` library to WP36; `re_compat/src/gui/` moves onto `re_ui` in WP36's PR "core", which WP47 reviews;
+  - the new crate `re_ui`, `crates/re_app/src/ui/` (new, in place of `hud.rs`) and the `ui` library to WP36; `re_compat/src/gui/` moves onto `re_ui` in WP36's PR "core", which WP47 reviews;
   - `re_input`, and a new `crates/re_app/src/scenes/` module, to WP37;
   - `re_scene/src/prefab.rs`, `re_scene/src/ids.rs` and the prefab commands in `re_command` to WP38, maintainer-reviewed, since they are WP0 contracts;
   - `re_proc` (except the files WP40 and WP41 own), `re_geom/src/terrain/`, `crates/re_cli/src/graph.rs` and `crates/re_app/src/procedural.rs` to WP39;
@@ -72,17 +72,21 @@ The M1, M2 and M3 ownership rules carry over, with these changes:
   - `re_compat` (except its shared files, `src/gui/` until WP36's PR "core" merges, and `src/net/`) and `re_import` to WP47;
   - `examples/town/` to WP48, from the sample game's thread once its first PR has merged.
 - `re_app` and `re_cli` are shared, as in M3. After the `App` split, each WP owns the modules named above, and any other change to them is a small PR the maintainer reviews.
-- **Planned edits across owners.** Each is a small PR in the owner's paths, reviewed by the owner:
+- **Planned edits across owners.** Each rides in the PR of the WP that needs it, listed in the PR's body for the owner's review:
   - WP32's native frame path in `crates/re_app/src/gfx.rs` and render sync in `crates/re_app/src/sync/render.rs` (the maintainer reviews), and its material slots in `re_assets` (the maintainer reviews);
   - WP33's render-only mode of `points.instance` and the `Instances` output in `re_proc` (WP39 reviews), and texture arrays in `re_assets` (the maintainer reviews);
   - WP34's `Joint`, `Trigger` and `PhysicsMaterial` components in `re_scene` and its additions to `re_types/src/physics.rs` (the maintainer reviews), and compat's joints mapped onto native joints (WP47 reviews);
+  - WP34's trigger delivery in `re_script/src/runtime.rs` (WP35 reviews), and its edits to `re_app`'s host and `[physics]` in its config (the maintainer reviews);
   - WP35's new host calls in `re_types::HostServices`, added as provided methods with a default body, as in M2 (the maintainer reviews);
-  - WP36's compat GUI on `re_ui` (WP47 reviews) and its UI components in `re_scene` (the maintainer reviews);
-  - WP39's metre UVs in `re_geom/src/terrain/` and the `terrain.layers` node, which WP33's terrain material reads (WP33 reviews the data shape);
+  - WP36's compat GUI on `re_ui` and the switch of `crates/re_app/src/compat.rs` onto its routing (WP47 reviews), `ScriptHost::ui()` (WP35 reviews), UI textures in `gfx.rs` (WP32 reviews), and its UI components in `re_scene`, the `ui` rows of `ReplayDoc`, the theme schema and `[ui]` in its config (the maintainer reviews);
+  - WP38's prefab expansion in `re_proc` (WP39 reviews), its change-signal binding in `re_script` (WP35 reviews), and its edits to `re_app`'s files module, `verify.rs` and `[history]` in its config and to `re_cli`'s prefab schema (the maintainer reviews);
+  - WP39's metre UVs in `re_geom/src/terrain/` and the `terrain.layers` node, which WP33's terrain material reads (WP33 reviews the data shape); its deferred regeneration in `re_scene` (`Generators::set_deferred`, `World::apply_generated`) and `[proc]`'s editor budget in its config (the maintainer reviews), and the editor socket's wait for regeneration (WP42 reviews);
+  - WP40's `re_types::graph` additions and `schemas/graph.schema.json` in its PR "params" (the maintainer reviews);
+  - WP41's `polymesh` arms in `re_proc`'s `value.rs`, `cache.rs`, `nodes/fragment.rs` and test support, and later in `check_streaming` (WP39 reviews), in `re_script`'s generator marshal (WP40 reviews) and in the editor's canvas (WP43 reviews);
   - WP42's id buffer for picking in `re_render` (WP32 reviews) and its play session in `crates/re_app/src/play.rs` (the maintainer reviews);
   - WP43's document commands (`material.*`, `prefab.*`, `scene.new`, `scene.open`, `config.*`) in `re_command` and `re_app` (the maintainer reviews);
   - WP44's screenshot path rule in `re_command` and `re_agent`'s policy (the maintainer reviews);
-  - WP45's Ogg import in `re_assets` (the maintainer reviews);
+  - WP45's Ogg import in `re_assets`, and its streamed reads through `ProjectFiles::open` in `re_core` and the archive layer (the maintainer reviews);
   - WP47's GUI input feed in `crates/re_app/src/compat.rs` (the maintainer reviews).
 
 ## Common rules for every WP
@@ -91,10 +95,11 @@ The M1, M2 and M3 common rules hold, with these changes and additions:
 - **CI.** A WP iterates locally and keeps its PR a draft, which runs no CI, until `cargo fmt`, clippy (desktop and `wasm32` where the runtime changes) and the tests of the crates it touched pass in the reference container; marking the PR ready starts its run. CI is free while the repository is public, but a red run still costs a cycle, so fix-ups are batched and nothing is pushed only to rerun CI. A PR is squash-merged when every check its last run started is green, as ADR-0023's amendment of 2026-10-28 says.
 - **Three platforms.** While the repository is public, every PR that changes code runs the Windows and macOS checks and `d2` again (from the maintainer's first M4 PR). If it goes private again, ADR-0023's amendment of 2026-10-27 applies: a PR that changes simulation, physics, procedural output, script scheduling or platform-specific code gets one green `platforms.yml` run on its final head before it merges. Either way, each WP's definition of done includes green Windows and macOS checks on its last PR.
 - **D2 is kept.** `cargo xtask d2` compares the island's, plaza's, valley's and (from WP48's first PR) the town's replays across the three platforms. A WP that changes simulation keeps those hashes, or re-records them in the same PR with the reason; a new simulated feature adds a replay that exercises it.
-- **Diagnostic codes.** The new crate `re_ui` gets `RE7700`–`RE7799` (WP36 adds it to ARCHITECTURE §7 and `tools/xtask/src/explain.rs`). Where two WPs share a crate, they split its free codes: `re_render` WP32 `RE6042`–`RE6099`, WP33 `RE6100`–`RE6199`; `re_proc` WP39 `RE4030`–`RE4099` and `RE4311`–`RE4399`, WP40 `RE4200`–`RE4299`, WP41 `RE4150`–`RE4199` (and `re_geom`'s `RE4510`–`RE4599`); `re_script` WP35 `RE3016`–`RE3069`, WP37 `RE3100`–`RE3149`, WP40 `RE3150`–`RE3199`, WP44 `RE3250`–`RE3299`; `re_editor` WP42 `RE8805`–`RE8849`, WP43 `RE8850`–`RE8899`; `re_command` WP38 `RE2009`–`RE2049`, WP43 `RE2050`–`RE2099`; `re_app` WP35 `RE0530`–`RE0569`, WP37 `RE0570`–`RE0599`, WP42 `RE0650`–`RE0699`, WP32 `RE0700`–`RE0719`; `re_cli` WP44 `RE0904`–`RE0949`, WP31 `RE0976`–`RE0989`. Other WPs use the free codes of the crates they own. Every code has an explain page.
+- **Diagnostic codes.** The new crate `re_ui` gets `RE7700`–`RE7799` (WP36 adds it to ARCHITECTURE §7 and `tools/xtask/src/explain.rs`). Where two WPs share a crate, they split its free codes: `re_render` WP32 `RE6042`–`RE6099`, WP33 `RE6100`–`RE6199`; `re_proc` WP39 `RE4030`–`RE4099` and `RE4311`–`RE4399`, WP40 `RE4200`–`RE4299`, WP41 `RE4150`–`RE4199` (and `re_geom`'s `RE4510`–`RE4599`); `re_script` WP35 `RE3016`–`RE3069`, WP37 `RE3100`–`RE3149`, WP40 `RE3150`–`RE3199`, WP44 `RE3250`–`RE3299`; `re_editor` WP42 `RE8805`–`RE8849`, WP43 `RE8850`–`RE8899`; `re_command` WP38 `RE2009`–`RE2049`, WP43 `RE2050`–`RE2099`; `re_app` WP35 `RE0530`–`RE0569`, WP37 `RE0570`–`RE0599`, WP42 `RE0650`–`RE0699`, WP32 `RE0700`–`RE0719`, WP34 `RE0720`–`RE0739`; `re_cli` WP44 `RE0904`–`RE0949`, WP31 `RE0976`–`RE0989`. Other WPs use the free codes of the crates they own. Every code has an explain page.
 - **Native first.** A gameplay feature lands on the native API, and the compat layer maps onto it where a compat member exists (joints, particles, UI); no new behaviour exists only in compat.
 - **The web build stays inside its budget.** A PR that grows the runtime says by how much in its description, and `build-web` fails over the budget, as now.
 - **The user guide is kept true.** Once WP44's PR "guides" has merged, a PR that changes a feature the guide describes updates the guide in the same PR, and the generated reference is regenerated (its CI check fails otherwise).
+- **Agent-facing commands are walked.** Once WP44's PR "safety" (#202) has merged, a PR that adds or changes a command agents can call adds its row, with valid arguments, to the walk's `arguments` table in `crates/re_cli/src/tooling/mcp/walk.rs`, whose test fails on a command it has no row for. Every argument that names a file declares it with `#[schemars(extend("x-real-path" = "read" | "write" | "output"))]`, and a handler that writes a file no argument names asks `Call::check_write` first (ADR-0020's WP44 amendment).
 - **New dependencies** need an ADR and a `docs/DEPENDENCIES.md` row through the maintainer, as before, and a licence that a proprietary, compiled-only distribution can carry (ADR-0019 and its amendment): permissive licences, MPL-2.0 by named exception, and never GPL, LGPL or AGPL in a shipped build. Each WP lists its candidates below, and the ADR picks one after checking the crate's real API and version.
 
 ---
@@ -108,7 +113,7 @@ A contract is **frozen** at the point named here. After that, changing it follow
 | Native environment and lights: the `Environment` component (sky, fog, ambient, exposure), `LightKind::Spot`, per-entity shadow flags, the `[render]` keys of `real.toml`, and native frames drawn with the renderer's extras | `crates/re_scene/src/components.rs`, `crates/re_types/src/render.rs` | WP32 | WP32 PR "environment" | WP33 (atmosphere), WP43 (inspector), WP47 (compat lighting), WP48 |
 | Instance sets: the retained `InstanceSet` in the render snapshot and the procedural `Instances` output that fills it | `crates/re_types/src/render.rs`, `crates/re_proc/src/value.rs` | WP33, with WP39 | WP33 PR "instances" | WP39, WP41, WP42 (picking), WP48 |
 | Terrain materials: the layered terrain material and its splat-weight data on terrain meshes and chunks | `crates/re_assets/src/material.rs`, `crates/re_types/src/mesh.rs` | WP33, with WP39 | WP33 PR "terrain material" | WP39 (`terrain.layers`), WP48 |
-| Physics for gameplay: the `Joint`, `Trigger` and `PhysicsMaterial` components, the new `PhysicsCmd`s, compound bodies, and the query and contact payloads | `crates/re_types/src/physics.rs`, `crates/re_scene/src/components.rs` | WP34 | WP34 PR "joints" (joints), PR "queries" (queries and contacts) | WP35, WP37 (saved physics), WP47 (compat joints), WP48 |
+| Physics for gameplay: the `Joint`, `Trigger` and `PhysicsMaterial` components, the new `PhysicsCmd`s, compound bodies, and the query and contact payloads | `crates/re_types/src/physics.rs`, `crates/re_scene/src/components.rs` | WP34 | WP34 PR "joints" (joints), PR "queries" (queries and contacts), PR "compounds" (compound bodies, the new shapes and the colliders in payloads), PR "materials" (`PhysicsMaterial` and surfaces) | WP35, WP37 (saved physics), WP47 (compat joints), WP48 |
 | The UI core: `re_ui`'s layout, text, draw lists, input routing and focus, and the native UI components | `crates/re_ui/`, `crates/re_scene/src/components.rs` | WP36 | WP36 PR "core" (the core), PR "components" (components) | WP37 (loading and settings screens), WP43 (inspector), WP47 (compat GUI), WP48 |
 | Scenes and saves: the `scene`, `save` and `settings` libraries, the `[scenes]` table of `real.toml`, and the save file format with its version | `crates/re_script/src/api/`, `crates/re_app/src/scenes/` | WP37 | WP37 PR "scenes" (scenes), PR "saves" (saves) | WP36 (screens), WP44 (guide and templates), WP48 |
 | Prefabs v2: the prefab file format with nesting and variants, `World::instantiate` and the `prefab.instantiate` command | `crates/re_scene/src/prefab.rs`, `crates/re_command/` | WP38 | WP38 PR "prefabs" | WP35 (`world.instantiate`), WP40 (prefab items), WP41 (generators), WP43 (prefab editing), WP48 |
@@ -139,8 +144,8 @@ Changes to `re_types` stay maintainer-reviewed frozen-contract changes, as in M3
 - The `msrv` job keeps 1.95.0.
 
 **Build, PR "one build":**
-- Release `real` is built once per run on ubuntu-latest and used by every job that runs it (the demo, plaza, valley and, from WP48, town checks and the Xvfb smoke run), either as an artifact passed between jobs or by merging those jobs into one; the PR measures both in job-minutes and wall time and picks one (ADR-0023 amendment). `build-package` keeps its own build on ubuntu-22.04, for the glibc floor.
-- Dependencies are built with optimisation in the test profile (`[profile.dev.package."*"]`), if the committed hashes and poses do not depend on it (measured, not assumed); the 250,000-part incremental-render test moves to a release job; the tests that assert on wall-clock time count budget trips instead where they can.
+- Release `real` is built once per run on ubuntu-latest and used by every job that runs it (the demo, plaza, valley and, from WP48, town checks and the Xvfb smoke run), by merging those jobs into one, `verify`, which WP31's spike measured cheaper than passing the binary between jobs (ADR-0023's amendment for PR "one build"). `build-package` keeps its own build on ubuntu-22.04, for the glibc floor.
+- Dependencies are built with optimisation in the test profile (`[profile.dev.package."*"]`), if the committed hashes and poses do not depend on it (measured, not assumed); the 250,000-part incremental-render test stays in the debug suites, where optimised dependencies make its binary take 27 s (measured; in a release job it cost 4 minutes); the tests that assert on wall-clock time count budget trips instead where they can.
 - The job-minutes and wall time of a PR run and of a push run, before and after, go into the ADR.
 
 **Build, PR "version"** (ADR-0068):
@@ -232,7 +237,7 @@ real verify --project examples/valley --json
 **Build, PR "instances"** (ADR-0052):
 - Retained `InstanceSet`s, one per stream cell and (mesh, material): compact transforms, per-instance tint and scale, and the cell's bounds. A set is made once, when its cell's scatter is generated, and the snapshot refers to it with an origin offset (ADR-0042's corner scheme).
 - Culling per cell (frustum, distance, and per cascade) and one instanced draw per (mesh, material) per cell, with nothing done per instance on the CPU each frame.
-- A render-only mode of `points.instance` that makes no entity per instance (a PR in WP39's paths), with colliders from batched static bodies near the focus.
+- A render-only mode of `points.instance` that makes no entity per instance (PR "render only", in WP39's paths, after WP38's `World::resolve_prefab`), with colliders from batched static bodies near the focus (PR "instance colliders", after ADR-0056 and WP34's PR "compounds").
 - Optional, on WebGPU and native only: compute culling into compacted instance buffers with indirect draws. WebGL2 keeps culling per cell on the CPU.
 
 **Build, PR "terrain material"** (ADR-0053):
@@ -256,7 +261,7 @@ cargo run --release --locked -p re_render --example forest -- --instances 100000
 - The forest stays under ADR-0038's thresholds in the reference container.
 - Goldens for terrain splatting, the atmosphere at three sun angles, and image-based lighting on metals, on lavapipe and GL.
 
-**Definition of done:** "instances", "terrain material", "atmosphere" and "ibl" merged; ADR-0052, ADR-0053 and ADR-0054 accepted with the spikes' numbers; green Windows and macOS checks on its last PR.
+**Definition of done:** "instances", "render only", "instance colliders", "terrain material", "atmosphere" and "ibl" merged; ADR-0052, ADR-0053 and ADR-0054 accepted with the spikes' numbers; green Windows and macOS checks on its last PR.
 
 ---
 
@@ -285,7 +290,7 @@ cargo run --release --locked -p re_render --example forest -- --instances 100000
 
 **Build, PR "compat joints":** compat's prismatic, cylindrical, spring and rope constraints mapped onto native joints, sharing what `parts/` already does (WP47 reviews).
 
-**Build, PR "compounds"** (ADR-0056): a child `Collider` without its own `RigidBody` joins the nearest ancestor body's compound shape, and contact events name the child entity (F11); cylinder, plane and tapered shapes.
+**Build, PR "compounds"** (ADR-0056): a child `Collider` without its own `RigidBody` joins the compound shape of the nearest dynamic or kinematic ancestor body (a static body's children stay static bodies of their own, and sensors under moving bodies and colliders under characters, ragdolls and wheels follow them as kinematic bodies), and contact events name the child collider (F11); cylinder, plane and tapered shapes.
 
 **Build, PR "materials"** (ADR-0056): a `PhysicsMaterial` with friction, restitution and a surface tag, combined per pair by a native contact listener (compat's combine rule), materials per triangle on meshes and heightfields, and the surface tag in contact events and in the character's ground state, for footsteps and tyre sounds.
 
@@ -355,7 +360,7 @@ cargo test --locked -p re_app
 
 **Goal.** A native game builds its menus, HUD, settings screens and dialogs from UI components and Luau: layout, text, images, buttons, bars and scrolling lists, keyboard and gamepad focus, and text input. The compat GUI runs on the same core.
 
-**Owned paths:** `crates/re_ui/` (new), `crates/re_app/src/hud.rs`, the `ui` library in `crates/re_script/src/api/`, `crates/re_compat/src/gui/` from PR "core" on (WP47 reviews), and the UI components in `re_scene` through maintainer-reviewed PRs.
+**Owned paths:** `crates/re_ui/` (new), `crates/re_app/src/ui/` (new, in place of `hud.rs`), the `ui` library in `crates/re_script/src/api/`, `crates/re_compat/src/gui/` from PR "core" on (WP47 reviews), and the UI components in `re_scene` through maintainer-reviewed PRs.
 
 **Starts after:** ADR-0058, after a spike that moves one path of the compat GUI (the layout and painting of frames, text and images) behind a crate boundary and draws a native panel with it, with the compat GUI's goldens unchanged.
 
@@ -363,7 +368,7 @@ cargo test --locked -p re_app
 
 **Build, PR "input":** input routed between the UI and game actions (the UI first while it has focus); pointer hover and press; keyboard and gamepad focus navigation; and text input. Replays record UI input as they record actions. WP47's PR "gui input" gives the compat GUI its input first; this PR moves it onto the shared routing.
 
-**Build, PR "components":** `UiRoot` (on the screen or in the world), `UiNode` (layout), `UiText`, `UiImage`, `UiButton`, `UiBar`, `UiPanel` and `UiScroll`, with styles and a theme, shown and edited in the inspector.
+**Build, PR "components":** `UiRoot` (on the screen or in the world), `UiNode` (layout), `UiText`, `UiImage`, `UiButton`, `UiBar`, `UiPanel`, `UiScroll` and `UiTextInput`, with styles and a theme, shown and edited in the inspector.
 
 **Build, PR "luau":** the `ui` library: create, find and bind nodes; `clicked`, `changed` and `submitted` events; focus; show and hide; and tweens of UI properties. `HudText` stays, as a thin wrapper over a `UiText`, so existing projects still run.
 
@@ -376,7 +381,7 @@ cargo test --locked -p re_app
 **Acceptance:**
 ```sh
 cargo test --locked -p re_ui
-cargo test --locked -p re_compat gui
+cargo test --locked -p re_compat --test gui
 ```
 - Goldens for each component at two resolutions; a gamepad moves through a menu and presses a button in a replay; the compat GUI's goldens are unchanged; the web build stays within its budget.
 
@@ -398,7 +403,7 @@ cargo test --locked -p re_compat gui
 
 **Build, PR "settings":** user settings (volume per mixer bus, display mode, resolution, vsync, a quality preset, and key bindings), stored apart from saves and applied at start.
 
-**Build, PR "rebinding":** rebinding actions from scripts, kept through settings; action contexts (gameplay, menu, vehicle); one-dimensional and trigger axes. Replays record the bindings they ran with.
+**Build, PR "rebinding":** rebinding actions from scripts, kept through settings; action contexts (gameplay, menu, vehicle); one-dimensional and trigger axes. Replays record the bindings they ran with. It also builds the `re_input` half of WP36's PR "input" (ADR-0058): `InputUse`, `ActionMap::actions_using`, and the action filter's latch and reset, which WP36 reviews and calls.
 
 **Stretch:** saved games that include physics state, with WP34, restored within a documented tolerance; touch input with on-screen sticks in the browser.
 
@@ -505,15 +510,15 @@ real verify --project examples/valley --json
 
 **Owned paths:** `crates/re_proc/src/graph.rs`, `canon.rs` and `migrate.rs`, the subgraph machinery it adds, and `crates/re_script/src/generator/`; `schemas/graph.schema.json` through the maintainer.
 
-**Starts after:** ADR-0061 and WP39 PR "hygiene"; an ADR-0043 §4 amendment for "luau kinds".
+**Starts after:** ADR-0061 and WP39 PR "hygiene"; an ADR-0043 §4 amendment for "luau kinds". The PRs go in the order below: params, subgraphs, attributes, copy, luau kinds (ADR-0061 §12).
 
 **Build, PR "params"** (ADR-0061): GraphDoc v2, still JSON: typed graph params with ranges, defaults and docs, bound to node params; declared outputs; and `real migrate-graph` from v1, all or nothing as now. The inspector and recipes show a graph's params. The template's and the examples' graph files are migrated in the same PR.
 
 **Build, PR "subgraphs":** subgraphs as node kinds, versioned and keyed by their content; nodes with several outputs; a subgraph's streaming class derived from its contents; StableKeys `<node>/<inner key>`, so overrides inside a subgraph survive regeneration.
 
-**Build, PR "copy":** `points.copy`, which runs a subgraph once per point with a per-point seed and the point's attributes, with StableKeys `<node>/<point id>/<inner key>`.
-
 **Build, PR "attributes":** attribute columns on points, nodes that set them from fields (scale by a mask, rotation by slope), Scalar and Curve ports, a deterministic `field.expr` node, and blending by a mask.
+
+**Build, PR "copy":** `points.copy`, which runs a subgraph once per point with a per-point seed and the point's attributes, with StableKeys `<node>/<point id>/<inner key>`.
 
 **Build, PR "luau kinds"** (ADR-0043 §4 amendment):
 - Helpers in the generator VM: noise (cellular and 3D included), field sampling (bilinear and gradient), point and polygon helpers, and mesh builders.
@@ -573,7 +578,7 @@ cargo test --locked -p re_proc
 ```
 - `re_geom`'s goldens for every new operation pass on Linux, Windows and macOS.
 - Property tests (`proptest`, a new dev-dependency) feed random polygons and meshes to every operation: none panics, and every output is valid (closed where the input was, no NaN, consistent winding).
-- A two-storey house with a gable roof and facade modules builds from a footprint within the time the ADR records.
+- A two-storey house with a gable roof and facade modules builds from a footprint, closed and valid, within the counted bounds on its work that the ADR sets; PR "buildings" reports its release time against the ADR's 20 ms target.
 
 **Definition of done:** the seven PRs merged; ADR-0062 accepted with the spike's numbers; green Windows and macOS checks on its last PR.
 
@@ -585,7 +590,7 @@ cargo test --locked -p re_proc
 
 **Owned paths:** `crates/re_editor/` except what WP43 owns; the editor-only drawing in `re_app` and the play session in `crates/re_app/src/play.rs` (the maintainer reviews); the id buffer in `re_render` (WP32 reviews).
 
-**Starts after:** nothing for PR "saving"; an ADR-0044 amendment (editor state against scene state, multiple selection with the gizmo, the clipboard format, picking) for "camera", "picking" and "edit"; ADR-0063 and an ADR-0045 amendment for "play".
+**Starts after:** nothing for PR "saving"; an ADR-0044 amendment (editor state against scene state, multiple selection with the gizmo, the clipboard format, picking) for "camera", "selection", "picking", "edit" and "hierarchy"; ADR-0063 and an ADR-0045 amendment for "play".
 
 **Build, PR "saving"** (first, since it loses work today):
 - The editor watches the scene it edits, refuses to save over a change made outside it, and reloads when it has no edits of its own (the tooling audit's weakness 3).
@@ -597,9 +602,13 @@ cargo test --locked -p re_proc
 - The editor camera stays out of `state_hash` and of the saved scene (it lives in the layout file), and streamed worlds stream around it.
 - Overlays only the editor sees: a grid, an axis indicator, a selection outline, and icons for lights and cameras.
 
-**Build, PR "picking":** click and box selection through an entity-id render target, which maps merged static cells and instance sets back to their entities or StableKeys; multiple selection in the viewport and the Hierarchy; one gizmo transaction for several entities; and a read command that answers which entity is at a pixel, for agents (WP44).
+**Build, PR "selection":** multiple selection in the Hierarchy and the view; one gizmo transaction for several entities, about the active one or the selection's centre; and deleting the selection as one undo step.
 
-**Build, PR "edit":** delete, duplicate (Ctrl+D), and copy and paste as a scene subtree through `scene.apply` with fresh ids; in the Hierarchy, rename and notes, search and filter, drag to reparent (`entity.reparent`, or `proc.move` for a generated entity) and a context menu; snap steps in the UI.
+**Build, PR "picking"** (after WP32's PR "split"): click and box selection through an entity-id render target, which maps merged static cells and instance sets back to their entities or StableKeys; and a read command that answers which entity is at a pixel, for agents (WP44).
+
+**Build, PR "edit":** duplicate (Ctrl+D), and copy, cut and paste as a scene subtree through `scene.apply` with fresh ids; in the Hierarchy, rename in place, notes and a context menu.
+
+**Build, PR "hierarchy":** search and filter in the Hierarchy, drag to reparent (`entity.reparent`, or `proc.move` for a generated entity), and snap steps in the UI.
 
 **Build, PR "play"** (ADR-0063, ADR-0045 amendment):
 - Play, Pause, Step and Stop. Play forks the world (from `App::play_copy`'s fork) and steps it frame by frame in the editor window, with input from the viewport; Stop throws the fork away, and the edit world and its undo history are never touched.
@@ -619,7 +628,7 @@ xvfb-run -a target/release/real editor --frames 120 --project examples/island
 - Headless editor tests drive picking, multiple selection, duplicate and paste, reparenting, and Play, Step and Stop: after Stop, the edit world's `state_hash` and undo history equal those before Play.
 - A breakpoint set in the Debugger panel stops a play started from the toolbar.
 
-**Definition of done:** the six PRs merged; ADR-0063 and the ADR-0044 and ADR-0045 amendments accepted.
+**Definition of done:** the eight PRs merged; ADR-0063 and the ADR-0044 and ADR-0045 amendments accepted.
 
 ---
 
@@ -681,7 +690,11 @@ cargo test --locked -p re_command
 
 **Build, PR "test":** `real test [--filter] [--json]` runs a project's tests without the rest of `real verify`: graph tests (WP39), replays, goldens, and Luau unit tests (`tests/*.test.luau` with a small `expect` library).
 
-**Build, PR "agents":** `screenshot` from a given camera; previews from `graph.generate` and `graph.inspect`; watches in `play.run`; MCP prompts, `list_changed`, and the user guide as resources with `docs.search`; an AGENTS.md written for the project by `real new`, with a drift check; procedural, gameplay and Roblox-import evaluation suites with numeric and visual checks (visual checks with tolerances, as the goldens have); approving agent edits in the editor.
+**Build, PR "eyes":** `screenshot` from a given camera, pose or framing (`re_app::view::ViewArgs`, which WP42's `pick` shares); previews from `graph.generate` and `graph.inspect`; watches and captures in `play.run`; images in MCP results.
+
+**Build, PR "evals":** procedural, gameplay and Roblox-import evaluation suites with numeric and visual checks (visual checks with tolerances, as the goldens have), each run by CI with its reference solution.
+
+**Build, PR "agents":** MCP prompts, `list_changed`, and the user guide as resources with `docs.search`; an AGENTS.md written for the project by `real new`, with a drift check; approving agent edits in the editor.
 
 **Build, PR "templates":** starter templates on the M4 API (third person, first person, top-down and vehicle), each with a title menu, pause, settings and saves from WP36's screens and WP37's libraries, a replay and a golden. It starts after WP36 PR "screens" and WP37 PR "saves".
 
@@ -859,7 +872,7 @@ The ADRs this plan adds:
 - ADR-0067 (WP46): encrypted transport and join codes. It amends ADR-0050.
 - ADR-0068 (WP31): versions, build ids and releases.
 
-The amendments: ADR-0023 (the maintainer: the Windows and macOS checks back on every PR; WP31: one build per run, the pinned toolchain, the platform jobs and the measured job-minutes), ADR-0049 (WP31: the web budget), ADR-0022 (WP32: renderer statistics in `PerfReport`), ADR-0038 (WP32: reversed-Z, masked shadows, lights chosen by visibility and the material slots), ADR-0008 (WP34: queries, triggers and body settings), ADR-0036 (WP38: ids seeded per session), ADR-0030 (WP37: rebinding, contexts and 1D axes), ADR-0017 (WP39: regeneration off the editor's main thread), ADR-0042 (WP39: the erosion tile cache), ADR-0044 (WP39 and WP43: inspection and previews; WP42: editor state, selection and picking), ADR-0043 §4 (WP40: Luau kinds v2), ADR-0045 (WP42: the debugger on the play world), ADR-0039 (WP45: clip events, montages and IK nodes), ADR-0020 (WP44: path checks, approvals in the editor and the Windows pipe), and ADR-0046 (WP44: evaluation suites).
+The amendments: ADR-0023 (the maintainer: the Windows and macOS checks back on every PR; WP31: one build per run, the pinned toolchain, the platform jobs and the measured job-minutes), ADR-0049 (WP31: the web budget), ADR-0011 (WP35: the script budget in safepoints), ADR-0057 (WP36: the UI's events at PreRender's settle), ADR-0022 (WP32: renderer statistics in `PerfReport`), ADR-0038 (WP32: reversed-Z, masked shadows, lights chosen by visibility and the material slots), ADR-0008 (WP34: queries, triggers and body settings), ADR-0036 (WP38: ids seeded per session), ADR-0030 (WP37: rebinding, contexts and 1D axes), ADR-0017 (WP39: regeneration off the editor's main thread), ADR-0042 (WP39: the erosion tile cache), ADR-0044 (WP39 and WP43: inspection and previews; WP42: editor state, selection and picking), ADR-0043 §4 (WP40: Luau kinds v2), ADR-0045 (WP42: the debugger on the play world), ADR-0039 (WP45: clip events, montages and IK nodes), ADR-0020 (WP44: path checks, approvals in the editor and the Windows pipe), and ADR-0046 (WP44: evaluation suites).
 
 ## Dependency graph
 

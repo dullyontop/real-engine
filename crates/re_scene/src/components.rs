@@ -227,6 +227,12 @@ component! {
     }
 }
 
+field_enum! {
+    /// How a spatial sound's volume falls with distance from the listener
+    /// (`AudioSource.rolloff`).
+    pub enum AudioRolloff { Natural, Inverse, Linear, Off }
+}
+
 component! {
     /// A sound emitter.
     pub struct AudioSource {
@@ -246,6 +252,32 @@ component! {
         /// Playback speed, above 0: 1 is normal, and the pitch shifts with the
         /// speed. A source plays at most 16 times as fast.
         pub rate: f32 = 1.0,
+        /// How a spatial sound's volume falls with distance: `Natural` (the
+        /// level in decibels falls evenly to silence at `max_distance`),
+        /// `Inverse` (the physical law: -6 dB at each doubling of distance
+        /// beyond `min_distance`, keeping its level beyond `max_distance`),
+        /// `Linear` (the amplitude falls evenly to silence at `max_distance`)
+        /// or `Off` (it only pans).
+        pub rolloff: AudioRolloff = AudioRolloff::Natural,
+        /// Within this distance, in metres, the sound plays at full volume: 0
+        /// or more, and above 0 for `Inverse`.
+        pub min_distance: f32 = 1.0,
+        /// Where the fall with distance ends, in metres, above `min_distance`.
+        pub max_distance: f32 = 100.0,
+        /// How much the pitch follows the source's and the listener's motion
+        /// along the line between them (doppler): 0 is none, 1 is physical,
+        /// and more exaggerates.
+        pub doppler: f32 = 0.0,
+    }
+}
+
+component! {
+    /// Where sounds are heard from. The first active `AudioListener`, in
+    /// entity order, hears; without one, the first active camera does. The
+    /// listener faces -Z, as a camera does.
+    pub struct AudioListener {
+        /// Whether this listener can be the one that hears.
+        pub active: bool = true,
     }
 }
 
@@ -435,7 +467,7 @@ component! {
 /// `Collider`, `CharacterController`, `ScriptRef`, `AudioSource`, `AnimPlayer`,
 /// `HudText`, `Procedural`, `GraphSource`, `Attributes`, `Tags`, `SkinnedMesh`,
 /// `Streamed`, `StreamFocus`, `Vehicle`, `VehicleWheel`, `Ragdoll`, `Animator`,
-/// `BoneAttachment`.
+/// `BoneAttachment`, `AudioListener`.
 pub fn register_builtins(registry: &mut Registry, world: &mut EcsWorld) {
     registry.register::<Transform>(world);
     registry.register::<MeshRef>(world);
@@ -463,4 +495,6 @@ pub fn register_builtins(registry: &mut Registry, world: &mut EcsWorld) {
     registry.register::<Ragdoll>(world);
     registry.register::<Animator>(world);
     registry.register::<BoneAttachment>(world);
+    // Added in M4.
+    registry.register::<AudioListener>(world);
 }

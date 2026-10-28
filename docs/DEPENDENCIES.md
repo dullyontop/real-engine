@@ -24,14 +24,14 @@ All versions below were checked against the crates.io index on 2026-10-14. On th
 
 | Item | Value |
 |---|---|
-| Toolchain file | `rust-toolchain.toml`: `channel = "stable"`, components `rustfmt`, `clippy` |
+| Toolchain file | `rust-toolchain.toml`: `channel = "1.99.1"`, profile `minimal`, components `rustfmt`, `clippy`; the pin moves by PR after each stable release (README, "Building the workspace") |
 | Workspace `rust-version` | `1.95` |
 | What sets the MSRV | `egui` / `egui-wgpu` / `egui-winit` 0.36.2, `egui_dock` 0.21.1 and `bevy_ecs` 0.20.0 need 1.95. The next highest are `egui-snarl` 0.12.0 and `puffin` 0.20.0 (1.92; puffin is optional), then `ordered-float` 5.5.0 (1.90, transitive), `uuid` 1.28.0 and `smol_str` 0.3.6 (1.89), and `oxijolt`, `mlua`, `rmcp` and `image` (1.88). |
 | Edition | 2024 |
-| Toolchains seen working | rustc 1.97.0 and 1.99.0 in the development containers. The render prototype declared `rust-version = "1.95"`; the core spike declares none. |
+| Toolchains seen working | rustc 1.97.0, 1.99.0 and 1.99.1 in the development containers; CI builds with the pinned 1.99.1. The render prototype declared `rust-version = "1.95"`; the core spike declares none. |
 | Dev profile | `debug = "line-tables-only"`. The render spike measured this as a large saving in link time and disk use. |
 
-The `msrv` CI job builds with exactly 1.95.0 (`rustup toolchain install 1.95.0 --profile minimal`), so that the MSRV stays honest. Everything else, locally and in CI, uses the current stable toolchain.
+The `msrv` CI job builds with exactly 1.95.0 (`rustup toolchain install 1.95.0 --profile minimal`), so that the MSRV stays honest. Everything else, locally and in CI, uses the release `rust-toolchain.toml` pins. In CI, `tools/ci/rust-toolchain.sh` installs it and removes the runner image's own toolchains, since the cargo cache's key hashes every installed toolchain's version.
 
 ## Runtime dependencies
 
