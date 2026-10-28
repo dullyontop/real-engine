@@ -8,7 +8,7 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use glam::Vec3;
 use re_audio::{Audio, AudioCmd, CaptureSettings};
@@ -82,6 +82,10 @@ const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
 /// Plays the clip to its end, a game frame at a time; the most bytes live at
 /// once beyond those live before it started, and the stream's underruns.
+/// A frame here takes far less than a 60th of a second, so the stream thread
+/// can fall behind by more than the clip's length (as on macOS in CI): after a
+/// frame that underran, the thread gets a millisecond, and the clip has a
+/// minute in all.
 fn play(a: &mut Audio) -> (usize, u64) {
     let before = LIVE.load(Ordering::Relaxed);
     PEAK.store(before, Ordering::Relaxed);
@@ -94,8 +98,9 @@ fn play(a: &mut Audio) -> (usize, u64) {
         position: Vec3::ZERO,
     }]);
     assert!(problems.is_empty(), "{problems:?}");
-    // At most twice the clip's length, should the stream thread fall behind.
-    for _ in 0..360 * 60 {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut underruns = 0;
+    loop {
         a.advance(FRAME);
         let problems = a.apply(&[]);
         assert!(problems.is_empty(), "{problems:?}");
@@ -105,8 +110,13 @@ fn play(a: &mut Audio) -> (usize, u64) {
                 a.stream_underruns(),
             );
         }
+        assert!(Instant::now() < deadline, "the clip did not end");
+        let now = a.stream_underruns();
+        if now > underruns {
+            underruns = now;
+            std::thread::sleep(Duration::from_millis(1));
+        }
     }
-    panic!("the clip did not end");
 }
 
 #[test]
