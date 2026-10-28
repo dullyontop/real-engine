@@ -1,17 +1,24 @@
 //! Scene queries: rays, shape casts and sphere overlaps, filtered by group mask.
 //!
-//! Jolt's query filter selects by object layer and can exclude one body; it has no
-//! per-body callback. Group masks and sensors are therefore filtered here: when the
-//! closest hit is rejected, the query continues past it from the hit point.
+//! Jolt's query filter selects bodies by object layer and can leave out one body; it
+//! has no per-body callback. Sensors have object layers of their own, so a query that
+//! leaves sensors out (the default) never meets one. Group masks and the excluded
+//! entity are filtered here: when the closest hit is rejected, the query goes on from
+//! it with that body left out. A cast that starts inside two rejected bodies can leave
+//! out neither, since each hides the other at distance 0; the probe answers it
+//! ([`crate::probe`]), from copies of only the bodies the query accepts.
 
 use glam::{Quat, Vec3};
-use oxijolt::{CollideShape, QueryFilter as JQueryFilter, RayCast, Shape, ShapeCast};
+use oxijolt::{
+    BodyId, CollideShape, ObjectLayer, QueryFilter as JQueryFilter, RayCast, Shape, ShapeCast,
+};
 use re_core::Diagnostic;
 use re_types::EntityId;
 use re_types::physics::{GroupMask, RayHit, ShapeDesc};
 
 use crate::codes;
 use crate::convert::{gv, jq, jv, unit_rotation};
+use crate::probe::Cast;
 use crate::shapes;
 use crate::world::Physics;
 
@@ -46,17 +53,42 @@ impl QueryFilter {
     }
 }
 
-/// How many rejected hits a ray or shape cast steps past before it gives up.
+/// How many rejected hits a ray or shape cast steps past before the probe answers it.
 const MAX_SKIPS: usize = 64;
 
-fn invalid(what: String) -> Diagnostic {
+pub(crate) fn invalid(what: String) -> Diagnostic {
     Diagnostic::error(codes::INVALID_ARGUMENT, what)
         .with_hint("query positions must be finite and inside the world, directions non-zero")
 }
 
+/// Jolt's filter for the object layers `layers` (all when `None`) without `skip`.
+pub(crate) fn jolt_filter(
+    layers: Option<&[ObjectLayer]>,
+    skip: Option<BodyId>,
+) -> JQueryFilter<'_> {
+    let mut filter = JQueryFilter::new();
+    if let Some(layers) = layers {
+        filter = filter.object_layers(layers);
+    }
+    if let Some(body) = skip {
+        filter = filter.exclude_body(body);
+    }
+    filter
+}
+
+/// How a cast that steps past rejected bodies ends.
+enum Stepped<H> {
+    /// It hit `entity` this far along, with the cast's own details.
+    Hit(EntityId, f32, H),
+    /// It hit nothing it accepts.
+    Miss,
+    /// It stopped this far along, inside two rejected bodies (or after too many).
+    Blocked(f32),
+}
+
 impl Physics {
-    /// Whether `filter` lets a query see the body `body`.
-    fn sees(&self, body: oxijolt::BodyId, filter: &QueryFilter) -> Option<EntityId> {
+    /// Whether `filter` lets a query see the body `body`, and its entity if so.
+    pub(crate) fn sees(&self, body: BodyId, filter: &QueryFilter) -> Option<EntityId> {
         let id = *self.entity_of.get(&body)?;
         if filter.exclude == Some(id) {
             return None;
@@ -77,6 +109,58 @@ impl Physics {
         seen.then_some(id)
     }
 
+    /// The object layers a query with `filter` looks at: all of them, or all but the
+    /// sensors' when it leaves sensors out.
+    pub(crate) fn query_layers(&self, filter: &QueryFilter) -> Option<&[ObjectLayer]> {
+        (!filter.sensors).then_some(self.solid_layers.as_slice())
+    }
+
+    /// The body of the excluded entity that a cast leaves out from the start (a
+    /// character's inner body), so a query from inside the actor's own body does not
+    /// spend its one exclusion on it.
+    fn excluded_body(&self, filter: &QueryFilter) -> Option<BodyId> {
+        let id = filter.exclude?;
+        match self.bodies.get(&id) {
+            Some(entry) => Some(entry.id),
+            None => self.characters.get(&id)?.inner,
+        }
+    }
+
+    /// Runs `cast` (the closest hit along the path from `start` metres to its end,
+    /// given the filter of layers and the one body to leave out) and steps past the
+    /// hits `filter` rejects.
+    fn step_past<H>(
+        &self,
+        length: f32,
+        filter: &QueryFilter,
+        mut cast: impl FnMut(f32, &JQueryFilter<'_>) -> Result<Option<(BodyId, f32, H)>, Diagnostic>,
+    ) -> Result<Stepped<H>, Diagnostic> {
+        let layers = self.query_layers(filter);
+        let mut start = 0.0f32;
+        let mut skip = self.excluded_body(filter);
+        for _ in 0..MAX_SKIPS {
+            let Some((body, along, hit)) = cast(start, &jolt_filter(layers, skip))? else {
+                return Ok(Stepped::Miss);
+            };
+            let distance = start + along;
+            if let Some(entity) = self.sees(body, filter) {
+                return Ok(Stepped::Hit(entity, distance, hit));
+            }
+            if along > 0.0 {
+                // Step to the rejected body and go on without it.
+                start = distance;
+                if start >= length {
+                    return Ok(Stepped::Miss);
+                }
+            } else if skip.is_some() {
+                // The cast starts inside this body and the one already left out.
+                return Ok(Stepped::Blocked(start));
+            }
+            skip = Some(body);
+        }
+        Ok(Stepped::Blocked(start))
+    }
+
     /// The closest body hit by a ray from `origin` along `dir` (any length, normalised
     /// here) within `max_dist` metres.
     pub fn raycast(
@@ -92,43 +176,36 @@ impl Physics {
                 "raycast from {origin} along {dir} for {max_dist} m is not a valid ray"
             )));
         }
-        let mut start = 0.0f32;
-        let mut skip = None;
-        for _ in 0..MAX_SKIPS {
-            let from = origin + dir * start;
-            let ray = RayCast::new(self.jolt_point(from), jv(dir * (max_dist - start)));
-            let mut jf = JQueryFilter::new();
-            if let Some(body) = skip {
-                jf = jf.exclude_body(body);
-            }
-            let Some(hit) = self
+        let found = self.step_past(max_dist, filter, |start, jf| {
+            let ray = RayCast::new(
+                self.jolt_point(origin + dir * start),
+                jv(dir * (max_dist - start)),
+            );
+            let hit = self
                 .world
-                .cast_ray(&ray, &jf)
-                .map_err(|e| invalid(format!("raycast refused: {e}")))?
-            else {
-                return Ok(None);
-            };
-            let distance = start + hit.distance;
-            if let Some(entity) = self.sees(hit.body, filter) {
-                return Ok(Some(RayHit {
-                    entity,
-                    point: origin + dir * distance,
-                    normal: gv(hit.normal),
-                    distance,
-                }));
-            }
-            // Step past the rejected body; nudge forward when the ray starts inside it.
-            start = if hit.distance > 0.0 {
-                distance
-            } else {
-                distance + 1e-4
-            };
-            if start >= max_dist {
-                return Ok(None);
-            }
-            skip = Some(hit.body);
-        }
-        Ok(None)
+                .cast_ray(&ray, jf)
+                .map_err(|e| invalid(format!("raycast refused: {e}")))?;
+            Ok(hit.map(|h| (h.body, h.distance, gv(h.normal))))
+        })?;
+        let hit = match found {
+            Stepped::Hit(entity, distance, normal) => Some((entity, distance, normal)),
+            Stepped::Miss => None,
+            Stepped::Blocked(start) => self
+                .probe(
+                    &Cast::Ray,
+                    origin + dir * start,
+                    dir,
+                    max_dist - start,
+                    filter,
+                )?
+                .map(|h| (h.entity, start + h.distance, h.normal)),
+        };
+        Ok(hit.map(|(entity, distance, normal)| RayHit {
+            entity,
+            point: origin + dir * distance,
+            normal,
+            distance,
+        }))
     }
 
     /// The first body a convex `shape` at `pos`/`rot` hits when moved by `motion`
@@ -143,12 +220,12 @@ impl Physics {
         motion: Vec3,
         filter: &QueryFilter,
     ) -> Result<Option<RayHit>, Diagnostic> {
-        if shapes::is_static_only(shape) {
+        let Some(reach) = shapes::reach(shape) else {
             return Err(invalid(format!(
                 "a {} cannot be cast; use a box, sphere, capsule or convex hull",
                 shapes::kind_name(shape)
             )));
-        }
+        };
         let rot = unit_rotation(rot)
             .ok_or_else(|| invalid("shape cast rotation is zero or not finite".into()))?;
         let length = motion.length();
@@ -159,47 +236,38 @@ impl Physics {
         }
         let dir = motion / length;
         let built = shapes::build(shape)?;
-        let mut start = 0.0f32;
-        let mut skip = None;
-        for _ in 0..MAX_SKIPS {
-            let from = pos + dir * start;
+        let found = self.step_past(length, filter, |start, jf| {
             let cast = ShapeCast::new(
                 &built.shape,
-                self.jolt_point(from),
+                self.jolt_point(pos + dir * start),
                 jq(rot),
                 jv(dir * (length - start)),
             );
-            let mut jf = JQueryFilter::new();
-            if let Some(body) = skip {
-                jf = jf.exclude_body(body);
-            }
-            let Some(hit) = self
+            let hit = self
                 .world
-                .cast_shape(&cast, &jf)
-                .map_err(|e| invalid(format!("shape cast refused: {e}")))?
-            else {
-                return Ok(None);
-            };
-            let distance = start + hit.distance;
-            if let Some(entity) = self.sees(hit.body, filter) {
-                return Ok(Some(RayHit {
-                    entity,
-                    point: self.world_point(hit.point),
-                    normal: gv(hit.normal),
-                    distance,
-                }));
+                .cast_shape(&cast, jf)
+                .map_err(|e| invalid(format!("shape cast refused: {e}")))?;
+            Ok(hit.map(|h| (h.body, h.distance, (h.point, gv(h.normal)))))
+        })?;
+        let hit = match found {
+            Stepped::Hit(entity, distance, contact) => Some((entity, distance, contact)),
+            Stepped::Miss => None,
+            Stepped::Blocked(start) => {
+                let cast = Cast::Shape {
+                    shape: &built.shape,
+                    rot,
+                    reach,
+                };
+                self.probe(&cast, pos + dir * start, dir, length - start, filter)?
+                    .map(|h| (h.entity, start + h.distance, (h.point, h.normal)))
             }
-            start = if hit.distance > 0.0 {
-                distance
-            } else {
-                distance + 1e-4
-            };
-            if start >= length {
-                return Ok(None);
-            }
-            skip = Some(hit.body);
-        }
-        Ok(None)
+        };
+        Ok(hit.map(|(entity, distance, (point, normal))| RayHit {
+            entity,
+            point: self.world_point(point),
+            normal,
+            distance,
+        }))
     }
 
     /// Every entity whose body overlaps the sphere at `center` of `radius`, written into
@@ -223,7 +291,7 @@ impl Physics {
             .world
             .collide_shape(
                 &CollideShape::new(&sphere, self.jolt_point(center), jq(Quat::IDENTITY)),
-                &JQueryFilter::new(),
+                &jolt_filter(self.query_layers(filter), None),
             )
             .map_err(|e| invalid(format!("overlap query refused: {e}")))?;
         out.extend(hits.iter().filter_map(|h| self.sees(h.body, filter)));

@@ -1553,6 +1553,7 @@ mod tests {
             input_schema: json!({ "type": "object" }),
             annotations: re_command::CommandAnnotations::for_tier(tier, false),
             output_schema: None,
+            paths: Vec::new(),
         }
     }
 

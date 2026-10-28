@@ -1,0 +1,143 @@
+frame 0: 27 drawn, hovered none, sinks false, focus none
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#0 at (0.0, 0.0) size (480.0, 320.0) clip (0.0, 0.0, 480.0, 320.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#1 at (16.0, 16.0) size (140.0, 90.0) clip (0.0, 0.0, 480.0, 320.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#2 at (172.0, 16.0) size (140.0, 90.0) clip (0.0, 0.0, 480.0, 320.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#3 at (340.0, 26.0) size (110.0, 70.0) angle 15.0
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#3/TextLabel at (340.0, 26.0) size (110.0, 70.0) angle 15.0
+  item ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#0 at (16.0, 122.0) size (220.0, 30.0) clip (0.0, 0.0, 480.0, 320.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#1 at (16.0, 156.0) size (220.0, 24.0) clip (0.0, 0.0, 480.0, 320.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#2 at (16.0, 184.0) size (220.0, 24.0) clip (0.0, 0.0, 480.0, 320.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#3 at (16.0, 212.0) size (220.0, 40.0) clip (0.0, 0.0, 480.0, 320.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/TextButton at (252.0, 122.0) size (120.0, 40.0) clip (0.0, 0.0, 480.0, 320.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/ImageLabel at (384.0, 122.0) size (80.0, 40.0) clip (0.0, 0.0, 480.0, 320.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame at (252.0, 172.0) size (212.0, 80.0) clip (0.0, 0.0, 480.0, 320.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#0 at (252.0, 132.0) size (206.0, 40.0) clip (252.0, 172.0, 464.0, 252.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#1 at (252.0, 172.0) size (206.0, 40.0) clip (252.0, 172.0, 464.0, 252.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#2 at (252.0, 212.0) size (206.0, 40.0) clip (252.0, 172.0, 464.0, 252.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#3 at (252.0, 252.0) size (206.0, 40.0) clip (252.0, 172.0, 464.0, 252.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#4 at (252.0, 292.0) size (206.0, 40.0) clip (252.0, 172.0, 464.0, 252.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#5 at (252.0, 332.0) size (206.0, 40.0) clip (252.0, 172.0, 464.0, 252.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#4 at (16.0, 262.0) size (448.0, 48.0) clip (0.0, 0.0, 480.0, 320.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#0 at (16.0, 262.0) size (48.0, 48.0) clip (0.0, 0.0, 480.0, 320.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#1 at (72.0, 262.0) size (48.0, 48.0) clip (0.0, 0.0, 480.0, 320.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#2 at (128.0, 262.0) size (48.0, 48.0) clip (0.0, 0.0, 480.0, 320.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#3 at (184.0, 262.0) size (48.0, 48.0) clip (0.0, 0.0, 480.0, 320.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#4 at (240.0, 262.0) size (48.0, 48.0) clip (0.0, 0.0, 480.0, 320.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#5 at (296.0, 262.0) size (48.0, 48.0) clip (0.0, 0.0, 480.0, 320.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#6 at (352.0, 262.0) size (48.0, 48.0) clip (0.0, 0.0, 480.0, 320.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#7 at (408.0, 262.0) size (48.0, 48.0) clip (0.0, 0.0, 480.0, 320.0)
+  ReplicatedStorage/PlayerGui/ScreenGui.AbsoluteSize = (480.0, 320.0)
+  ReplicatedStorage/PlayerGui/ScreenGui.AbsolutePosition = (0.0, 0.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0.AbsolutePosition = (0.0, 0.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0.AbsoluteSize = (480.0, 320.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#0.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1.AbsolutePosition = (16.0, 16.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1.AbsoluteSize = (140.0, 90.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#1.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#2.AbsolutePosition = (172.0, 16.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#2.AbsoluteSize = (140.0, 90.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#2.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#3.AbsolutePosition = (340.0, 26.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#3.AbsoluteSize = (110.0, 70.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#3.AbsoluteRotation = 15.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#3/TextLabel.AbsolutePosition = (340.0, 26.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#3/TextLabel.AbsoluteSize = (110.0, 70.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#3/TextLabel.AbsoluteRotation = 15.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#3/TextLabel.TextBounds = (74.45600128173828, 22.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#3/TextLabel.TextFits = true
+  ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#0.AbsolutePosition = (16.0, 122.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#0.AbsoluteSize = (220.0, 30.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#0.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#0.TextBounds = (186.22999572753906, 27.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#0.TextFits = true
+  ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#1.AbsolutePosition = (16.0, 156.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#1.AbsoluteSize = (220.0, 24.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#1.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#1.TextBounds = (153.52198791503906, 26.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#1.TextFits = false
+  ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#2.AbsolutePosition = (16.0, 184.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#2.AbsoluteSize = (220.0, 24.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#2.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#2.TextBounds = (192.03125, 21.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#2.TextFits = true
+  ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#3.AbsolutePosition = (16.0, 212.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#3.AbsoluteSize = (220.0, 40.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#3.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#3.TextBounds = (77.54000091552734, 40.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextLabel#3.TextFits = true
+  ReplicatedStorage/PlayerGui/ScreenGui/TextButton.AbsolutePosition = (252.0, 122.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextButton.AbsoluteSize = (120.0, 40.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextButton.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/TextButton.TextBounds = (54.295997619628906, 26.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/TextButton.TextFits = true
+  ReplicatedStorage/PlayerGui/ScreenGui/ImageLabel.AbsolutePosition = (384.0, 122.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ImageLabel.AbsoluteSize = (80.0, 40.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ImageLabel.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame.AbsolutePosition = (252.0, 172.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame.AbsoluteSize = (212.0, 80.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame.AbsoluteCanvasSize = (212.0, 240.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame.AbsoluteWindowSize = (212.0, 80.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/UIListLayout.AbsoluteContentSize = (206.0, 240.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#0.AbsolutePosition = (252.0, 132.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#0.AbsoluteSize = (206.0, 40.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#0.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#0.TextBounds = (39.95199966430664, 23.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#0.TextFits = true
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#1.AbsolutePosition = (252.0, 172.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#1.AbsoluteSize = (206.0, 40.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#1.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#1.TextBounds = (39.95199966430664, 23.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#1.TextFits = true
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#2.AbsolutePosition = (252.0, 212.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#2.AbsoluteSize = (206.0, 40.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#2.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#2.TextBounds = (39.95199966430664, 23.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#2.TextFits = true
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#3.AbsolutePosition = (252.0, 252.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#3.AbsoluteSize = (206.0, 40.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#3.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#3.TextBounds = (39.95199966430664, 23.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#3.TextFits = true
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#4.AbsolutePosition = (252.0, 292.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#4.AbsoluteSize = (206.0, 40.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#4.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#4.TextBounds = (39.95199966430664, 23.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#4.TextFits = true
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#5.AbsolutePosition = (252.0, 332.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#5.AbsoluteSize = (206.0, 40.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#5.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#5.TextBounds = (39.95199966430664, 23.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ScrollingFrame/TextLabel#5.TextFits = true
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4.AbsolutePosition = (16.0, 262.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4.AbsoluteSize = (448.0, 48.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/UIGridLayout.AbsoluteContentSize = (440.0, 48.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/UIGridLayout.AbsoluteCellSize = (48.0, 48.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/UIGridLayout.AbsoluteCellCount = (8.0, 1.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#0.AbsolutePosition = (16.0, 262.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#0.AbsoluteSize = (48.0, 48.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#0.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#1.AbsolutePosition = (72.0, 262.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#1.AbsoluteSize = (48.0, 48.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#1.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#2.AbsolutePosition = (128.0, 262.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#2.AbsoluteSize = (48.0, 48.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#2.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#3.AbsolutePosition = (184.0, 262.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#3.AbsoluteSize = (48.0, 48.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#3.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#4.AbsolutePosition = (240.0, 262.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#4.AbsoluteSize = (48.0, 48.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#4.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#5.AbsolutePosition = (296.0, 262.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#5.AbsoluteSize = (48.0, 48.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#5.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#6.AbsolutePosition = (352.0, 262.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#6.AbsoluteSize = (48.0, 48.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#6.AbsoluteRotation = 0.0
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#7.AbsolutePosition = (408.0, 262.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#7.AbsoluteSize = (48.0, 48.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/Frame#4/Frame#7.AbsoluteRotation = 0.0
+frame 1: 27 drawn, hovered none, sinks false, focus none
+frame 2: 27 drawn, hovered none, sinks false, focus none

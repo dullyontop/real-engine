@@ -64,7 +64,7 @@ fn init_writes_every_client_config() {
     // The generated policy is what `Policy::load` reads back.
     assert_eq!(
         re_agent::Policy::load(project).unwrap(),
-        re_agent::Policy::init_default()
+        re_agent::Policy::init_default().in_project(project)
     );
 }
 

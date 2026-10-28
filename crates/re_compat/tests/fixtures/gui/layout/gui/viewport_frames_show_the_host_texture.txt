@@ -1,0 +1,18 @@
+frame 0: 1 drawn, hovered none, sinks false, focus none
+  viewport ReplicatedStorage/PlayerGui/ScreenGui/ViewportFrame size (200.0, 100.0)
+  item ReplicatedStorage/PlayerGui/ScreenGui/ViewportFrame at (10.0, 46.0) size (200.0, 100.0) clip (0.0, 0.0, 800.0, 600.0)
+  ReplicatedStorage/PlayerGui/ScreenGui.AbsoluteSize = (800.0, 564.0)
+  ReplicatedStorage/PlayerGui/ScreenGui.AbsolutePosition = (0.0, 0.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ViewportFrame.AbsolutePosition = (10.0, 10.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ViewportFrame.AbsoluteSize = (200.0, 100.0)
+  ReplicatedStorage/PlayerGui/ScreenGui/ViewportFrame.AbsoluteRotation = 0.0
+frame 1: 1 drawn, hovered none, sinks false, focus none
+  viewport ReplicatedStorage/PlayerGui/ScreenGui/ViewportFrame size (200.0, 100.0)
+frame 2: 1 drawn, hovered none, sinks false, focus none
+  viewport ReplicatedStorage/PlayerGui/ScreenGui/ViewportFrame size (200.0, 100.0)
+frame 3: 1 drawn, hovered none, sinks false, focus none
+  surface Workspace/Part/SurfaceGui canvas (800.0, 600.0) texture [800, 600] at 1.0 pixels a point
+  viewport Workspace/Part/SurfaceGui/ViewportFrame size (200.0, 100.0)
+  item Workspace/Part/SurfaceGui/ViewportFrame at (10.0, 10.0) size (200.0, 100.0) clip (0.0, 0.0, 800.0, 600.0)
+  Workspace/Part/SurfaceGui.AbsoluteSize = (800.0, 600.0)
+  Workspace/Part/SurfaceGui.AbsolutePosition = (0.0, 0.0)

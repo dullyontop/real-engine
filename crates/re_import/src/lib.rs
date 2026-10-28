@@ -112,6 +112,41 @@ pub fn read_with(
     input: &Path,
     opts: &ImportOptions,
 ) -> Result<(tree::Tree, InputFormat), Diagnostic> {
+    deep(
+        || format!("reading {}", input.display()),
+        || read_here(input, opts),
+    )
+}
+
+/// The stack the import's tree walks get: they recurse once per level, and
+/// a place file may nest [`place::xml::MAX_DEPTH`] levels deep. At that depth
+/// a debug build needs between 4 and 8 MB (Windows gives its main thread 1 MB).
+/// The stack is reserved, not committed, so the margin costs nothing.
+const STACK: usize = 64 * 1024 * 1024;
+
+/// Runs `f` on a thread with [`STACK`], so a deep tree cannot overflow the
+/// caller's stack (an abort with no crash report). A panic in `f` carries on
+/// in the caller.
+pub(crate) fn deep<T: Send>(
+    what: impl FnOnce() -> String,
+    f: impl FnOnce() -> Result<T, Diagnostic> + Send,
+) -> Result<T, Diagnostic> {
+    std::thread::scope(|scope| {
+        match std::thread::Builder::new()
+            .name("re_import".into())
+            .stack_size(STACK)
+            .spawn_scoped(scope, f)
+        {
+            Ok(h) => h.join().unwrap_or_else(|p| std::panic::resume_unwind(p)),
+            Err(e) => Err(Diagnostic::error(
+                codes::INPUT_UNREADABLE,
+                format!("cannot start {}: {e}", what()),
+            )),
+        }
+    })
+}
+
+fn read_here(input: &Path, opts: &ImportOptions) -> Result<(tree::Tree, InputFormat), Diagnostic> {
     let (file, format) = detect(input)?;
     if opts.parent.is_some() && format != InputFormat::Place {
         return Err(Diagnostic::error(

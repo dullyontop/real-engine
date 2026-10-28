@@ -465,6 +465,13 @@ impl re_command::PolicyCheck for RecipePolicy<'_> {
             _ => Ok(()),
         }
     }
+
+    fn check_write(&self, command: &str, path: &str) -> Result<(), Diagnostic> {
+        match self.agent {
+            Some(p) => p.check_write(command, path),
+            None => Ok(()),
+        }
+    }
 }
 
 fn library() -> Result<Library, Diagnostic> {
@@ -491,7 +498,7 @@ pub(crate) fn register_recipes(registry: &mut re_command::CommandRegistry<App>, 
         |_app, ListArgs {}, _call| Ok(json!({ "items": library()?.recipe_listings() })),
     );
     // The agent policy is read once, as the Luau tools read it.
-    let policy = Policy::load(project).unwrap_or_else(|_| Policy::read_only());
+    let policy = Policy::load(project).unwrap_or_else(|_| Policy::read_only().in_project(project));
     registry.register_typed_output::<RecipeApplyArgs, RecipeReport, _>(
         "recipe.apply",
         "Apply a generator recipe: run its edit commands with `args`, then its checks (verify stages, read commands, `verify.diff`). All or nothing: a failed step or check restores the checkpoint taken first. A dry run previews each step against the project as it is.",
@@ -613,6 +620,9 @@ fn finish(result: anyhow::Result<()>) -> ExitCode {
         }
     }
 }
+
+#[cfg(test)]
+mod walk;
 
 #[cfg(test)]
 mod tests {

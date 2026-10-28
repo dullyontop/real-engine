@@ -255,15 +255,13 @@ fn bake_error(source: &str, message: impl Into<String>) -> re_core::Diagnostic {
         .at(re_core::Location::entity(source.to_string()))
 }
 
-/// The baked file for a `derived:` asset, written under `root` when it is
-/// not there yet (unless `write` is false); its project path.
+/// The baked file for a `derived:` asset: its project path and its content.
 fn bake_asset(
     store: Option<&crate::GraphStore>,
     root: Option<&std::path::Path>,
     source: &str,
     name: &str,
-    write: bool,
-) -> Result<String, String> {
+) -> Result<(String, Vec<u8>), String> {
     let store = store.ok_or("the world has no GraphStore holding derived assets")?;
     let (bytes, ext) = if let Some(mesh) = store.mesh(name) {
         (crate::glb::write_glb(&mesh, name)?, "glb")
@@ -274,28 +272,35 @@ fn bake_asset(
             "the derived asset `{name}` is not in the GraphStore"
         ));
     };
-    let path = baked_asset_path(source, &bytes, ext);
-    let root = root.ok_or("the GraphStore has no project root to write baked assets to")?;
-    let full = root.join(&path);
-    if write && !full.exists() {
-        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        if let Some(dir) = full.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {path}: {e}"))?;
-        }
-        // A name of its own, so another process baking the same content
-        // cannot take the temporary file away; whichever rename lands, the
-        // content is the same.
-        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let tmp = full.with_extension(format!("{ext}.{}-{n}.writing", re_core::process_id()));
-        std::fs::write(&tmp, &bytes).map_err(|e| format!("cannot write {path}: {e}"))?;
-        if let Err(e) = std::fs::rename(&tmp, &full) {
-            let _ = std::fs::remove_file(&tmp);
-            if !full.is_file() {
-                return Err(format!("cannot write {path}: {e}"));
-            }
+    root.ok_or("the GraphStore has no project root to write baked assets to")?;
+    Ok((baked_asset_path(source, &bytes, ext), bytes))
+}
+
+/// Writes the baked file `path` under `root`, unless it is there already
+/// (its name is its content's hash).
+fn write_baked(root: &std::path::Path, path: &str, bytes: &[u8]) -> Result<(), String> {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let full = root.join(path);
+    if full.exists() {
+        return Ok(());
+    }
+    if let Some(dir) = full.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {path}: {e}"))?;
+    }
+    // A name of its own, so another process baking the same content cannot
+    // take the temporary file away; whichever rename lands, the content is
+    // the same.
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let ext = full.extension().and_then(|e| e.to_str()).unwrap_or("bin");
+    let tmp = full.with_extension(format!("{ext}.{}-{n}.writing", re_core::process_id()));
+    std::fs::write(&tmp, bytes).map_err(|e| format!("cannot write {path}: {e}"))?;
+    if let Err(e) = std::fs::rename(&tmp, &full) {
+        let _ = std::fs::remove_file(&tmp);
+        if !full.is_file() {
+            return Err(format!("cannot write {path}: {e}"));
         }
     }
-    Ok(path)
+    Ok(())
 }
 
 /// Rewrites the entity references (`entity` fields and lists of them) that
@@ -512,15 +517,18 @@ pub(crate) fn bake<C: re_command::EditTarget>(
         .map(std::path::Path::to_path_buf);
     let write = !call.dry_run();
     let mut written: Vec<String> = Vec::new();
+    // The files to write, once every entity is remapped.
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     // Each derived asset is encoded once, however many entities name it.
     let mut paths: HashMap<String, String> = HashMap::new();
     let mut asset = |name: &str| -> Result<String, String> {
         if let Some(path) = paths.get(name) {
             return Ok(path.clone());
         }
-        let path = bake_asset(store, root.as_deref(), &a.source, name, write)?;
+        let (path, bytes) = bake_asset(store, root.as_deref(), &a.source, name)?;
         if !written.contains(&path) {
             written.push(path.clone());
+            files.push((path.clone(), bytes));
         }
         paths.insert(name.to_string(), path.clone());
         Ok(path)
@@ -695,6 +703,15 @@ pub(crate) fn bake<C: re_command::EditTarget>(
         .map(|(k, v)| (k, serde_json::Value::String(v)))
         .collect();
     written.sort();
+    if write && let Some(root) = root.as_deref() {
+        // The policy sees every file before the first is written.
+        for (path, _) in &files {
+            call.check_write(path)?;
+        }
+        for (path, bytes) in &files {
+            write_baked(root, path, bytes).map_err(|m| bake_error(&a.source, m))?;
+        }
+    }
     call.transact(target, format!("proc.bake {}", a.source), ops)?;
     Ok(serde_json::json!({
         "source": a.source,
