@@ -165,11 +165,13 @@
                   },
                   "noise": {
                     "description": "The noise: `fbm`, `ridged` or `warped`.",
-                    "$ref": "#/$defs/terrain.heightfield.NoiseKind"
+                    "$ref": "#/$defs/terrain.heightfield.NoiseKind",
+                    "default": "fbm"
                   },
                   "basis": {
                     "description": "The base noise: `perlin` or `simplex`.",
-                    "$ref": "#/$defs/terrain.heightfield.BasisKind"
+                    "$ref": "#/$defs/terrain.heightfield.BasisKind",
+                    "default": "perlin"
                   },
                   "octaves": {
                     "description": "Number of octaves (1 to 16).",
@@ -260,7 +262,8 @@
                   },
                   "shape": {
                     "description": "`circle` or `square`.",
-                    "$ref": "#/$defs/terrain.island_mask.MaskShape"
+                    "$ref": "#/$defs/terrain.island_mask.MaskShape",
+                    "default": "circle"
                   }
                 },
                 "additionalProperties": false,
@@ -477,7 +480,8 @@
                 "properties": {
                   "op": {
                     "description": "`add`, `sub`, `mul`, `min`, `max` or `lerp`.",
-                    "$ref": "#/$defs/field.combine.CombineOp"
+                    "$ref": "#/$defs/field.combine.CombineOp",
+                    "default": "add"
                   },
                   "t": {
                     "description": "The blend factor of `lerp` (0 gives `a`, 1 gives `b`).",
@@ -510,7 +514,8 @@
                 "properties": {
                   "mode": {
                     "description": "`clamp`, `linear`, `curve` or `terrace`.",
-                    "$ref": "#/$defs/field.remap.RemapMode"
+                    "$ref": "#/$defs/field.remap.RemapMode",
+                    "default": "clamp"
                   },
                   "min": {
                     "description": "`clamp`: the lower bound.",
@@ -844,7 +849,8 @@
                     "type": "array",
                     "items": {
                       "$ref": "#/$defs/points.pick.Choice"
-                    }
+                    },
+                    "default": []
                   }
                 },
                 "additionalProperties": false,
@@ -940,7 +946,8 @@
                 "properties": {
                   "shape": {
                     "description": "`box`, `sphere`, `cylinder`, `capsule` or `plane`.",
-                    "$ref": "#/$defs/mesh.primitive.PrimitiveShape"
+                    "$ref": "#/$defs/mesh.primitive.PrimitiveShape",
+                    "default": "box"
                   },
                   "size": {
                     "description": "`box`: the full size `[x, y, z]`; `plane`: `[x, _, z]`.",
@@ -1214,7 +1221,8 @@
                 "properties": {
                   "op": {
                     "description": "`union`, `intersect`, `difference` (`a` minus `b`) or `xor`.",
-                    "$ref": "#/$defs/shape.boolean.BoolOp"
+                    "$ref": "#/$defs/shape.boolean.BoolOp",
+                    "default": "union"
                   }
                 },
                 "additionalProperties": false,
@@ -1247,7 +1255,8 @@
                   },
                   "join": {
                     "description": "`round`, `miter` or `bevel`.",
-                    "$ref": "#/$defs/shape.offset.Join"
+                    "$ref": "#/$defs/shape.offset.Join",
+                    "default": "round"
                   }
                 },
                 "additionalProperties": false,
@@ -1355,7 +1364,8 @@
                 "properties": {
                   "keep": {
                     "description": "`inside` or `outside`.",
-                    "$ref": "#/$defs/points.mask.Keep"
+                    "$ref": "#/$defs/points.mask.Keep",
+                    "default": "inside"
                   }
                 },
                 "additionalProperties": false,
@@ -1385,7 +1395,8 @@
                     "type": "array",
                     "items": {
                       "$ref": "#/$defs/path.spline.PointDoc"
-                    }
+                    },
+                    "default": []
                   },
                   "width": {
                     "description": "The road's width in metres, where a point does not set one.",

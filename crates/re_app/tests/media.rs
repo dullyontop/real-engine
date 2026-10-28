@@ -84,7 +84,7 @@ fn drawn_frames_report_their_submission_time() {
     // (as a window's are) and a screenshot.
     let capture = re_render::Capture::new(&app.graphics().unwrap().gpu().device, 160, 120).unwrap();
     for _ in 0..2 {
-        app.frame(std::time::Duration::from_secs_f64(1.0 / 60.0));
+        app.frame(std::time::Duration::from_secs(1) / 60);
         app.draw_into(capture.view(), [160, 120], 1.0).unwrap();
     }
     app.screenshot(None).unwrap();

@@ -22,6 +22,8 @@ struct SpotLight {
 };
 
 struct Frame {
+    // World space into clip space, with reversed Z and no far plane: depth is 1
+    // at the near plane and falls towards 0 with distance.
     view_proj: mat4x4<f32>,
     // World space into each cascade's shadow clip space.
     cascades: array<mat4x4<f32>, 4>,

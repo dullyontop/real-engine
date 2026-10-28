@@ -8,9 +8,11 @@ use re_geom::Heightfield;
 use re_noise::{Basis, Fractal, fbm2, ridged2, warped_fbm2};
 use re_reflect::Value;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use super::{Migration, NodeDef, NodeRegistry, NodeSpec, Params, PortDef, positive, within};
+use super::{
+    Migration, NodeDef, NodeRegistry, NodeSpec, Params, PortDef, positive, tessellation, within,
+};
 use crate::value::{
     DerivedAsset, FragItem, Fragment, MeshValue, Output, PortType, collider_name, derived_name,
 };
@@ -19,7 +21,7 @@ use crate::value::{
 pub const MAX_FIELD_SIZE: u32 = 2049;
 
 /// The noise of a [`HeightfieldParams`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NoiseKind {
     /// Fractal Brownian motion: rolling hills.
@@ -32,7 +34,7 @@ pub enum NoiseKind {
 }
 
 /// The base noise of a [`HeightfieldParams`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BasisKind {
     /// Perlin gradient noise.
@@ -43,7 +45,7 @@ pub enum BasisKind {
 }
 
 /// Parameters of `terrain.heightfield`.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct HeightfieldParams {
     /// Samples per side (2 to 2049). The field is centred on the source.
@@ -181,7 +183,7 @@ fn noise_height(p: &HeightfieldParams, f: &Fractal, seed: u64, wx: f32, wz: f32)
 }
 
 /// The outline of a [`MaskParams`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MaskShape {
     /// Round island.
@@ -192,7 +194,7 @@ pub enum MaskShape {
 }
 
 /// Parameters of `terrain.island_mask`.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct MaskParams {
     /// Samples per side (2 to 2049). `field.combine` resamples it to the
@@ -260,7 +262,7 @@ fn island_mask(ctx: &super::NodeCtx, p: &MaskParams) -> Result<Output, String> {
 }
 
 /// Parameters of `terrain.mesh`.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct TerrainMeshParams {
     /// Also add a heightfield `Collider` built from the same samples.
@@ -360,7 +362,7 @@ fn terrain_mesh(ctx: &super::NodeCtx, p: &TerrainMeshParams) -> Result<Output, S
 }
 
 /// Parameters of `terrain.chunks`.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct ChunksParams {
     /// A material file (`materials/grass.material.json`), or empty.
@@ -413,7 +415,7 @@ fn terrain_chunks(ctx: &super::NodeCtx, p: &ChunksParams) -> Result<Output, Stri
 }
 
 /// Parameters of `terrain.water_plane`.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
 pub struct WaterParams {
     /// The water's height, in metres.
@@ -443,7 +445,8 @@ impl Default for WaterParams {
 impl Params for WaterParams {
     fn validate(&self) -> Result<(), String> {
         within("level", self.level, -10_000.0, 10_000.0)?;
-        positive("size", self.size)
+        positive("size", self.size)?;
+        tessellation("subdivisions", self.subdivisions, 1)
     }
 }
 

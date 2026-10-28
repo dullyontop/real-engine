@@ -23,6 +23,7 @@ use re_types::physics::{
 use re_types::{EntityId, glam::Vec3};
 use serde_json::Value as Json;
 
+use crate::api::game::GameAccess;
 use crate::codes;
 
 /// What a script context needs from the engine while it runs.
@@ -53,6 +54,12 @@ pub trait ScriptHost {
     /// World streaming (ADR-0042), for the `stream` library; `None` when
     /// this host does not stream (builder runs, tools without a game).
     fn stream(&mut self) -> Option<&'static dyn StreamAccess> {
+        None
+    }
+
+    /// The running game's scenes (ADR-0059), for the `scene` library; `None`
+    /// when this host runs no game (builder runs, tools without a game).
+    fn game(&mut self) -> Option<&mut dyn GameAccess> {
         None
     }
 }

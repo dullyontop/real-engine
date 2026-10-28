@@ -5,8 +5,11 @@
 //!
 //! * **hierarchy**: every entity by name and id, nested by `ChildOf` /
 //!   `Children`; spawn, delete, undo and redo; a click selects one entity,
-//!   Ctrl+click adds or removes one and Shift+click a run of rows;
-//! * **inspector**: the active entity's components, one widget per
+//!   Ctrl+click adds or removes one and Shift+click a run of rows; F2 or a
+//!   double-click renames an entity in its row, and a right click opens a
+//!   menu (rename, duplicate, copy, cut, paste, paste as child, delete,
+//!   focus, select children);
+//! * **inspector**: the active entity's note and components, one widget per
 //!   [`FieldType`](re_reflect::FieldType), generated from the registry's
 //!   [`ComponentSchema`](re_reflect::ComponentSchema)s;
 //! * **console**: diagnostics, the outcome of each command and every
@@ -56,6 +59,15 @@
 //! `Ctrl+Down` select the selection's parents or children, and Delete
 //! removes the selected entities in one undo step.
 //!
+//! Copy, cut and paste (`Ctrl+C`, `Ctrl+X`, `Ctrl+V`) go through the system
+//! clipboard as JSON text (format `real-engine/entities`; ADR-0044), so an
+//! agent can read a copy or paste its own; a scene file's text pastes too.
+//! A paste, or a duplicate (`Ctrl+D`, which leaves the clipboard alone), is
+//! one `scene.apply` of `restore` ops, so one undo step: each copy gets a
+//! fresh id (`crate_1` becomes `crate_2`, or the next free number), its
+//! references to other copies follow them, and each pasted root keeps its
+//! world transform under its new parent.
+//!
 //! The game view carries translate, rotate and scale gizmos for the
 //! selection ([`gizmo`]; `W`, `E`, `R`), standing on the active entity or at
 //! the centre of the selection's bounds. A drag moves each selected entity
@@ -82,6 +94,7 @@
 mod assets;
 pub mod camera;
 mod canvas;
+mod clipboard;
 pub mod codes;
 mod debugger;
 mod editor;
@@ -197,6 +210,26 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::LAYOUT_UNREADABLE,
         title: "The editor layout could not be read",
         page: include_str!("../explain/RE8804.md"),
+    },
+    DiagInfo {
+        code: codes::NOT_ENTITIES,
+        title: "The clipboard does not hold entities",
+        page: include_str!("../explain/RE8805.md"),
+    },
+    DiagInfo {
+        code: codes::PASTE_UNKNOWN_COMPONENT,
+        title: "A paste names a component the project does not define",
+        page: include_str!("../explain/RE8806.md"),
+    },
+    DiagInfo {
+        code: codes::COPY_LEFT_OUT,
+        title: "A generated entity was left out of a copy",
+        page: include_str!("../explain/RE8807.md"),
+    },
+    DiagInfo {
+        code: codes::REFERENCE_CLEARED,
+        title: "A pasted reference was cleared",
+        page: include_str!("../explain/RE8808.md"),
     },
     DiagInfo {
         code: codes::PARAM_VALUE,

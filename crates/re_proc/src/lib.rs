@@ -18,8 +18,14 @@
 //!   ([`register_doc_validators`] checks open graph documents, ADR-0044);
 //! * [`register_generator`]: the `graph` generator for `re_scene`'s
 //!   procedural sources (StableKeys `<node id>/<local key>`);
-//! * [`register_commands`]: `graph.set_param`, `graph.regenerate`,
-//!   `graph.generate` and `graph.report`;
+//! * [`register_commands`]: the `graph.*` commands that edit a graph and its
+//!   overrides (`graph.set_param`, `graph.add_node`, `graph.remove_node`,
+//!   `graph.connect`, `graph.disconnect`, `graph.move_nodes`,
+//!   `graph.set_default`), run it (`graph.regenerate`, `graph.generate`) and
+//!   report on it (`graph.report`, `graph.migration_report`), and the
+//!   `proc.*` commands that make a source (`proc.create_source`), bake one
+//!   (`proc.bake`) and edit a generated structure (`proc.move`,
+//!   `proc.replace`, `proc.insert`, `proc.clear_structure`);
 //! * [`stream`]: world streaming (ADR-0042), cells generated and applied
 //!   around focus points at deterministic ticks; shapes and road paths are
 //!   [global](Streaming::Global) (one result for every cell and chunk), and
@@ -28,10 +34,11 @@
 //! # Ports and the graph's output
 //!
 //! Values are [`Field`]s (square grids of heights in metres, or weights),
-//! meshes, [`Points`] and fragments (entities to create). Each node has one
-//! output port named after its type (`field`, `mesh`, `points`,
-//! `fragment`; an edge may also name it `out`), and named inputs; `mesh.merge` and `fragment.merge` take
-//! inputs on any port names. The graph's output is the fragment of every
+//! meshes, [`Points`], [`Shapes`] (polygons with holes in the XZ plane),
+//! road paths ([`RoadPath`]) and fragments (entities to create). Each node
+//! has one output port named after its type (`field`, `mesh`, `points`,
+//! `shapes`, `path`, `fragment`; an edge may also name it `out`), and named
+//! inputs; `mesh.merge` and `fragment.merge` take inputs on any port names. The graph's output is the fragment of every
 //! node that no edge leaves (a mesh there becomes one entity), in document
 //! order.
 //!
@@ -76,12 +83,13 @@ pub use eval::{
 };
 pub use generator::{
     GENERATOR, GENERATOR_VERSION, ParamOverrides, apply_overrides, overrides_text, parse_overrides,
-    register_generator,
+    positional_ids, register_generator,
 };
 pub use graph::{Edge, GraphId, Node, NodeId, OUT_ALIAS, PortName, ProcGraph};
 pub use nodes::{
-    CheckFn, CustomKind, CustomPort, Domain, EvalFn, MAX_LOG_LINE, MAX_LOG_LINES, MigrateFn,
-    Migration, NodeCtx, NodeDef, NodeError, NodeRegistry, NodeSpec, Params, PortDef, Streaming,
+    CheckFn, CustomKind, CustomPort, Domain, EvalFn, InputCheckFn, InputValue, MAX_LOG_LINE,
+    MAX_LOG_LINES, MigrateFn, Migration, NodeCtx, NodeDef, NodeError, NodeRegistry, NodeSpec,
+    Params, PortDef, Streaming,
 };
 pub use store::{Budget, CurrentGraph, GraphStore, register_doc_validators, validate_graph_json};
 pub use value::{
@@ -212,6 +220,16 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::OPEN_GRAPH_DIFFERS,
         title: "Open graph differs from its file",
         page: include_str!("../explain/RE4022.md"),
+    },
+    DiagInfo {
+        code: codes::COMBINE_EXTENTS,
+        title: "Combined fields cover different areas",
+        page: include_str!("../explain/RE4030.md"),
+    },
+    DiagInfo {
+        code: codes::POSITIONAL_IDS,
+        title: "Builder nodes without explicit ids",
+        page: include_str!("../explain/RE4031.md"),
     },
     DiagInfo {
         code: codes::NOT_A_BUILDER_SOURCE,

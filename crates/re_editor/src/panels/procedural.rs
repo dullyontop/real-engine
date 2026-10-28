@@ -300,6 +300,20 @@ pub(super) fn viewport_overlay(
     false
 }
 
+/// The procedural entries of the Hierarchy's context menu for the row of
+/// entity `id` (WP43: `proc.replace`, `proc.insert`, `proc.clear_structure`
+/// and `proc.bake`), after the editing ones. The menu acts on the selection,
+/// which holds `id` once the right click's selection applies (from the frame
+/// after the menu opens). Nothing yet.
+pub(super) fn entity_menu(
+    _ed: &mut Editor,
+    _ui: &mut egui::Ui,
+    _app: &App,
+    _id: &str,
+    _actions: &mut Vec<Action>,
+) {
+}
+
 fn display(world: &World, e: Entity, id: &str) -> String {
     let name = world.name_of(e);
     if name.is_empty() {

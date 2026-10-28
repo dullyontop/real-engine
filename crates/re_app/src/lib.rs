@@ -37,6 +37,7 @@ pub mod package;
 pub mod perf;
 pub mod play;
 pub mod procedural;
+pub mod scenes;
 pub mod shaders;
 pub mod sync;
 pub mod verify;
@@ -206,6 +207,26 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::RAGDOLL_UNAVAILABLE,
         title: "Ragdoll unavailable",
         page: include_str!("../explain/RE0529.md"),
+    },
+    DiagInfo {
+        code: codes::SCENE_LOAD_FAILED,
+        title: "Scene load failed",
+        page: include_str!("../explain/RE0570.md"),
+    },
+    DiagInfo {
+        code: codes::SCENE_CHANGES_DIFFER,
+        title: "Scene changes differ from the replay's",
+        page: include_str!("../explain/RE0571.md"),
+    },
+    DiagInfo {
+        code: codes::SCENES_INVALID,
+        title: "Invalid [scenes]",
+        page: include_str!("../explain/RE0572.md"),
+    },
+    DiagInfo {
+        code: codes::KEPT_STANDS_IN,
+        title: "A kept entity stands in for a scene's entity",
+        page: include_str!("../explain/RE0578.md"),
     },
     DiagInfo {
         code: codes::PACKAGE_UNREADABLE,

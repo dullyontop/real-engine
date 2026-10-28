@@ -116,9 +116,8 @@ impl ClassRegistry {
     /// [`ClassMarker`]: each class's native components and own component, from
     /// `Instance` down to `class`, each once.
     pub fn instance_components(&self, class: &str) -> Result<Vec<String>, CompatError> {
-        let chain = self.chain(class)?;
         let mut out: Vec<String> = Vec::new();
-        for c in chain.iter().rev() {
+        for c in self.chain(class)?.rev() {
             for name in c.components.iter().cloned().chain(c.own_component()) {
                 if !out.contains(&name) {
                     out.push(name);

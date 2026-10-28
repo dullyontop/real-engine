@@ -203,6 +203,10 @@ fn load_where(
         }
         match graph_of(world, project, &mut builders, &source) {
             Ok(doc) => {
+                let (_, graph, builder) = &source;
+                if graph.is_empty() {
+                    diags.extend(re_proc::positional_ids(&doc, builder));
+                }
                 if let Some(mut store) = world.ecs.get_resource_mut::<GraphStore>() {
                     store.insert(source.0.clone(), doc);
                 }

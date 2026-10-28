@@ -88,7 +88,7 @@
           }
         },
         "physics_step": {
-          "description": "One physics step (`Physics::step` alone).",
+          "description": "One physics step: `Physics::step`, and in a compat game the server's parts\nand characters with their touch events, which step with it.",
           "$ref": "#/$defs/TimeStats"
         },
         "render_submit": {

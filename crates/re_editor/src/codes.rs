@@ -22,6 +22,23 @@ pub const INVALID_FIELD_TEXT: Code = Code::new("RE8803");
 /// version. The default layout is used.
 pub const LAYOUT_UNREADABLE: Code = Code::new("RE8804");
 
+/// The clipboard does not hold entities the editor can paste: it holds other
+/// text, entities in another version of the format, or subtrees that are not
+/// whole. Nothing is pasted.
+pub const NOT_ENTITIES: Code = Code::new("RE8805");
+
+/// A paste was refused: a copied entity has a component this project does
+/// not define. Nothing is pasted.
+pub const PASTE_UNKNOWN_COMPONENT: Code = Code::new("RE8806");
+
+/// A generated entity was left out of a copy: it shows a derived asset,
+/// which exists only while its procedural source makes it.
+pub const COPY_LEFT_OUT: Code = Code::new("RE8807");
+
+/// A pasted entity referred to an entity that does not exist where it was
+/// pasted; the reference was cleared.
+pub const REFERENCE_CLEARED: Code = Code::new("RE8808");
+
 /// A node parameter's value (on the canvas, or an override in the Procedural
 /// panel) does not fit its schema: text typed into its JSON box does not
 /// parse or is not of its type, so nothing was changed; or the value in the

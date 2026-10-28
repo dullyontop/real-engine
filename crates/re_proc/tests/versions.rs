@@ -14,7 +14,7 @@ use re_proc::{
 };
 use re_types::graph::GraphDoc;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as Json, json};
 use support::{evaluator, output_hash};
 
@@ -231,7 +231,7 @@ fn keys_from_before_versioning_are_unchanged() {
 // Its migration renames the parameter; version 1 nodes keep version 1's
 // output (no clamp).
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ScaleParams {
     #[serde(default = "one")]

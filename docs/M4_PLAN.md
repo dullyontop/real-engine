@@ -76,9 +76,9 @@ The M1, M2 and M3 ownership rules carry over, with these changes:
   - WP32's native frame path in `crates/re_app/src/gfx.rs` and render sync in `crates/re_app/src/sync/render.rs` (the maintainer reviews), and its material slots in `re_assets` (the maintainer reviews);
   - WP33's render-only mode of `points.instance` and the `Instances` output in `re_proc` (WP39 reviews), and texture arrays in `re_assets` (the maintainer reviews);
   - WP34's `Joint`, `Trigger` and `PhysicsMaterial` components in `re_scene` and its additions to `re_types/src/physics.rs` (the maintainer reviews), and compat's joints mapped onto native joints (WP47 reviews);
-  - WP34's trigger delivery in `re_script/src/runtime.rs` (WP35 reviews), and its edits to `re_app`'s host and `[physics]` in its config (the maintainer reviews);
+  - WP34's trigger and joint-break delivery in `re_script/src/runtime.rs` (WP35 reviews), its edits to `re_app`'s host, `App::state_hash` and `[physics]` in its config (the maintainer reviews), and its joints fixture in the three-platform d2 run (WP31 reviews);
   - WP35's new host calls in `re_types::HostServices`, added as provided methods with a default body, as in M2 (the maintainer reviews);
-  - WP36's compat GUI on `re_ui` and the switch of `crates/re_app/src/compat.rs` onto its routing (WP47 reviews), `ScriptHost::ui()` (WP35 reviews), UI textures in `gfx.rs` (WP32 reviews), and its UI components in `re_scene`, the `ui` rows of `ReplayDoc`, the theme schema and `[ui]` in its config (the maintainer reviews);
+  - WP36's compat GUI on `re_ui` and the switch of `crates/re_app/src/compat.rs` onto its routing (WP47 reviews), `ScriptHost::ui()` (WP35 reviews), `re_render::decode_blocks` made public for UI images (WP32 reviews), and its UI components in `re_scene`, the `ui` rows of `ReplayDoc`, the theme schema, `[ui]` in its config and `ui/` among the folders `real build` packs (the maintainer reviews);
   - WP38's prefab expansion in `re_proc` (WP39 reviews), its change-signal binding in `re_script` (WP35 reviews), and its edits to `re_app`'s files module, `verify.rs` and `[history]` in its config and to `re_cli`'s prefab schema (the maintainer reviews);
   - WP39's metre UVs in `re_geom/src/terrain/` and the `terrain.layers` node, which WP33's terrain material reads (WP33 reviews the data shape); its deferred regeneration in `re_scene` (`Generators::set_deferred`, `World::apply_generated`) and `[proc]`'s editor budget in its config (the maintainer reviews), and the editor socket's wait for regeneration (WP42 reviews);
   - WP40's `re_types::graph` additions and `schemas/graph.schema.json` in its PR "params" (the maintainer reviews);
@@ -303,6 +303,7 @@ cargo run --release --locked -p re_render --example forest -- --instances 100000
 cargo test --locked -p re_physics
 cargo test --locked -p re_app
 cargo xtask d2 --project examples/valley --json
+cargo xtask d2 --project crates/re_app/tests/fixtures/joints --json
 ```
 - A hinge and a motorised slider reach their targets, and a joint breaks at its stated force, with the same `state_hash` on three platforms.
 - A ray or shape cast that starts inside two overlapping sensors hits the body behind them.
@@ -808,7 +809,7 @@ cargo test --locked -p re_import
 cargo run --release --locked -p re_compat --example bigmap -- --parts 250000 --frames 600
 ```
 - A fixture calls every member these PRs implement, and `cargo xtask members` passes.
-- `bigmap`'s frame time falls, with the number in the PR, and the plaza's replays keep their hashes.
+- `bigmap`'s frame time falls, with the number in the PR. The plaza's replays keep their hashes in every PR but "tools", which re-records them with the reason and adds a replay that exercises tools and teams (the D2 rule).
 
 **Definition of done:** the five PRs merged; `coverage.json` matches the code; green Windows and macOS checks on its last PR.
 

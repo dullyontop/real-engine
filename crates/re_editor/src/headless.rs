@@ -27,6 +27,8 @@ pub struct HeadlessEditor {
     capture: Capture,
     ui: Renderer,
     time: f64,
+    /// The text last put on the clipboard.
+    copied: Option<String>,
 }
 
 impl std::fmt::Debug for HeadlessEditor {
@@ -61,7 +63,15 @@ impl HeadlessEditor {
             capture,
             ui,
             time: 0.0,
+            copied: None,
         })
+    }
+
+    /// The text the editor last put on the clipboard (Ctrl+C or Ctrl+X, sent
+    /// as `egui::Event::Copy` or `Cut`), as a windowed editor's system
+    /// clipboard would hold it. Pasting is `egui::Event::Paste` with text.
+    pub fn copied(&self) -> Option<&str> {
+        self.copied.as_deref()
     }
 
     /// The egui context.
@@ -99,6 +109,16 @@ impl HeadlessEditor {
         input.time = Some(self.time);
         let editor = &mut self.editor;
         let mut output = self.ctx.run_ui(input, |ui| editor.ui(ui, app, policy));
+        for command in &output.platform_output.commands {
+            if let egui::OutputCommand::CopyText(text) = command {
+                self.copied = Some(text.clone());
+            }
+        }
+        // A menu's Paste reads the clipboard, which here is what was copied.
+        if self.editor.wants_clipboard() {
+            let text = self.copied.clone();
+            self.editor.paste_clipboard(app, policy, text.as_deref());
+        }
         let ui = UiFrame::from_output(&self.ctx, &mut output, size);
         self.view.render(app, &self.editor)?;
         let gpu = app.graphics().ok_or_else(view::no_graphics)?.gpu();

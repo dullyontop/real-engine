@@ -2,7 +2,9 @@
 //! ADR-0009. The struct and its accessors are here; its other methods are
 //! grouped by concern:
 //!
-//! - `open`: opening a project, the copy `play.run` plays, `world.restart()`;
+//! - `open`: opening a project, and the copy `play.run` plays;
+//! - `scenes`: scene changes at EndFrame, `world.restart()`, and the scene
+//!   edit mode has open;
 //! - `frame`: the frame loop, one method per phase, and headless runs;
 //! - `physics_step`: the Physics phase and what it needs;
 //! - `stream`: world streaming in the frame loop;
@@ -22,6 +24,7 @@ mod net;
 mod open;
 mod physics_step;
 mod play_steps;
+mod scenes;
 mod scripts;
 mod stream;
 mod view;
@@ -63,7 +66,6 @@ use crate::sync::render::RenderAssets;
 use crate::verify::VerifyStage;
 
 use self::frame::HalfFrame;
-pub(crate) use self::open::content_world;
 
 /// A screenshot a run was asked to take: by a replay check (`golden` set) or by
 /// a script (`path` set).
@@ -96,6 +98,10 @@ pub struct RunReport {
     /// What scripts printed (`print` and `warn`), one line each.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub output: Vec<String>,
+    /// The scene changes the run made, as a replay's `scenes` list holds them
+    /// (ADR-0059 §6).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub scenes: Vec<re_types::SceneChange>,
     /// For a compat project: uncaught script errors, stuck yields and
     /// unsupported members ([`crate::compat::CompatRunInfo`]).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -182,6 +188,12 @@ pub struct App {
     /// What each procedural source's graph was last loaded from, to load the
     /// graph again when a source's `graph` or `builder` is edited.
     graph_inputs: procedural::GraphInputs,
+    /// The run's scenes (ADR-0059): the list, the loaded and kept ones, the
+    /// loads not applied yet, and the log of the changes applied.
+    scenes: crate::scenes::Scenes,
+    /// What a restart forks instead of loading the scene the run began in
+    /// ([`App::set_start_world`]).
+    start_world: Option<self::scenes::StartWorld>,
     /// How many times the World was reloaded by [`App::restart`].
     restarts: u64,
     /// Characters [`App::link_new_characters`] already tried to link.

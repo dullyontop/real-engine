@@ -889,15 +889,10 @@ fn text_source(lua: &Lua, player: Entity) -> Result<Option<Entity>> {
 pub(crate) fn chat_on_client(lua: &Lua, _link: &NetLink, player: &str, text: &str) -> Result<()> {
     let p = with_world(lua, |w| net::value::instance_by_id(w, Some(player)))?;
     let Some(p) = p else { return Ok(()) };
+    let classes = classes(lua)?;
     let source = with_world(lua, |w| {
         let uid = user_id(w, p);
-        let sources: Vec<Entity> = w
-            .ecs
-            .query::<(Entity, &crate::class::ClassMarker)>()
-            .iter(&w.ecs)
-            .filter(|(_, m)| m.class == "TextSource")
-            .map(|(e, _)| e)
-            .collect();
+        let sources = classes.instances_exactly(w, "TextSource");
         sources.into_iter().find(|x| {
             !tree::is_destroyed(w, *x)
                 && matches!(get_own(w, "TextSource", *x, "UserId"), Some(Value::Int(u)) if u == uid)

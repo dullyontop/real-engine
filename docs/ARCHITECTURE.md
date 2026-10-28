@@ -157,10 +157,10 @@ Dashed edges exist only when `re_cli` is built with the default-on `tooling` fea
 | `re_cli` | The `real` binary and the `explain` command | subcommands | — |
 | `re_agent` | Agent policy, sessions, checkpoints, agent commands, `AGENTS.md` and client configs, the editor socket (client and server loop; Unix only in M1) and the single-writer lock | `Policy`, `Session`, `Checkpoint`, `register_commands`, `generate_agents_md`, `remote::{connect, serve}`, `lock::{acquire, probe}` | tokio |
 | `re_mcp` | The MCP server (rmcp, stdio or streamable HTTP on loopback), the tool-call recorder, and small blocking MCP clients for tests and the eval harness | `serve_stdio(EngineHandle, McpOptions)`, `http`, `record::Recorder`, `client::{HttpClient, StdioClient}` | `re_app` |
-| `re_editor` | The editor UI: dockable panel tabs (layout in `.real/editor/layout.json`), translate, rotate and scale gizmos (W, E, R) on one or several selected entities, about the active one or the selection's centre, whose drags edit live as one undo step, an editor camera (orbit, pan, zoom, fly, frame) and editor-only overlays (grid, axis indicator, light and camera icons, selection outline), the node canvas over graph files, the debugger panel, and the editor socket (ADR-0044, ADR-0045) | `run_editor(App, EditorOptions)`, `EditorSocket` | — |
+| `re_editor` | The editor UI: dockable panel tabs (layout in `.real/editor/layout.json`), translate, rotate and scale gizmos (W, E, R) on one or several selected entities, about the active one or the selection's centre, whose drags edit live as one undo step, copy, cut, paste and duplicate through the system clipboard (one undo step each), a Hierarchy context menu, renaming in place and notes, an editor camera (orbit, pan, zoom, fly, frame) and editor-only overlays (grid, axis indicator, light and camera icons, selection outline), the node canvas over graph files, the debugger panel, and the editor socket (ADR-0044, ADR-0045) | `run_editor(App, EditorOptions)`, `EditorSocket` | — |
 | `re_import` | Static importer for Rojo-style projects and Studio loader scripts (tooling, M2 WP16); it never runs Luau | `import`, `ImportReport`, `new_project` | `re_app` |
 | `re_web` | The browser runtime (M3, WP29): a wasm-bindgen `Session` that takes a project's archive or files and plays or replays it (ADR-0049) | `Session` | tokio, any tooling crate |
-| `re_compat` | The Roblox-style compatibility layer (M2): the class layer, the class, enum and library data, the coverage table, the compat scene conventions, the datatypes and enums, the compat VM with instances, signals and core services, and the `RenderFrame` it builds for the renderer (§4) | `CompatVm`, `CompatSetup`, `Bindings`, `ValueCodec`, `SignalBehavior`, `datatypes::install`, `EnumItem`, `ClassRegistry`, `ClassRegistryBuilder`, `ClassDef`, `PropertyDef`, `Storage`, `ClassMarker`, `ServiceTag`, `CompatConfig`, `DataSet`, `CoverageFile`, `Status` | `re_render`, `re_audio`, `re_input`, `re_assets` (it reaches them through `HostServices`), full_moon, tokio. It uses `re_anim` (pure computation) for animation tracks, and `re_physics` directly: each compat world owns one `re_physics::Physics` and syncs its parts to it, as `re_app`'s physics sync does for native scenes, so the headless sample runner can step physics without `re_app`. It uses `re_noise` for the seeded particle effects and material detail textures, and `re_ui` for its GUI's layout, text, fonts and painting (ADR-0058) |
+| `re_compat` | The Roblox-style compatibility layer (M2): the class layer, the class, enum and library data, the coverage table, the compat scene conventions, the datatypes and enums, the compat VM with instances, signals and core services, and the `RenderFrame` it builds for the renderer (§4) | `CompatVm`, `CompatSetup`, `Bindings`, `ValueCodec`, `SignalBehavior`, `datatypes::install`, `EnumItem`, `ClassRegistry`, `ClassRegistryBuilder`, `ClassDef`, `PropertyDef`, `Storage`, `ClassMarker`, `class::ClassIndex`, `class::ClassId`, `ServiceTag`, `CompatConfig`, `DataSet`, `CoverageFile`, `Status` | `re_render`, `re_audio`, `re_input`, `re_assets` (it reaches them through `HostServices`), full_moon, tokio. It uses `re_anim` (pure computation) for animation tracks, and `re_physics` directly: each compat world owns one `re_physics::Physics` and syncs its parts to it, as `re_app`'s physics sync does for native scenes, so the headless sample runner can step physics without `re_app`. It uses `re_noise` for the seeded particle effects and material detail textures, and `re_ui` for its GUI's layout, text, fonts and painting (ADR-0058) |
 
 Boundaries are enforced in CI. `cargo xtask check-graph` (in `tools/xtask`) reads `cargo metadata` and fails if any "must not depend on" rule above is broken. This includes "subsystem crates reach only the contract layer", "`re_proc` does not reach wgpu, oxijolt or mlua", "only `re_reflect`, `re_scene` and `re_command` depend on bevy_ecs directly (others reach it through the `re_scene::ecs` re-export, and a crate that uses bevy's `#[derive(Component)]` or `#[derive(Resource)]`, or `re_reflect::component!`, puts `use re_scene::ecs as bevy_ecs;` in every module that uses them, because the derives otherwise emit a bare `bevy_ecs::` path)" and "`re_cli --no-default-features` reaches no tooling crate, tokio, rmcp or full_moon".
 
@@ -227,9 +227,10 @@ Sync           propagate GlobalTransform; interpolate between steps;
                sync::render::build → RenderSnapshot; sync::audio → Vec<AudioCmd>
 Render         Renderer::render(device, queue, view, &snapshot); egui overlay through paint_ui;
                Audio::apply(&audio_cmds)
-EndFrame       apply scripts' host requests (HUD text, mouse behaviour, regeneration, screenshots,
-               restart); regenerate changed sources and release the derived assets they dropped;
-               PerfReport sample
+EndFrame       apply scripts' host requests (HUD text, mouse behaviour, regeneration, screenshots);
+               regenerate changed sources and release the derived assets they dropped; then a
+               restart, or the scene switches, loads and unloads that are ready (ADR-0059), and
+               the script threads waiting on them woken for the next frame; PerfReport sample
 ```
 
 The phase order matches the order Roblox-style scripts expect: render-step work happens before simulation, "stepped" before physics, and "heartbeat" after physics (ADR-0009). This makes the M2 mapping direct.
@@ -375,7 +376,7 @@ The layer is Luau plus Rust on top of the native model. The core spike checked h
 | `Vector3`, `Vector2`, `Color3`, `UDim2`, `Enum.*` | `Vector3` maps to the native Luau vector. The others are userdata or frozen tables generated from a JSON table. |
 | `RBXScriptSignal`, `:Connect`, `:Once`, `:Wait`, legacy `connect` | A Luau signal library over engine events |
 | `Changed`, `GetPropertyChangedSignal` | Per-component change ticks, plus a per-field diff when signals are dispatched |
-| `ChildAdded`, `DescendantAdded`, `AncestryChanged` | Observers on `ChildOf` (`On<Insert<ChildOf>>`, `On<Discard<ChildOf>>`). Not hooks: `ChildOf` is a bevy relationship and already owns its `on_insert` and `on_discard` hooks, and registering a second one panics. Hooks remain fine on our own components (`StableId`, the tag index). |
+| `ChildAdded`, `DescendantAdded`, `AncestryChanged` | Observers on `ChildOf` (`On<Insert<ChildOf>>`, `On<Discard<ChildOf>>`). Not hooks: `ChildOf` is a bevy relationship and already owns its `on_insert` and `on_discard` hooks, and registering a second one panics. Hooks remain fine on our own components (`StableId`, the tag index, `ClassMarker`'s class index). |
 | `RunService` events (render-step bindings, `RenderStepped`, `PreAnimation`, `Stepped` / `PreSimulation`, `Heartbeat` / `PostSimulation`) | The engine phases in §3, in the same order |
 | `task.*`, `wait`, `delay`, `spawn` | The `re_script` scheduler (coroutines resumed in the phases) |
 | `Humanoid` and character | `CharacterController` (Jolt CharacterVirtual) plus a Humanoid state component and the event set |
@@ -393,7 +394,7 @@ The class layer as built (WP9):
 - `ClassRegistry` is built from the data files `classes/*.json`, `enums/*.json` and `libraries/*.json` (globals that are not classes: datatype tables, function libraries such as `task`, and instance globals such as `game`), which are embedded at build time. Each class has a superclass, `creatable`, the components it adds, and its properties, methods and events, each with a coverage status. A class file can `extend` a class declared in another file, so each WP owns the rows it implements.
 - A property is stored in one of three ways: an alias to a native field (optionally through a converter), an `own` field of the class's host component `Compat_<Class>`, or a `builtin` Rust accessor. Host components are registered with `Registry::register_host` before a scene loads; scene files store their fields by name without declaring their schemas, so adding a property never breaks a saved scene (ADR-0032).
 - Unknown and unimplemented members raise `RE9001` with a "did you mean" suggestion. A write to a read-only property raises `RE9005`, and a deprecated member gives an `RE9101` warning with its replacement.
-- Every instance carries a `ClassMarker { class }`. The root entity has the stable id `game` and class `DataModel`. Each service is a child of `game` whose stable id and name are its class name, with a `ServiceTag`. A script instance's `ScriptRef.context` is `Server`, `Client` or `Module`, from its class and `RunContext`; the native runtime starts only `Game` and `Tools` scripts. A compat project says `[compat] api = "roblox"` in `real.toml`, and convention breaks are reported as `RE9004`.
+- Every instance carries a `ClassMarker { class }`. `ClassMarker` is immutable, since an instance's class never changes, and its hooks keep the world's `ClassIndex` (each class's instances, in entity order), so `ClassRegistry::instances` finds a class's instances without walking the world. `IsA` is a bit test on the ancestor bitsets the registry works out once, when it is built. The root entity has the stable id `game` and class `DataModel`. Each service is a child of `game` whose stable id and name are its class name, with a `ServiceTag`. A script instance's `ScriptRef.context` is `Server`, `Client` or `Module`, from its class and `RunContext`; the native runtime starts only `Game` and `Tools` scripts. A compat project says `[compat] api = "roblox"` in `real.toml`, and convention breaks are reported as `RE9004`.
 
 The runtime as built so far (WP10, WP11, WP12, WP13, WP14, WP15, WP16 "boot"):
 - A compat VM is a `re_script::Context` of kind `Server` or `Client`, with the native sandbox (no `loadstring`, `getfenv` or `setfenv`), created and driven by `re_compat::CompatVm`, one per world. `ScriptRuntime` stays native-only. Each area registers its accessors, methods, globals and value conversions in `Bindings`, and `CompatSetup` refuses to start if a member marked `implemented` has no implementation.
@@ -684,7 +685,7 @@ Inside `re_app`'s range, `RE0600`–`RE0619` are package reading (ADR-0037) and 
 my-game/
   real.toml                  project config (TOML)
   .luaurc                    require aliases, shared by the runtime and the type checker
-  scenes/main.scene.json     entities, components, overrides of generated entities
+  scenes/*.scene.json        entities, components, overrides of generated entities: the entry scene and the scenes `[scenes]` names
   prefabs/*.prefab.json      reusable entity trees
   materials/*.material.json  PBR-lite parameters + texture asset refs
   graphs/*.graph.json        ProcGraph IR
@@ -713,6 +714,9 @@ my-game/
 [project]
 name = "island"
 entry_scene = "scenes/main.scene.json"
+
+[scenes]                      # the scenes scripts load by name (M4, ADR-0059); the entry scene is listed too,
+harbour = "scenes/harbour.scene.json"   # under its file stem (here `main`) unless a name here has its path
 
 [sim]
 fixed_hz = 60
@@ -917,6 +921,12 @@ Rules (verified by the core spike's round-trip tests, ADR-0016):
 ```
 
 The `seed` is the run's seed: native scripts' `math.random` starts from it (it takes the place of `[scripts] seed`), as compat scripts' `Random` and `math.random` start from `[compat] seed`.
+
+A replay may also list the scene changes the run must make (`scenes`, M4, ADR-0059 §6), in order: each entry has the `frame` whose end applied it and one of `switch`, `load`, `unload` and `restart`, naming the scene. The run checks each change as it applies it and never drives one; another scene, another frame, an unlisted change or a listed change that never happens is `RE0571`. A replay without the list checks nothing. `real run --json` reports the changes a run made in the same form:
+
+```json
+"scenes": [ { "frame": 240, "switch": "town" }, { "frame": 300, "load": "hud" } ]
+```
 
 A replay may also carry `raw` rows (`RawReplayInput`) for layers that read keys rather than actions. Each row has one change: a `key`, `mouse_button` or `pad_button` with `down`, or a `mouse_move`, `mouse_position` or `wheel`. Buttons use the `real.toml` names without the device prefix, and `raw` is left out when empty, so action-only replays are unchanged:
 
