@@ -263,13 +263,13 @@ pub fn project_to_pixel(view_proj: Mat4, p: Vec3, width: u32, height: u32) -> Op
     (x >= 0.0 && y >= 0.0 && x < width as f32 && y < height as f32).then_some((x as u32, y as u32))
 }
 
-/// The view-projection matrix the renderer uses for `camera` at `aspect`.
+/// The view-projection matrix the renderer uses for `camera` at `aspect`
+/// (reversed Z with no far plane).
 pub fn view_proj(camera: &Camera, aspect: f32) -> Mat4 {
-    glam::camera::rh::proj::directx::perspective(
+    glam::camera::rh::proj::directx::perspective_infinite_reverse(
         camera.fov_y_radians,
         aspect,
         camera.near,
-        camera.far,
     ) * camera.view()
 }
 

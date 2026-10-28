@@ -21,8 +21,10 @@ fn vs_sky(@builtin(vertex_index) index: u32) -> VsOut {
 }
 
 fn sky(in: VsOut) -> vec3<f32> {
-    let far = frame.inv_view_proj * vec4<f32>(in.ndc, 1.0, 1.0);
-    let dir = normalize(far.xyz / far.w - frame.camera_pos.xyz);
+    // The pixel's point at infinity: with reversed Z it is at depth 0, its w is
+    // 0 and its xyz the view direction, which stays exact however far the
+    // camera is from the origin.
+    let dir = normalize((frame.inv_view_proj * vec4<f32>(in.ndc, 0.0, 1.0)).xyz);
     var c: vec3<f32>;
     if (dir.y >= 0.0) {
         c = mix(frame.sky_horizon.rgb, frame.sky_zenith.rgb, sqrt(dir.y));

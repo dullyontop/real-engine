@@ -58,8 +58,11 @@ type Key = (usize, u32, u32);
 
 /// The camera's view of a frame.
 pub(super) struct View {
+    /// The projection the GPU draws with: reversed Z, no far plane.
     pub(super) projection: Mat4,
     pub(super) view_proj: Mat4,
+    /// What the camera sees, out to its `far`, for culling.
+    pub(super) frustum: frame::Frustum,
     pub(super) camera_pos: Vec3,
 }
 
@@ -75,6 +78,7 @@ impl View {
         Ok(View {
             projection,
             view_proj: projection * snapshot.camera.view(),
+            frustum: frame::Frustum::of_camera(&snapshot.camera, aspect),
             camera_pos: snapshot.camera.position(),
         })
     }
@@ -299,7 +303,6 @@ impl Renderer {
                 layers,
             );
         }
-        let frustum = frame::Frustum::new(&view.view_proj);
         let samples = self.sample_count();
         prepared.samples = samples;
         report.stats.samples = samples;
@@ -325,7 +328,13 @@ impl Renderer {
         }
 
         self.resolve_draws(
-            device, prepared, snapshot, &frustum, camera_pos, extras, report,
+            device,
+            prepared,
+            snapshot,
+            &view.frustum,
+            camera_pos,
+            extras,
+            report,
         );
         self.world_quads(prepared, snapshot, camera_pos, report);
         batch(prepared);

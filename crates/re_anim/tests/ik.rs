@@ -121,6 +121,14 @@ fn degenerate_inputs_give_finite_rotations() {
         (p, p + Vec3::X, p + Vec3::X * 2.0, p, Some(p)),
         // non-finite target
         (p, p + Vec3::X, p + Vec3::X * 2.0, Vec3::NAN, None),
+        // finite points whose bones are infinitely long
+        (
+            Vec3::splat(-f32::MAX),
+            Vec3::splat(f32::MAX),
+            Vec3::splat(-f32::MAX),
+            Vec3::ZERO,
+            None,
+        ),
     ];
     for (root, mid, end, target, pole) in cases {
         let (r1, r2) = two_bone(root, mid, end, target, pole);
