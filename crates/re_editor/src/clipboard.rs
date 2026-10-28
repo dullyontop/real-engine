@@ -603,19 +603,34 @@ fn keep_world_transform(w: &World, root: &mut EntityDoc, world: &[f32; 16], pare
     let Some(transform) = root.components.get_mut("Transform") else {
         return;
     };
-    let parent_world = parent
-        .and_then(|p| w.entity(p).ok())
-        .and_then(|p| w.ecs.get::<GlobalTransform>(p))
-        .map_or(Mat4::IDENTITY, |g| Mat4::from(g.0));
-    let local = parent_world.inverse() * Mat4::from_cols_array(world);
-    if !local.is_finite() {
+    let parent = parent.and_then(|p| w.entity(p).ok());
+    let Some((t, q, s)) = local_under(w, Mat4::from_cols_array(world), parent) else {
         return;
-    }
-    let (s, q, t) = local.to_scale_rotation_translation();
+    };
     let list = |v: &[f32]| Doc::List(v.iter().map(|x| Doc::F32(*x)).collect());
     transform.insert("translation".into(), list(&t.to_array()));
-    transform.insert("rotation".into(), list(&q.normalize().to_array()));
+    transform.insert("rotation".into(), list(&q.to_array()));
     transform.insert("scale".into(), list(&s.to_array()));
+}
+
+/// The local translation, rotation and scale that put an entity at `world`
+/// under `parent` (the root when `None`), from the parent's
+/// `GlobalTransform`. `None` when that cannot be inverted (a parent scaled
+/// to nothing).
+pub(crate) fn local_under(
+    w: &World,
+    world: Mat4,
+    parent: Option<Entity>,
+) -> Option<(Vec3, Quat, Vec3)> {
+    let parent_world = parent
+        .and_then(|p| w.ecs.get::<GlobalTransform>(p))
+        .map_or(Mat4::IDENTITY, |g| Mat4::from(g.0));
+    let local = parent_world.inverse() * world;
+    if !local.is_finite() {
+        return None;
+    }
+    let (s, q, t) = local.to_scale_rotation_translation();
+    Some((t, q.normalize(), s))
 }
 
 /// A root's local `Transform` as written in its document (defaults for

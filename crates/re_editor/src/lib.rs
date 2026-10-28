@@ -8,7 +8,9 @@
 //!   Ctrl+click adds or removes one and Shift+click a run of rows; F2 or a
 //!   double-click renames an entity in its row, and a right click opens a
 //!   menu (rename, duplicate, copy, cut, paste, paste as child, delete,
-//!   focus, select children);
+//!   focus, select children); dragging rows moves entities under a row,
+//!   beside it or to the root, keeping where they stand; a search shows the
+//!   entities whose name, id or component matches, with the rows above them;
 //! * **inspector**: the active entity's note and components, one widget per
 //!   [`FieldType`](re_reflect::FieldType), generated from the registry's
 //!   [`ComponentSchema`](re_reflect::ComponentSchema)s;
@@ -60,7 +62,7 @@
 //! the centre of the selection's bounds. A drag moves each selected entity
 //! without a selected ancestor as it goes, with `scene.apply` edits that
 //! share one coalesce key, so the drag is one undo step; Escape puts them
-//! back.
+//! back. Snapping takes the steps set in the toolbar's Steps menu.
 //!
 //! Every action is a command dispatched through
 //! [`App::dispatch`](re_app::App::dispatch), so each one is a single undo step
@@ -89,6 +91,7 @@ mod headless;
 pub mod layout;
 mod overlay;
 mod panels;
+mod reparent;
 mod selection;
 mod socket;
 mod view;
@@ -211,6 +214,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         code: codes::REFERENCE_CLEARED,
         title: "A pasted reference was cleared",
         page: include_str!("../explain/RE8808.md"),
+    },
+    DiagInfo {
+        code: codes::MOVE_REFUSED,
+        title: "The Hierarchy did not move an entity",
+        page: include_str!("../explain/RE8809.md"),
     },
 ];
 

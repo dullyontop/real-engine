@@ -166,6 +166,11 @@ pub(crate) fn note_key(id: &str) -> String {
     format!("note\u{1f}{id}")
 }
 
+/// The key of the Hierarchy's search field in [`Pending::rects`].
+pub(crate) fn search_key() -> String {
+    "search\u{1f}hierarchy".to_string()
+}
+
 /// The key of one context menu item in [`Pending::rects`].
 pub(crate) fn menu_key(label: &str) -> String {
     format!("menu\u{1f}{label}")
@@ -355,8 +360,19 @@ impl Editor {
             .and_then(|r| r.first().copied())
     }
 
+    /// Where the Hierarchy drew its search field in the last frame (in egui
+    /// points), if it was shown.
+    pub fn hierarchy_search(&self) -> Option<egui::Rect> {
+        self.pending
+            .rects
+            .get(&search_key())
+            .and_then(|r| r.first().copied())
+    }
+
     /// Where the open context menu drew its item `label` in the last frame
-    /// (in egui points), if a menu with that item was open.
+    /// (in egui points), if a menu with that item was open. The toolbar's
+    /// Steps button is `"Steps"`, and its menu's fields `"Move step"`,
+    /// `"Rotate step"` and `"Scale step"`.
     pub fn menu_item(&self, label: &str) -> Option<egui::Rect> {
         self.pending
             .rects
@@ -626,6 +642,34 @@ impl Editor {
                 self.log_diagnostic(&d);
                 None
             }
+        }
+    }
+
+    /// The view state panel `panel` keeps in the layout, or its defaults when
+    /// the layout has none or it does not read.
+    pub(crate) fn panel_state<T: serde::de::DeserializeOwned + Default>(&self, panel: &str) -> T {
+        self.panel_states
+            .get(panel)
+            .and_then(|v| T::deserialize(v).ok())
+            .unwrap_or_default()
+    }
+
+    /// Keeps panel `panel`'s view state, written with the layout. A state
+    /// equal to its defaults is left out of the file.
+    pub(crate) fn set_panel_state<T: serde::Serialize + Default + PartialEq>(
+        &mut self,
+        panel: &str,
+        state: &T,
+    ) {
+        let value = (*state != T::default())
+            .then(|| serde_json::to_value(state).ok())
+            .flatten();
+        if self.panel_states.get(panel) != value.as_ref() {
+            match value {
+                Some(v) => self.panel_states.insert(panel.to_string(), v),
+                None => self.panel_states.remove(panel),
+            };
+            self.layout_dirty = true;
         }
     }
 
