@@ -185,6 +185,11 @@ pub const DIAGNOSTICS: &[DiagInfo] = &[
         title: "A parameter's value does not fit its schema",
         page: include_str!("../explain/RE8850.md"),
     },
+    DiagInfo {
+        code: codes::BUILDER_READ_ONLY,
+        title: "A builder graph is read-only on the canvas",
+        page: include_str!("../explain/RE8852.md"),
+    },
 ];
 
 /// The code range this crate owns (ARCHITECTURE §7).

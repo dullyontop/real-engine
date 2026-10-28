@@ -22,6 +22,15 @@
 //! so the drag is still one undo step. A parameter the shown source
 //! overrides (`GraphSource.params`) is marked, and its menu removes the
 //! override.
+//!
+//! A source whose graph a builder script makes (`GraphSource.builder`) is
+//! listed too, marked "builder", with the graph the script made laid out
+//! by depth. It is read-only: no menus, no wiring, disabled widgets, and
+//! snarl's own changes (a node moved, a wire rerouted) are dropped when the
+//! button is up; collapsing stays. Trying to edit it notes `RE8852` once.
+//! "Open script" names the script in the console, and "Convert to a graph
+//! file" sends `proc.convert_builder` with the positions the nodes are drawn
+//! at, after which the source reads the file and the canvas edits it.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -30,14 +39,15 @@ use egui::{Color32, Id, RichText, UiBuilder};
 use egui_snarl::ui::{PinInfo, PinWireInfo, SnarlPin, SnarlStyle, SnarlViewer, SnarlWidget};
 use egui_snarl::{InPin, InPinId, NodeId, OutPin, OutPinId, Snarl};
 use re_app::App;
-use re_core::Location;
+use re_core::{Diagnostic, Location};
 use re_proc::{GraphStore, NodeDef, NodeRegistry, PortType};
 use re_reflect::Value;
 use re_scene::World;
 use re_types::graph::{EdgeDoc, GraphDoc, NodeDoc};
 use serde_json::{Map, Value as Json, json};
 
-use crate::editor::{Action, Editor, command};
+use crate::codes;
+use crate::editor::{Action, Editor, LineKind, command};
 use crate::layout::Collapsed;
 use crate::widgets::schema::{self, Change, Env, Shape};
 
@@ -73,6 +83,9 @@ pub enum CanvasSpot<'a> {
     /// `"set"` a nullable value's checkbox, `"=<value>"` an item of a choice's
     /// list.
     Param(&'a str, &'a str, &'a str),
+    /// A button above the canvas, by its text: `"Open script"` and
+    /// `"Convert to a graph file"` for a builder source.
+    Button(&'a str),
 }
 
 impl CanvasSpot<'_> {
@@ -84,6 +97,7 @@ impl CanvasSpot<'_> {
             CanvasSpot::Output(n) => format!("out\u{1f}{n}"),
             CanvasSpot::MenuItem(m) => format!("menu\u{1f}{m}"),
             CanvasSpot::Param(n, p, part) => format!("param\u{1f}{n}\u{1f}{p}\u{1f}{part}"),
+            CanvasSpot::Button(b) => format!("button\u{1f}{b}"),
         }
     }
 }
@@ -114,6 +128,8 @@ pub(crate) struct Canvas {
     /// The values already reported as not fitting their parameter
     /// (`RE8850`), so each is reported once.
     misfits: HashSet<String>,
+    /// The builder sources already noted as read-only (`RE8852`).
+    noted: HashSet<String>,
 }
 
 impl Canvas {
@@ -267,24 +283,54 @@ impl Editor {
     }
 }
 
-/// The procedural sources that read a graph file, as `(id, path)`, sorted.
-fn graph_sources(world: &World) -> Vec<(String, String)> {
+/// A procedural source the canvas can show.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Shown {
+    id: String,
+    /// The graph file; for a builder source, its script. It keys the view
+    /// state (collapsed nodes) and the widgets.
+    path: String,
+    /// True when a builder script makes the graph (`GraphSource.builder`, and
+    /// no `GraphSource.graph`): the canvas shows it read-only.
+    builder: bool,
+}
+
+/// The procedural sources that read a graph file or whose graph a builder
+/// script makes, sorted by id.
+fn graph_sources(world: &World) -> Vec<Shown> {
     let Some(key) = world.registry.try_key("GraphSource") else {
         return Vec::new();
     };
-    let mut out: Vec<(String, String)> = world
+    let field = |id: &str, name: &str| match world.get(id, "GraphSource", name) {
+        Ok(Value::Str(p)) if !p.trim().is_empty() => Some(re_scene::doc_path(&p).unwrap_or(p)),
+        _ => None,
+    };
+    let mut out: Vec<Shown> = world
         .ids()
         .iter()
         .filter(|(_, e)| world.registry.has(&world.ecs, *e, key))
-        .filter_map(|(id, _)| match world.get(id, "GraphSource", "graph") {
-            Ok(Value::Str(p)) if !p.trim().is_empty() => {
-                Some((id.to_string(), re_scene::doc_path(&p).unwrap_or(p)))
-            }
-            _ => None,
+        .filter_map(|(id, _)| {
+            let (path, builder) = match field(id, "graph") {
+                Some(path) => (path, false),
+                None => (field(id, "builder")?, true),
+            };
+            Some(Shown {
+                id: id.to_string(),
+                path,
+                builder,
+            })
         })
         .collect();
     out.sort();
     out
+}
+
+/// The hover text of what a builder graph does not let the person do.
+fn read_only_text(script: &str) -> String {
+    format!(
+        "The builder script {script} makes this graph, so it is read-only here: edit the \
+         script, or \"Convert to a graph file\" to edit the graph on the canvas"
+    )
 }
 
 /// Draws the node canvas.
@@ -301,29 +347,70 @@ pub(crate) fn ui(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Ve
         canvas.view = None;
         ui.label(
             RichText::new(
-                "No procedural source in this scene reads a graph file (GraphSource.graph).",
+                "No procedural source in this scene has a graph (GraphSource.graph or \
+                 GraphSource.builder).",
             )
             .weak(),
         );
         return;
     };
-    let (source, path) = canvas
+    let Shown {
+        id: source,
+        path,
+        builder,
+    } = canvas
         .source
         .as_ref()
-        .and_then(|s| sources.iter().find(|(id, _)| id == s))
+        .and_then(|s| sources.iter().find(|shown| shown.id == *s))
         .unwrap_or(first)
         .clone();
     let mut chosen = source.clone();
+    let (mut open_script, mut convert) = (false, false);
     ui.horizontal(|ui| {
+        let mark = |builder: bool| if builder { "  (builder)" } else { "" };
         egui::ComboBox::from_id_salt("re_editor.canvas.source")
-            .selected_text(&source)
+            .selected_text(format!("{source}{}", mark(builder)))
             .show_ui(ui, |ui| {
-                for (id, p) in &sources {
-                    ui.selectable_value(&mut chosen, id.clone(), format!("{id}  {p}"));
+                for s in &sources {
+                    let text = format!("{}  {}{}", s.id, s.path, mark(s.builder));
+                    ui.selectable_value(&mut chosen, s.id.clone(), text);
                 }
             });
         ui.label(RichText::new(&path).weak());
-        if world.unsaved_docs().contains(&path) {
+        if builder {
+            ui.label(RichText::new("builder").italics())
+                .on_hover_text(read_only_text(&path));
+            let r = ui
+                .button("Open script")
+                .on_hover_text("Open the builder script");
+            record(
+                &canvas.spots,
+                ui.ctx(),
+                ui.layer_id(),
+                CanvasSpot::Button("Open script").key(),
+                r.rect,
+            );
+            open_script = r.clicked();
+            let r = ui
+                .add_enabled(
+                    app.commands().spec("proc.convert_builder").is_some(),
+                    egui::Button::new("Convert to a graph file"),
+                )
+                .on_hover_text(
+                    "Make a graph file holding this graph (graphs/<source>.graph.json), as the \
+                     canvas lays it out, and read the source's graph from it from now on \
+                     (proc.convert_builder; one undo step). The script is kept.",
+                )
+                .on_disabled_hover_text("proc.convert_builder is not registered in this build");
+            record(
+                &canvas.spots,
+                ui.ctx(),
+                ui.layer_id(),
+                CanvasSpot::Button("Convert to a graph file").key(),
+                r.rect,
+            );
+            convert = r.clicked();
+        } else if world.unsaved_docs().contains(&path) {
             ui.label(RichText::new("unsaved").italics())
                 .on_hover_text("Saving the scene writes the graph file");
         }
@@ -381,6 +468,7 @@ pub(crate) fn ui(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Ve
     let files = app.files().clone();
     let assets = move |kind: &str| schema::project_assets(&files, kind);
     let overrides = overrides(world, &source);
+    let read_only = builder.then(|| read_only_text(&path));
     let mut viewer = Viewer {
         path: &path,
         source: &source,
@@ -388,6 +476,8 @@ pub(crate) fn ui(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Ve
         spots: canvas.spots.clone(),
         overrides: &overrides,
         assets: &assets,
+        read_only: read_only.as_deref(),
+        tried: false,
         queued: Vec::new(),
         edits: Vec::new(),
     };
@@ -398,7 +488,7 @@ pub(crate) fn ui(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Ve
         .id_salt(("re_editor.canvas", &path))
         .style(style)
         .show(&mut view.snarl, &mut viewer, ui);
-    let (queued, edits) = (viewer.queued, viewer.edits);
+    let (queued, edits, tried) = (viewer.queued, viewer.edits, viewer.tried);
 
     // Collapsed nodes, by id.
     let collapsed: BTreeSet<String> = view
@@ -415,6 +505,54 @@ pub(crate) fn ui(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Ve
         canvas.collapsed.remove(&path);
     } else {
         canvas.collapsed.insert(path.clone(), collapsed);
+    }
+
+    if builder {
+        // Read-only: nothing is sent, and what snarl changed itself (a node
+        // moved, a wire rerouted) is dropped once the button is up.
+        let moved = !down
+            && view.at_press.take().is_some_and(|before| {
+                before.iter().any(|(node, was)| {
+                    view.snarl
+                        .get_node_info(*node)
+                        .is_some_and(|info| info.pos.round() != was.round())
+                })
+            });
+        let rewired = !down
+            && view.snarl.wires().collect::<HashSet<_>>()
+                != view.wires.keys().copied().collect::<HashSet<_>>();
+        if moved || rewired {
+            view.stale = true;
+        }
+        if (tried || moved || rewired || !queued.is_empty() || !edits.is_empty())
+            && canvas.noted.insert(source.clone())
+        {
+            actions.push(Action::Report(read_only_note(&source, &path)));
+        }
+        if convert {
+            // The positions the nodes are drawn at, so the file shows the
+            // graph where it is now.
+            let layout: BTreeMap<String, [f32; 2]> = view
+                .snarl
+                .nodes_pos_ids()
+                .map(|(_, p, n)| (n.id.clone(), [p.x.round(), p.y.round()]))
+                .collect();
+            let args = json!({ "source": source, "layout": layout });
+            actions.push(command("proc.convert_builder", args.clone()));
+            canvas.log.push(("proc.convert_builder".into(), args));
+            view.stale = true;
+        }
+        trim(&mut canvas.log);
+        if open_script {
+            ed.log(
+                LineKind::Info,
+                format!("The builder script of `{source}` is {path}"),
+            );
+        }
+        if layout_changed {
+            ed.layout_changed();
+        }
+        return;
     }
 
     // Wires snarl changed itself (a Ctrl-drag reroute), once the button is up.
@@ -519,13 +657,34 @@ pub(crate) fn ui(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &mut Ve
         actions.push(command(&name, args.clone()));
         canvas.log.push((name, args));
     }
-    if canvas.log.len() > LOG {
-        let extra = canvas.log.len() - LOG;
-        canvas.log.drain(..extra);
-    }
+    trim(&mut canvas.log);
     if layout_changed {
         ed.layout_changed();
     }
+}
+
+/// Keeps the last [`LOG`] commands of `log`.
+fn trim(log: &mut Vec<(String, Json)>) {
+    if log.len() > LOG {
+        let extra = log.len() - LOG;
+        log.drain(..extra);
+    }
+}
+
+/// `RE8852`: source `id`'s graph, made by `script`, is read-only here.
+fn read_only_note(id: &str, script: &str) -> Diagnostic {
+    Diagnostic::note(
+        codes::BUILDER_READ_ONLY,
+        format!(
+            "the graph of `{id}` is made by the builder script {script}, so the canvas \
+             shows it read-only"
+        ),
+    )
+    .at(Location::entity(id.to_string()))
+    .with_hint(
+        "edit the script, or press \"Convert to a graph file\" to edit the graph on the \
+         canvas; parameter overrides still work in the Procedural panel",
+    )
 }
 
 fn connect_args(
@@ -795,6 +954,11 @@ struct Viewer<'a> {
     overrides: &'a Map<String, Json>,
     /// The project's files of an asset kind, for asset pickers.
     assets: &'a dyn Fn(&str) -> Vec<String>,
+    /// Why nothing can be edited (a builder graph), shown on the disabled
+    /// widgets.
+    read_only: Option<&'a str>,
+    /// An edit was tried on a read-only graph.
+    tried: bool,
     queued: Vec<Queued>,
     edits: Vec<ParamEdit>,
 }
@@ -876,7 +1040,7 @@ impl Viewer<'_> {
             CanvasSpot::Param(&node.id, &row.name, "name"),
             name.rect,
         );
-        let editable = node.locked.is_none();
+        let editable = node.locked.is_none() && self.read_only.is_none();
         if editable && (over.is_some() || row.value.is_some()) {
             name.context_menu(|ui| {
                 if over.is_some() {
@@ -916,7 +1080,7 @@ impl Viewer<'_> {
                 let r = ui.add_enabled_ui(editable && !row.unknown, |ui| {
                     schema::edit(ui, id, &row.shape, &shown, &mut env)
                 });
-                if let Some(why) = &node.locked {
+                if let Some(why) = self.read_only.or(node.locked.as_deref()) {
                     r.response.on_disabled_hover_text(why);
                 }
                 r.inner
@@ -1061,7 +1225,7 @@ impl SnarlViewer<NodeView> for Viewer<'_> {
     }
 
     fn has_graph_menu(&mut self, _pos: egui::Pos2, _snarl: &mut Snarl<NodeView>) -> bool {
-        true
+        self.read_only.is_none()
     }
 
     fn show_graph_menu(
@@ -1103,7 +1267,7 @@ impl SnarlViewer<NodeView> for Viewer<'_> {
     }
 
     fn has_node_menu(&mut self, _node: &NodeView) -> bool {
-        true
+        self.read_only.is_none()
     }
 
     fn show_node_menu(
@@ -1126,20 +1290,36 @@ impl SnarlViewer<NodeView> for Viewer<'_> {
     }
 
     fn connect(&mut self, from: &OutPin, to: &InPin, _snarl: &mut Snarl<NodeView>) {
+        if self.read_only.is_some() {
+            self.tried = true;
+            return;
+        }
         self.queued.push(Queued::Connect(from.id, to.id));
     }
 
     fn disconnect(&mut self, from: &OutPin, to: &InPin, _snarl: &mut Snarl<NodeView>) {
+        if self.read_only.is_some() {
+            self.tried = true;
+            return;
+        }
         self.queued.push(Queued::Disconnect(from.id, to.id));
     }
 
     fn drop_outputs(&mut self, pin: &OutPin, _snarl: &mut Snarl<NodeView>) {
+        if self.read_only.is_some() {
+            self.tried = true;
+            return;
+        }
         for to in &pin.remotes {
             self.queued.push(Queued::Disconnect(pin.id, *to));
         }
     }
 
     fn drop_inputs(&mut self, pin: &InPin, _snarl: &mut Snarl<NodeView>) {
+        if self.read_only.is_some() {
+            self.tried = true;
+            return;
+        }
         for from in &pin.remotes {
             self.queued.push(Queued::Disconnect(*from, pin.id));
         }

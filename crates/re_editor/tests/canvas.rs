@@ -641,3 +641,190 @@ fn a_value_of_another_type_is_shown_as_json_text() {
     );
     assert!(params(&app, "h")["height"].as_f64().unwrap() > 3.5);
 }
+
+/// A builder script that makes the graph [`graph`] holds.
+const BUILDER: &str = r#"local g = proc.graph("flat")
+local h = g:node("terrain.heightfield", { size = 9, cell = 4.0, height = 2.0 }, nil, "h")
+local mask = g:node("terrain.island_mask", { size = 9 }, nil, "mask")
+local land = g:node("field.combine", { op = "mul" }, { a = h, b = mask }, "land")
+g:node("terrain.mesh", {}, { field = land }, "ground")
+g:node("terrain.heightfield", { size = 9, cell = 4.0, height = 0.0 }, nil, "flat")
+return g
+"#;
+
+const SCRIPT: &str = "scripts/tools/flat.luau";
+
+/// A project whose island's graph the builder script [`BUILDER`] makes.
+fn builder_project() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    for d in ["scenes", "scripts/tools"] {
+        std::fs::create_dir_all(dir.path().join(d)).unwrap();
+    }
+    std::fs::write(
+        dir.path().join("real.toml"),
+        "[project]\nname = \"canvas\"\n",
+    )
+    .unwrap();
+    let scene = SCENE.replace(
+        r#""graph": "graphs/flat.graph.json""#,
+        &format!(r#""builder": "{SCRIPT}""#),
+    );
+    std::fs::write(dir.path().join("scenes/main.scene.json"), scene).unwrap();
+    std::fs::write(dir.path().join(SCRIPT), BUILDER).unwrap();
+    dir
+}
+
+/// Regenerates the island; the hash of the fragment its graph made.
+fn fragment(app: &mut App) -> String {
+    let out = app.dispatch(
+        "graph.regenerate",
+        json!({ "source": "island" }),
+        false,
+        &AllowAll,
+        Origin::User,
+    );
+    assert!(out.ok, "{:?}", out.diagnostics);
+    app.world()
+        .ecs
+        .resource::<re_proc::GraphStore>()
+        .report("island")
+        .and_then(|r| r.fragment_hash)
+        .expect("a fragment hash")
+}
+
+fn source_field(app: &App, name: &str) -> String {
+    match app.world().get("island", "GraphSource", name) {
+        Ok(re_reflect::Value::Str(s)) => s,
+        other => panic!("GraphSource.{name}: {other:?}"),
+    }
+}
+
+/// The console lines that mention `text`.
+fn lines_with(ed: &HeadlessEditor, text: &str) -> usize {
+    ed.editor
+        .console()
+        .iter()
+        .filter(|l| l.text.contains(text))
+        .count()
+}
+
+#[test]
+fn a_builder_graph_is_read_only_until_it_is_converted_to_a_graph_file() {
+    let dir = builder_project();
+    let mut app = open(dir.path());
+    let built = fragment(&mut app);
+    let mut ed = editor(&mut app);
+    assert_eq!(ed.editor.canvas_source(), Some("island"));
+    let none = egui::Modifiers::NONE;
+
+    // Laid out by depth, as a graph file without positions is.
+    let x = |ed: &HeadlessEditor, n: &str| spot(ed, CanvasSpot::Collapse(n)).x;
+    assert!(x(&ed, "h") < x(&ed, "land") && x(&ed, "land") < x(&ed, "ground"));
+
+    // Nothing sends a command: a wire dragged, a node moved, the menus, a
+    // parameter's widget dragged and clicked.
+    let (from, to) = (
+        spot(&ed, CanvasSpot::Output("flat")),
+        spot(&ed, CanvasSpot::Input("ground", "field")),
+    );
+    drag(&mut ed, &mut app, from, to, none);
+    let header = spot(&ed, CanvasSpot::Header("flat"));
+    drag(
+        &mut ed,
+        &mut app,
+        header,
+        header + egui::vec2(80.0, 40.0),
+        none,
+    );
+    assert_eq!(
+        spot(&ed, CanvasSpot::Header("flat")),
+        header,
+        "the node goes back"
+    );
+    let land = spot(&ed, CanvasSpot::Header("land"));
+    right_click(&mut ed, &mut app, land);
+    assert!(
+        ed.editor
+            .canvas_spot(CanvasSpot::MenuItem("Remove node"))
+            .is_none()
+    );
+    let canvas = ed.editor.rects().get(Panel::Canvas).unwrap();
+    right_click(
+        &mut ed,
+        &mut app,
+        canvas.right_bottom() - egui::vec2(200.0, 60.0),
+    );
+    assert!(
+        ed.editor
+            .canvas_spot(CanvasSpot::MenuItem("field"))
+            .is_none()
+    );
+    let height = spot(&ed, CanvasSpot::Param("h", "height", ""));
+    drag(
+        &mut ed,
+        &mut app,
+        height,
+        height + egui::vec2(60.0, 0.0),
+        none,
+    );
+    click(&mut ed, &mut app, height);
+    assert!(ed.editor.canvas_commands().is_empty());
+    assert!(app.history().log().is_empty());
+    assert_eq!(lines_with(&ed, "RE8852"), 1, "{:?}", ed.editor.console());
+
+    // "Open script" names the script.
+    let open_script = spot(&ed, CanvasSpot::Button("Open script"));
+    click(&mut ed, &mut app, open_script);
+    let named = format!("is {SCRIPT}");
+    assert_eq!(lines_with(&ed, &named), 1, "{:?}", ed.editor.console());
+
+    // "Convert to a graph file": one command, with the positions the nodes
+    // are drawn at, so they stay where they are.
+    let convert = spot(&ed, CanvasSpot::Button("Convert to a graph file"));
+    click(&mut ed, &mut app, convert);
+    assert_eq!(
+        sent(&ed, 0),
+        ["proc.convert_builder"],
+        "{:?}",
+        ed.editor.console()
+    );
+    assert_eq!(app.history().log().len(), 1);
+    const FILE: &str = "graphs/island.graph.json";
+    assert_eq!(source_field(&app, "graph"), FILE);
+    assert_eq!(source_field(&app, "builder"), "");
+    let doc: GraphDoc =
+        serde_json::from_value(app.world().doc(FILE).expect("open").value.clone()).unwrap();
+    assert_eq!(doc.layout.len(), 5, "{:?}", doc.layout);
+    assert_eq!(spot(&ed, CanvasSpot::Header("land")), land);
+    assert!(
+        ed.editor
+            .canvas_spot(CanvasSpot::Button("Open script"))
+            .is_none()
+    );
+    assert_eq!(fragment(&mut app), built);
+
+    // The canvas edits the file now.
+    let (from, to) = (
+        spot(&ed, CanvasSpot::Output("flat")),
+        spot(&ed, CanvasSpot::Input("ground", "field")),
+    );
+    drag(&mut ed, &mut app, from, to, none);
+    assert_eq!(sent(&ed, 1), ["graph.connect"], "{:?}", ed.editor.console());
+
+    // Two undos: the wire, then the conversion. The builder makes the graph
+    // again, and the canvas shows it read-only.
+    for _ in 0..2 {
+        assert!(ed.editor.undo(&mut app, &AllowAll).ok);
+    }
+    for _ in 0..2 {
+        idle(&mut ed, &mut app);
+    }
+    assert_eq!(source_field(&app, "builder"), SCRIPT);
+    assert!(app.world().doc(FILE).expect("open").is_absent());
+    assert!(
+        ed.editor
+            .canvas_spot(CanvasSpot::Button("Open script"))
+            .is_some()
+    );
+    assert_eq!(fragment(&mut app), built);
+}

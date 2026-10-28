@@ -27,3 +27,7 @@ pub const LAYOUT_UNREADABLE: Code = Code::new("RE8804");
 /// parse or is not of its type, so nothing was changed; or the value in the
 /// file is not of its type, so it is shown as JSON text.
 pub const PARAM_VALUE: Code = Code::new("RE8850");
+
+/// A builder script makes the graph shown on the node canvas, so the canvas
+/// shows it read-only (a note, once per source).
+pub const BUILDER_READ_ONLY: Code = Code::new("RE8852");
