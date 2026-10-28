@@ -56,6 +56,15 @@ pub fn backend_name(backend: wgpu::Backend) -> &'static str {
     }
 }
 
+/// True for a warning the renderer gave about a view it drew: a renderer code
+/// that is not an error, which [`Graphics`] passes to the app's diagnostics
+/// once per code. Reports that keep only the errors of a run they repeat
+/// (`real verify`'s goldens stage, `real run`'s screenshot) keep these too,
+/// since nothing else reports them (ADR-0022).
+pub fn is_renderer_warning(d: &Diagnostic) -> bool {
+    !d.is_error() && re_render::CODE_RANGE.contains(&d.code.number())
+}
+
 /// What the renderer drew since the last [`Graphics::take_drawn`]: the
 /// PerfReport's renderer samples and the warnings for the app's diagnostics
 /// (ADR-0022).

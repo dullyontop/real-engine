@@ -134,10 +134,8 @@ fn drawn_frames_report_their_submission_time() {
     assert_eq!(app.perf_report().render_submit.samples, 0);
 }
 
-/// The renderer's warnings reach the app's diagnostics once per code, and the
-/// PerfReport counts every one (ADR-0022).
-#[test]
-fn renderer_warnings_are_reported_once_and_counted() {
+/// [`SCENE`] with ten point lights, two more than a frame draws (`RE6017`).
+fn scene_with_ten_lamps() -> String {
     let lamps: String = (0..10)
         .map(|i| {
             format!(
@@ -148,8 +146,14 @@ fn renderer_warnings_are_reported_once_and_counted() {
             )
         })
         .collect();
-    let scene = SCENE.replace("\n  ]\n}", &format!("{lamps}\n  ]\n}}"));
-    let dir = project(&scene);
+    SCENE.replace("\n  ]\n}", &format!("{lamps}\n  ]\n}}"))
+}
+
+/// The renderer's warnings reach the app's diagnostics once per code, and the
+/// PerfReport counts every one (ADR-0022).
+#[test]
+fn renderer_warnings_are_reported_once_and_counted() {
+    let dir = project(&scene_with_ten_lamps());
     let mut app = open(dir.path());
     app.ensure_graphics().unwrap();
     app.run_headless(Some(1), None).unwrap();
@@ -444,6 +448,48 @@ fn a_changed_material_file_is_uploaded_again() {
         b > 200 && r < 40,
         "the cube is blue now: {:?}",
         image.pixel(80, 60)
+    );
+}
+
+/// The goldens stage is the only one that draws, so it reports the
+/// renderer's warnings, once per code over all its replays, without failing
+/// on them (ADR-0022).
+#[test]
+fn the_goldens_stage_reports_the_renderers_warnings_once() {
+    let dir = project(&scene_with_ten_lamps());
+    std::fs::create_dir_all(dir.path().join("tests/replays")).unwrap();
+    for name in ["a", "b"] {
+        std::fs::write(
+            dir.path().join(format!("tests/replays/{name}.replay.json")),
+            format!(
+                r#"{{ "version": 1, "seed": 1, "frames": 10,
+                     "checks": [ {{ "frame": 5, "screenshot": "tests/goldens/{{backend}}/{name}.png" }} ] }}"#
+            ),
+        )
+        .unwrap();
+    }
+    let config = AppConfig::load(dir.path()).unwrap();
+    let update = re_app::VerifyOptions {
+        update_goldens: true,
+        ..re_app::VerifyOptions::default()
+    };
+    let report = re_app::verify::run_project(dir.path(), &config, &update, &[]);
+    let goldens = report.stage("goldens").unwrap();
+    assert!(goldens.ok, "{goldens:#?}");
+    let too_many: Vec<_> = goldens
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == re_render::codes::TOO_MANY_LIGHTS)
+        .collect();
+    assert_eq!(too_many.len(), 1, "{goldens:#?}");
+    assert!(!too_many[0].is_error());
+    // The boot run draws nothing, so its stage has no renderer warning.
+    let boot = report.stage("boot").unwrap();
+    assert!(
+        boot.diagnostics
+            .iter()
+            .all(|d| !re_app::gfx::is_renderer_warning(d)),
+        "{boot:#?}"
     );
 }
 

@@ -670,10 +670,12 @@ fn play(mut app: App, options: PlayOptions, late: &mut dyn FnMut() -> Vec<Diagno
             Ok(_) => report["screenshot"] = serde_json::json!(path.display().to_string()),
             Err(d) => diagnostics.push(d),
         }
+        // The run reported its warnings; the screenshot adds its errors, and
+        // the renderer's warnings about what it drew (ADR-0022).
         diagnostics.extend(
             app.take_diagnostics()
                 .into_iter()
-                .filter(Diagnostic::is_error),
+                .filter(|d| d.is_error() || re_app::gfx::is_renderer_warning(d)),
         );
     }
     let extra = late();

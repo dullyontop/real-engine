@@ -18,7 +18,8 @@
 //! 5. `replays`: each `tests/replays/*.replay.json` runs twice from a fresh
 //!    start, and both runs must end with the same `state_hash`;
 //! 6. `goldens`: the replays' screenshot checks against
-//!    `tests/goldens/<backend>/`;
+//!    `tests/goldens/<backend>/`, with the renderer's warnings about what
+//!    they drew, once per code;
 //! 7. `perf`: the PerfReport of the boot run, checked against
 //!    `real.toml [verify.perf]` (warnings only in M1).
 //!
@@ -650,7 +651,7 @@ fn stage_goldens(project: &Path, config: &AppConfig, options: &VerifyOptions) ->
             .filter_map(|c| c.screenshot.clone().map(|s| (c.frame, s)))
             .collect();
         match app.run_headless(None, Some(doc)) {
-            Ok(run) => diags.extend(run.diagnostics.into_iter().filter(Diagnostic::is_error)),
+            Ok(run) => keep_from_rerun(&mut diags, run.diagnostics),
             Err(d) => {
                 diags.push(d);
                 continue;
@@ -767,17 +768,28 @@ fn stage_goldens(project: &Path, config: &AppConfig, options: &VerifyOptions) ->
             }
             results.push(result);
         }
-        diags.extend(
-            app.take_diagnostics()
-                .into_iter()
-                .filter(Diagnostic::is_error),
-        );
+        keep_from_rerun(&mut diags, app.take_diagnostics());
     }
     StageReport::new(
         "goldens",
         diags,
         json!({ "backend": backend, "checks": results }),
     )
+}
+
+/// Adds to the goldens stage's `diags` the errors of `found`, and the
+/// renderer's warnings of a code it has not reported yet. The stage runs the
+/// replays again, so their other warnings would repeat the earlier stages';
+/// but it is the only stage that draws, so the renderer's are its own
+/// (ADR-0022).
+fn keep_from_rerun(diags: &mut Vec<Diagnostic>, found: Vec<Diagnostic>) {
+    for d in found {
+        let new_warning = crate::gfx::is_renderer_warning(&d)
+            && !diags.iter().any(|e| !e.is_error() && e.code == d.code);
+        if d.is_error() || new_warning {
+            diags.push(d);
+        }
+    }
 }
 
 /// Stage 4: the project opens headless and runs its boot frames; the
