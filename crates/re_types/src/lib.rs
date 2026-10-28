@@ -69,7 +69,9 @@ pub use render::{
     MaterialHandle, MeshHandle, RenderSnapshot, SkinnedDrawItem, TextureData, TextureFormat,
     TextureHandle, TextureRef,
 };
-pub use replay::{RawReplayInput, ReplayCheck, ReplayCommand, ReplayDoc, ReplayInput};
+pub use replay::{
+    RawReplayInput, ReplayCheck, ReplayCommand, ReplayDoc, ReplayInput, SceneChange, SceneChangeKind,
+};
 
 /// Re-export of the glam version used in every contract type (glam 0.34, ADR-0028).
 pub use glam;
