@@ -58,8 +58,17 @@ pub(super) fn viewport(ed: &mut Editor, ui: &mut egui::Ui, app: &App, actions: &
 
     let selection = ed.selection.clone();
     let navigating = ed.nav.active();
-    ed.gizmo
-        .ui(ui, &response, &view, app, &selection, navigating, actions);
+    // A procedural handle under the pointer comes before the gizmo.
+    let claimed = procedural::viewport_claims(ed, ui, app, &view);
+    ed.gizmo.ui(
+        ui,
+        &response,
+        &view,
+        app,
+        &selection,
+        navigating || claimed,
+        actions,
+    );
     let taken = procedural::viewport_overlay(ed, ui, app, &view, actions);
 
     // Icons and the axis indicator, lit under the pointer unless the camera

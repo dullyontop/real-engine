@@ -46,13 +46,16 @@ use super::hierarchy::item;
 use crate::editor::{Action, Editor, Pending, command, menu_key};
 use crate::widgets::schema::{self, Change, Env, Shape};
 
+mod splines;
+
 /// Points the pointer is dragged across a seed strip per seed.
 const SCRUB: f32 = 8.0;
 /// A seed strip's least and greatest width, in points.
 const STRIP: (f32, f32) = (120.0, 360.0);
 
-/// A place in the Procedural panel, in egui points, as drawn in the last
-/// frame: for tests and tools that drive the panel with the pointer.
+/// A place in the Procedural panel, or of the procedural tools over the
+/// viewport, in egui points, as drawn in the last frame: for tests and tools
+/// that drive them with the pointer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProceduralSpot<'a> {
     /// A source's seed: drag it, or click it and type a seed.
@@ -78,6 +81,10 @@ pub enum ProceduralSpot<'a> {
     /// `(source, key, button)`, where the button is `"Clear"` (the key's
     /// structural overrides) or `"Restore"` (its deletion).
     Kept(&'a str, &'a str, &'a str),
+    /// A spline handle over the viewport: `(source, node, index)`, control
+    /// point `index` of the source's `path.spline` node `node`, shown while
+    /// the source, or an entity it generates, is the active selection.
+    SplinePoint(&'a str, &'a str, usize),
 }
 
 impl ProceduralSpot<'_> {
@@ -91,6 +98,9 @@ impl ProceduralSpot<'_> {
             }
             ProceduralSpot::Picker(s, part) => format!("proc\u{1f}picker\u{1f}{s}\u{1f}{part}"),
             ProceduralSpot::Kept(s, k, b) => format!("proc\u{1f}kept\u{1f}{s}\u{1f}{k}\u{1f}{b}"),
+            ProceduralSpot::SplinePoint(s, n, i) => {
+                format!("proc\u{1f}spline\u{1f}{s}\u{1f}{n}\u{1f}{i}")
+            }
         }
     }
 }
@@ -291,17 +301,30 @@ fn kept_rows(
         });
 }
 
-/// What the procedural tools draw over the viewport and the pointer input
-/// they take there (WP43), after the gizmo. Returns true when they took the
-/// pointer this frame, so the viewport does not also act on it. Nothing yet.
-pub(super) fn viewport_overlay(
-    _ed: &mut Editor,
-    _ui: &mut egui::Ui,
-    _app: &App,
-    _view: &crate::camera::View,
-    _actions: &mut Vec<Action>,
+/// True when the procedural tools take the pointer before the gizmo this
+/// frame ([`splines::claims`]): the viewport then leaves the gizmo unlit
+/// and its own clicks out.
+pub(super) fn viewport_claims(
+    ed: &Editor,
+    ui: &egui::Ui,
+    app: &App,
+    view: &crate::camera::View,
 ) -> bool {
-    false
+    splines::claims(ed, ui, app, view)
+}
+
+/// What the procedural tools draw over the viewport and the pointer input
+/// they take there, after the gizmo: the active source's spline handles
+/// ([`splines`]). Returns true when they took the pointer this frame, so the
+/// viewport does not also act on it.
+pub(super) fn viewport_overlay(
+    ed: &mut Editor,
+    ui: &mut egui::Ui,
+    app: &App,
+    view: &crate::camera::View,
+    actions: &mut Vec<Action>,
+) -> bool {
+    splines::overlay(ed, ui, app, view, actions)
 }
 
 /// The procedural entries of the Hierarchy's context menu for the row of

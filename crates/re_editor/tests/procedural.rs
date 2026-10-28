@@ -2,8 +2,9 @@
 //! pointer: the seed scrubber sends one `graph.regenerate` per release,
 //! overrides are edited with their parameter's widget, the picker adds one,
 //! a source's structural and deletion overrides are cleared and restored
-//! from their rows, and the Hierarchy's menu reverts, replaces, inserts,
-//! clears and bakes a source's output.
+//! from their rows, the Hierarchy's menu reverts, replaces, inserts, clears
+//! and bakes a source's output, and a road's control points are dragged in
+//! the viewport.
 //!
 //! These tests need a GPU adapter (lavapipe in CI); run them with
 //! `--test-threads=1`.
@@ -11,9 +12,11 @@
 use std::cell::RefCell;
 use std::path::Path;
 
+use glam::Vec3;
 use re_app::{App, AppConfig};
 use re_command::{AllowAll, CommandSpec, Origin, PolicyCheck};
 use re_core::Diagnostic;
+use re_editor::camera::EditorCamera;
 use re_editor::layout::PanelId;
 use re_editor::{HeadlessEditor, Panel, ProceduralSpot, Selection};
 use re_reflect::Value;
@@ -811,4 +814,203 @@ fn the_hierarchy_menu_reverts_replaces_inserts_clears_and_bakes_the_output() {
         app.world().get(&id, "Transform", "translation").unwrap(),
         Value::Vec3([0.0, 7.0, 0.0].into())
     );
+}
+
+const ROAD_PATH: &str = "graphs/road.graph.json";
+
+/// A project with a road source at x = 5: a spline through three points,
+/// the middle one by the source's origin (under the gizmo), and its road
+/// surface.
+fn road_project() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    for d in ["scenes", "graphs"] {
+        std::fs::create_dir_all(dir.path().join(d)).unwrap();
+    }
+    std::fs::write(
+        dir.path().join("real.toml"),
+        "[project]\nname = \"roads\"\n",
+    )
+    .unwrap();
+    let scene = json!({
+        "format": "real-engine/scene",
+        "version": 1,
+        "entities": [
+            { "id": "road", "name": "Road", "components": {
+                "GraphSource": { "graph": ROAD_PATH },
+                "Procedural": { "generator": "graph", "seed": 1 },
+                "Transform": { "translation": [5.0, 0.0, 0.0] } } }
+        ]
+    });
+    std::fs::write(
+        dir.path().join("scenes/main.scene.json"),
+        serde_json::to_string_pretty(&scene).unwrap(),
+    )
+    .unwrap();
+    let graph = json!({
+        "format": "real-engine/graph", "version": 1, "name": "road", "seed": 1,
+        "nodes": [
+            { "id": "spline", "kind": "path.spline", "version": 1,
+              "params": { "points": [[-10.0, 0.0, 0.0], [0.0, 0.5, 0.0], { "position": [10.0, 0.0, 2.0], "width": 8.0 }], "width": 4.0 } },
+            { "id": "surface", "kind": "road.mesh", "version": 1, "params": {} }
+        ],
+        "edges": [
+            { "from": ["spline", "path"], "to": ["surface", "in1"] }
+        ]
+    });
+    std::fs::write(
+        dir.path().join(ROAD_PATH),
+        serde_json::to_string_pretty(&graph).unwrap(),
+    )
+    .unwrap();
+    dir
+}
+
+/// Where the viewport shows control point `index` of the road's spline.
+fn handle(ed: &HeadlessEditor, index: usize) -> Option<egui::Pos2> {
+    ed.editor
+        .procedural_spot(ProceduralSpot::SplinePoint("road", "spline", index))
+        .map(|r| r.center())
+}
+
+/// One frame with `events`, and the commands it sent.
+fn sent(ed: &mut HeadlessEditor, app: &mut App, events: Vec<egui::Event>) -> Vec<(String, Json)> {
+    let calls = Calls::default();
+    frame_with(ed, app, &calls, events);
+    calls.0.into_inner()
+}
+
+fn near(a: egui::Pos2, b: egui::Pos2) -> bool {
+    a.distance(b) <= 1.0
+}
+
+#[test]
+fn a_road_s_control_points_are_dragged_in_the_viewport_one_undo_step_each() {
+    let dir = road_project();
+    let mut app = open(dir.path());
+    let mut ed = HeadlessEditor::new(&mut app, 1280, 720).expect("a headless GPU");
+    idle(&mut ed, &mut app);
+    // Looking down on the road from the south.
+    ed.editor.set_camera(EditorCamera {
+        pivot: Vec3::new(5.0, 0.0, 0.0),
+        yaw: 0.0,
+        pitch: -1.0,
+        distance: 40.0,
+        ..*ed.editor.camera().unwrap()
+    });
+    for _ in 0..2 {
+        idle(&mut ed, &mut app);
+    }
+    assert!(ed.editor.rects().get(Panel::Viewport).is_some());
+    assert!(
+        handle(&ed, 0).is_none(),
+        "no handles while nothing is selected"
+    );
+
+    // Selecting the road shows its points where the source puts them.
+    ed.editor.select(Some("road"));
+    for _ in 0..2 {
+        idle(&mut ed, &mut app);
+    }
+    let written = [
+        Vec3::new(-10.0, 0.0, 0.0),
+        Vec3::new(0.0, 0.5, 0.0),
+        Vec3::new(10.0, 0.0, 2.0),
+    ];
+    for (i, p) in written.iter().enumerate() {
+        let shown = ed.editor.screen_point(&app, *p + Vec3::X * 5.0).unwrap();
+        assert!(near(handle(&ed, i).unwrap(), shown), "point {i}");
+    }
+    assert!(handle(&ed, 3).is_none());
+
+    // A drag moves the handle, and only the release sends the points: one
+    // graph.set_param, with the other points as written.
+    let from = handle(&ed, 1).unwrap();
+    let to = from + egui::vec2(80.0, -30.0);
+    let steps = log_len(&app);
+    let mut calls = sent(
+        &mut ed,
+        &mut app,
+        vec![egui::Event::PointerMoved(from), button(from, true)],
+    );
+    for t in [0.25, 0.5, 0.75, 1.0] {
+        let at = from + (to - from) * t;
+        calls.extend(sent(&mut ed, &mut app, vec![egui::Event::PointerMoved(at)]));
+    }
+    assert!(calls.is_empty(), "{calls:?}");
+    assert!(near(handle(&ed, 1).unwrap(), to), "the handle follows");
+    calls.extend(sent(&mut ed, &mut app, vec![button(to, false)]));
+    for _ in 0..2 {
+        calls.extend(sent(&mut ed, &mut app, vec![]));
+    }
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    let (name, args) = &calls[0];
+    assert_eq!(name, "graph.set_param");
+    assert_eq!(
+        (&args["source"], &args["node"], &args["param"]),
+        (&json!("road"), &json!("spline"), &json!("points"))
+    );
+    let points = args["value"].as_array().unwrap();
+    assert_eq!(points[0], json!([-10.0, 0.0, 0.0]));
+    assert_eq!(
+        points[2],
+        json!({ "position": [10.0, 0.0, 2.0], "width": 8.0 })
+    );
+    // The moved point keeps its height, and is drawn where it was let go.
+    let xyz: Vec<f32> = points[1]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_f64().unwrap() as f32)
+        .collect();
+    assert_eq!(xyz[1], 0.5);
+    assert!(xyz[0] > 0.5, "{xyz:?}");
+    let moved = Vec3::new(xyz[0], xyz[1], xyz[2]);
+    assert!(near(
+        ed.editor.screen_point(&app, moved + Vec3::X * 5.0).unwrap(),
+        to
+    ));
+    assert!(near(handle(&ed, 1).unwrap(), to));
+    assert_eq!(log_len(&app), steps + 1);
+    assert_eq!(
+        ed.editor.selected(),
+        Some("road"),
+        "the drag selects nothing"
+    );
+    assert_eq!(
+        app.world().get("road", "Transform", "translation").unwrap(),
+        Value::Vec3(Vec3::new(5.0, 0.0, 0.0)),
+        "the handle comes before the gizmo under it"
+    );
+
+    // Escape drops a drag: nothing is sent.
+    let from = handle(&ed, 0).unwrap();
+    let to = from + egui::vec2(-40.0, 0.0);
+    let mut calls = sent(
+        &mut ed,
+        &mut app,
+        vec![egui::Event::PointerMoved(from), button(from, true)],
+    );
+    calls.extend(sent(&mut ed, &mut app, vec![egui::Event::PointerMoved(to)]));
+    calls.extend(sent(
+        &mut ed,
+        &mut app,
+        vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+    ));
+    calls.extend(sent(&mut ed, &mut app, vec![button(to, false)]));
+    calls.extend(sent(&mut ed, &mut app, vec![]));
+    assert!(calls.is_empty(), "{calls:?}");
+    assert!(near(handle(&ed, 0).unwrap(), from));
+    assert_eq!(log_len(&app), steps + 1);
+    assert_eq!(ed.editor.selected(), Some("road"));
+
+    // Undo puts the point back.
+    assert!(ed.editor.undo(&mut app, &AllowAll).ok);
+    for _ in 0..2 {
+        idle(&mut ed, &mut app);
+    }
+    let shown = ed
+        .editor
+        .screen_point(&app, written[1] + Vec3::X * 5.0)
+        .unwrap();
+    assert!(near(handle(&ed, 1).unwrap(), shown));
 }
