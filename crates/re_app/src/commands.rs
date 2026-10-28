@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use re_command::{CommandRegistry, NoArgs, Tier};
+use re_command::{Call, CommandRegistry, NoArgs, Tier};
 use re_core::time::Instant;
 use re_core::{Diagnostic, Location};
 use schemars::JsonSchema;
@@ -31,9 +31,12 @@ pub struct VerifyArgs {
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ScreenshotArgs {
-    /// Where to write the PNG, relative to the project (default
-    /// `.real/out/screenshot-<frame>.png`). Must stay inside the project.
+    /// Where to write the PNG, relative to the project and ending in `.png`
+    /// (default `.real/out/screenshot-<frame>.png`). An agent may write
+    /// anywhere under `.real/out/`, or a new file inside its policy's
+    /// scopes.
     #[serde(default)]
+    #[schemars(extend("x-real-path" = "output"))]
     pub path: Option<String>,
 }
 
@@ -46,8 +49,10 @@ pub struct PlayArgs {
     pub frames: u64,
     /// A replay file to drive input with (`tests/replays/x.replay.json`).
     #[serde(default)]
+    #[schemars(extend("x-real-path" = "read"))]
     pub replay: Option<String>,
-    /// Capture the last frame (default true); written under `.real/out/play/`.
+    /// Capture the last frame (default true; never in a dry run), written
+    /// under `.real/out/play/`.
     #[serde(default = "yes")]
     pub screenshot: bool,
     /// Steps to run in order after the first `frames`: `{"frames": n}`,
@@ -71,10 +76,12 @@ fn yes() -> bool {
 #[serde(deny_unknown_fields)]
 pub struct ImportArgs {
     /// The file to import: an absolute path, or relative to the project.
+    #[schemars(extend("x-real-path" = "read"))]
     pub source: String,
     /// Where it goes, relative to the project and under `assets/` (default
     /// `assets/<file name>`).
     #[serde(default)]
+    #[schemars(extend("x-real-path" = "write"))]
     pub dest: Option<String>,
     /// Replace an existing file (its sidecar, and so its asset id, is kept).
     #[serde(default)]
@@ -162,7 +169,7 @@ fn play(app: &mut App, args: PlayArgs) -> Result<serde_json::Value, Diagnostic> 
     }))
 }
 
-fn import(app: &mut App, args: ImportArgs, dry_run: bool) -> Result<serde_json::Value, Diagnostic> {
+fn import(app: &mut App, args: ImportArgs, call: &Call) -> Result<serde_json::Value, Diagnostic> {
     let fail = |msg: String| Diagnostic::error(codes::ASSET_IMPORT_FAILED, msg);
     // Importing writes into the project: only a development run can.
     let Some(project) = app.files().project_dir().map(Path::to_path_buf) else {
@@ -205,9 +212,12 @@ fn import(app: &mut App, args: ImportArgs, dry_run: bool) -> Result<serde_json::
             .at(Location::file(&dest))
             .with_hint("pass \"overwrite\": true to replace it (its asset id is kept)"));
     }
-    if dry_run {
+    if call.dry_run() {
         return Ok(json!({ "path": dest, "dry_run": true }));
     }
+    // A default destination, and the sidecar, are named by no argument.
+    call.check_write(&dest)?;
+    call.check_write(&format!("{dest}.meta.json"))?;
     if let Some(dir) = target.parent() {
         std::fs::create_dir_all(dir)
             .map_err(|e| fail(format!("cannot create {}: {e}", dir.display())))?;
@@ -268,14 +278,26 @@ pub fn register(registry: &mut CommandRegistry<App>) {
     );
     registry.register_typed::<ScreenshotArgs, _>(
         "screenshot",
-        "Capture the current view (the scene and the HUD) as a PNG in the project; returns its path, size and graphics backend.",
+        "Capture the current view (the scene and the HUD) as a PNG, by default under .real/out/; returns its path, size and graphics backend.",
         Tier::Read,
         false,
-        |app, args, _call| {
+        |app, args, call| {
             let rel = match &args.path {
                 Some(p) => project_path(p, "the screenshot path", codes::SCREENSHOT_FAILED)?,
                 None => format!(".real/out/screenshot-{}.png", app.frame_count()),
             };
+            // A screenshot is a PNG, whoever asks, so that it cannot replace
+            // another kind of project file by mistake.
+            if !rel.to_ascii_lowercase().ends_with(".png") {
+                return Err(Diagnostic::error(
+                    codes::SCREENSHOT_FAILED,
+                    format!("the screenshot path {rel:?} does not end in `.png`"),
+                )
+                .with_hint("name a `.png` file, or leave `path` out to write one under .real/out/"));
+            }
+            if call.dry_run() {
+                return Ok(json!({ "path": rel, "dry_run": true }));
+            }
             let image = app.screenshot(Some(Path::new(&rel)))?;
             let backend = app.graphics().map_or("none", |g| g.backend());
             Ok(json!({ "path": rel, "width": image.width, "height": image.height, "backend": backend }))
@@ -286,14 +308,18 @@ pub fn register(registry: &mut CommandRegistry<App>) {
         "Play a copy of the world for N frames (at most 3600), optionally driven by a replay, then optional steps (more frames; in a Roblox-style project, add_player, say, invoke a BindableFunction; dump_tree), and return a report (state hash, diagnostics, timings, script output, step results) and a screenshot of the last frame. The live world is not changed.",
         Tier::Read,
         false,
-        |app, args, _call| play(app, args),
+        |app, mut args, call| {
+            // A dry run writes nothing, not even the screenshot.
+            args.screenshot &= !call.dry_run();
+            play(app, args)
+        },
     );
     registry.register_typed::<ImportArgs, _>(
         "asset.import",
         "Copy a file (glTF, PNG, JPEG, material) into the project's assets/ folder, give it a .meta.json sidecar with a stable asset id, and import it once to check it.",
         Tier::Edit,
         false,
-        |app, args, call| import(app, args, call.dry_run()),
+        |app, args, call| import(app, args, call),
     );
     registry.register_typed::<VerifyArgs, _>(
         "verify",

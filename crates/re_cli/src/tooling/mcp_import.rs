@@ -37,6 +37,7 @@ pub struct ImportArgs {
     /// The input, relative to the project: a `*.project.json` file, a
     /// directory holding `default.project.json`, a Luau loader script, or a
     /// place or model file (`.rbxl`, `.rbxlx`, `.rbxm`, `.rbxmx`).
+    #[schemars(extend("x-real-path" = "read"))]
     pub input: String,
     /// Where a model file's instances go, as a dotted path from a service
     /// (`ReplicatedStorage.Maps`; default `Workspace`). Only for model files.
@@ -106,7 +107,7 @@ fn confined(project: &Path, rel: &str, what: &str) -> Result<String, Diagnostic>
     if normal.is_empty() {
         return Err(outside(what, "it is the project itself"));
     }
-    if re_agent::policy::PROTECTED_DIRS.contains(&parts[0]) {
+    if re_agent::policy::is_protected_dir(parts[0]) {
         return Err(outside(
             what,
             format!("`{}/` is never readable here", parts[0]),
@@ -255,7 +256,8 @@ fn project_import(
 
     if matches!(call.origin(), Origin::Agent(_)) {
         // Read now, so a policy changed while the server runs applies.
-        let policy = Policy::load(&project).unwrap_or_else(|_| Policy::read_only());
+        let policy =
+            Policy::load(&project).unwrap_or_else(|_| Policy::read_only().in_project(&project));
         for path in files.written.iter().chain(&files.deleted) {
             policy.check_path(COMMAND, path)?;
         }
